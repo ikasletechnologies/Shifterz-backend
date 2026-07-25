@@ -5,7 +5,7 @@ export declare class InventoryRepository {
         name: string;
         franchiseId: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
         unit: string;
         category: string;
         stock: number;
@@ -19,7 +19,7 @@ export declare class InventoryRepository {
         name: string;
         franchiseId: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
         unit: string;
         category: string;
         stock: number;
@@ -33,7 +33,7 @@ export declare class InventoryRepository {
         name: string;
         franchiseId: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
         unit: string;
         category: string;
         stock: number;
@@ -47,7 +47,7 @@ export declare class InventoryRepository {
         name: string;
         franchiseId: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
         unit: string;
         category: string;
         stock: number;

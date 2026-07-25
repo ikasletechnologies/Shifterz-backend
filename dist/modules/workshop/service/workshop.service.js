@@ -17,8 +17,8 @@ export class WorkshopService {
         const waitingQC = jobs.filter(j => j.status === "Waiting QC").length;
         const completed = jobs.filter(j => j.status === "Completed").length;
         const completedToday = jobs.filter(j => j.status === "Completed" &&
-            typeof j.actualCompletion === 'string' &&
-            j.actualCompletion.startsWith(todayStr)).length;
+            j.actualCompletion instanceof Date &&
+            j.actualCompletion.toISOString().startsWith(todayStr)).length;
         return {
             attendance: attendance || { status: "Not Checked In", clockIn: null, clockOut: null },
             jobsSummary: {

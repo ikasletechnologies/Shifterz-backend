@@ -9,7 +9,7 @@ export declare class FranchiseService {
         city: string;
         owner: string;
         phone: string;
-        since: string;
+        since: Date;
         royaltyPct: number;
         status: string;
         businessName: string | null;
@@ -20,7 +20,7 @@ export declare class FranchiseService {
         pinCode: string | null;
         licenseStatus: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
         revenue: number;
         jobs: number;
     }[]>;
@@ -30,7 +30,7 @@ export declare class FranchiseService {
         city: string;
         owner: string;
         phone: string;
-        since: string;
+        since: Date;
         royaltyPct: number;
         status: string;
         businessName: string | null;
@@ -41,7 +41,7 @@ export declare class FranchiseService {
         pinCode: string | null;
         licenseStatus: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
         revenue: number;
         jobs: number;
     }>;
@@ -51,7 +51,7 @@ export declare class FranchiseService {
         city: string;
         owner: string;
         phone: string;
-        since: string;
+        since: Date;
         royaltyPct: number;
         status: string;
         businessName: string | null;
@@ -62,7 +62,7 @@ export declare class FranchiseService {
         pinCode: string | null;
         licenseStatus: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
         revenue: number;
         jobs: number;
     }>;
@@ -72,7 +72,7 @@ export declare class FranchiseService {
         city: string;
         owner: string;
         phone: string;
-        since: string;
+        since: Date;
         royaltyPct: number;
         status: string;
         businessName: string | null;
@@ -83,7 +83,7 @@ export declare class FranchiseService {
         pinCode: string | null;
         licenseStatus: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
         revenue: number;
         jobs: number;
     }>;
@@ -93,7 +93,7 @@ export declare class FranchiseService {
         city: string;
         owner: string;
         phone: string;
-        since: string;
+        since: Date;
         royaltyPct: number;
         status: string;
         businessName: string | null;
@@ -104,7 +104,7 @@ export declare class FranchiseService {
         pinCode: string | null;
         licenseStatus: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
         revenue: number;
         jobs: number;
     }>;

@@ -4,30 +4,30 @@ export declare class WorkshopRepository {
         status: string;
         franchiseId: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
-        date: string;
+        deletedAt: Date | null;
+        date: Date;
         employeeId: string;
-        clockIn: string | null;
-        clockOut: string | null;
+        clockIn: Date | null;
+        clockOut: Date | null;
     } | null>;
     getJobsByTechnician(technicianId: string): Promise<{
         id: string;
         status: string;
         franchiseId: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
         service: string;
         customer: string;
         vehicle: string;
         notes: string;
+        createdAt: Date;
         technician: string;
         priority: string;
-        startDate: string;
-        estCompletion: string;
-        actualCompletion: string | null;
+        startDate: Date;
+        estCompletion: Date;
+        actualCompletion: Date | null;
         photos: string[];
         technicianId: string | null;
-        createdAt: Date;
     }[]>;
 }
 //# sourceMappingURL=workshop.repository.d.ts.map

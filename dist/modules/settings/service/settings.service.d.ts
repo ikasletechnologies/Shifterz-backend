@@ -9,7 +9,7 @@ export declare class SettingsService {
         email: string;
         address: string;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
         companyName: string;
         gstin: string;
         gstPct: number;
@@ -24,7 +24,7 @@ export declare class SettingsService {
         email: string;
         address: string;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
         companyName: string;
         gstin: string;
         gstPct: number;

@@ -7,12 +7,12 @@ export declare class CustomerRepository {
         email: string;
         franchiseId: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
         vehicle: string;
         model: string;
         visits: number;
         totalSpend: number;
-        lastVisit: string;
+        lastVisit: Date;
     }[]>;
     create(id: string, data: CreateCustomerDTO, franchiseId: string | null): Promise<{
         id: string;
@@ -21,12 +21,12 @@ export declare class CustomerRepository {
         email: string;
         franchiseId: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
         vehicle: string;
         model: string;
         visits: number;
         totalSpend: number;
-        lastVisit: string;
+        lastVisit: Date;
     }>;
     softDelete(id: string): Promise<{
         id: string;
@@ -35,12 +35,12 @@ export declare class CustomerRepository {
         email: string;
         franchiseId: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
         vehicle: string;
         model: string;
         visits: number;
         totalSpend: number;
-        lastVisit: string;
+        lastVisit: Date;
     }>;
 }
 //# sourceMappingURL=customer.repository.d.ts.map

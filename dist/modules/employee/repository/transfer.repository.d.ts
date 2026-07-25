@@ -7,11 +7,11 @@ export declare class TransferRepository {
         username: string | null;
         password: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
-        date: string;
+        deletedAt: Date | null;
+        date: Date;
         createdAt: Date;
-        employeeId: string | null;
         updatedAt: Date;
+        employeeId: string | null;
         toFranchiseId: string | null;
         newMemberName: string | null;
         newMemberPhone: string | null;
@@ -34,11 +34,11 @@ export declare class TransferRepository {
         username: string | null;
         password: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
-        date: string;
+        deletedAt: Date | null;
+        date: Date;
         createdAt: Date;
-        employeeId: string | null;
         updatedAt: Date;
+        employeeId: string | null;
         toFranchiseId: string | null;
         newMemberName: string | null;
         newMemberPhone: string | null;
@@ -53,11 +53,11 @@ export declare class TransferRepository {
         username: string | null;
         password: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
-        date: string;
+        deletedAt: Date | null;
+        date: Date;
         createdAt: Date;
-        employeeId: string | null;
         updatedAt: Date;
+        employeeId: string | null;
         toFranchiseId: string | null;
         newMemberName: string | null;
         newMemberPhone: string | null;
@@ -72,11 +72,11 @@ export declare class TransferRepository {
         username: string | null;
         password: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
-        date: string;
+        deletedAt: Date | null;
+        date: Date;
         createdAt: Date;
-        employeeId: string | null;
         updatedAt: Date;
+        employeeId: string | null;
         toFranchiseId: string | null;
         newMemberName: string | null;
         newMemberPhone: string | null;
@@ -91,11 +91,11 @@ export declare class TransferRepository {
         username: string | null;
         password: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
-        date: string;
+        deletedAt: Date | null;
+        date: Date;
         createdAt: Date;
-        employeeId: string | null;
         updatedAt: Date;
+        employeeId: string | null;
         toFranchiseId: string | null;
         newMemberName: string | null;
         newMemberPhone: string | null;
@@ -115,7 +115,7 @@ export declare class TransferRepository {
         hqControlled: boolean;
         franchiseId: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
     }>;
     updateEmployeeFranchise(employeeId: string, franchiseId: string | null): Promise<{
         id: string;
@@ -129,7 +129,7 @@ export declare class TransferRepository {
         hqControlled: boolean;
         franchiseId: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
     }>;
     softDelete(id: string): Promise<{
         id: string;
@@ -138,11 +138,11 @@ export declare class TransferRepository {
         username: string | null;
         password: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
-        date: string;
+        deletedAt: Date | null;
+        date: Date;
         createdAt: Date;
-        employeeId: string | null;
         updatedAt: Date;
+        employeeId: string | null;
         toFranchiseId: string | null;
         newMemberName: string | null;
         newMemberPhone: string | null;

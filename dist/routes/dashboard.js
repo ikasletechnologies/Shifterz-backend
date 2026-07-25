@@ -39,10 +39,10 @@ dashboardRouter.get("/", async (req, res) => {
         // 3. Financial Metrics
         const invoices = await db.invoice.findMany({ where: tenantFilter });
         const revenueToday = invoices
-            .filter(i => i.status === "Paid" && i.date.startsWith(todayStr))
+            .filter(i => i.status === "Paid" && i.date.toISOString().startsWith(todayStr))
             .reduce((sum, i) => sum + (i.amount + i.gst - i.discount), 0);
         const revenueThisMonth = invoices
-            .filter(i => i.status === "Paid" && i.date.startsWith(monthStr))
+            .filter(i => i.status === "Paid" && i.date.toISOString().startsWith(monthStr))
             .reduce((sum, i) => sum + (i.amount + i.gst - i.discount), 0);
         const outstandingPayments = invoices
             .filter(i => i.status === "Pending" || i.status === "Overdue" || i.status === "Approved")

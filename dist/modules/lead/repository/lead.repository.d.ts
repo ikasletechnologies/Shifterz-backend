@@ -7,10 +7,10 @@ export declare class LeadRepository {
         email: string;
         franchiseId: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
         service: string;
         vehicle: string;
-        date: string;
+        date: Date;
         notes: string;
         source: string;
         assignedTo: string;
@@ -24,10 +24,10 @@ export declare class LeadRepository {
         email: string;
         franchiseId: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
         service: string;
         vehicle: string;
-        date: string;
+        date: Date;
         notes: string;
         source: string;
         assignedTo: string;
@@ -41,10 +41,10 @@ export declare class LeadRepository {
         email: string;
         franchiseId: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
         service: string;
         vehicle: string;
-        date: string;
+        date: Date;
         notes: string;
         source: string;
         assignedTo: string;
@@ -58,10 +58,10 @@ export declare class LeadRepository {
         email: string;
         franchiseId: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
         service: string;
         vehicle: string;
-        date: string;
+        date: Date;
         notes: string;
         source: string;
         assignedTo: string;
@@ -75,10 +75,10 @@ export declare class LeadRepository {
         email: string;
         franchiseId: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
         service: string;
         vehicle: string;
-        date: string;
+        date: Date;
         notes: string;
         source: string;
         assignedTo: string;
@@ -91,12 +91,12 @@ export declare class LeadRepository {
         email: string;
         franchiseId: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
         vehicle: string;
         model: string;
         visits: number;
         totalSpend: number;
-        lastVisit: string;
+        lastVisit: Date;
     } | null>;
     createCustomer(data: any): Promise<{
         id: string;
@@ -105,12 +105,12 @@ export declare class LeadRepository {
         email: string;
         franchiseId: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
         vehicle: string;
         model: string;
         visits: number;
         totalSpend: number;
-        lastVisit: string;
+        lastVisit: Date;
     }>;
     deleteCustomer(id: string): Promise<{
         id: string;
@@ -119,12 +119,12 @@ export declare class LeadRepository {
         email: string;
         franchiseId: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
         vehicle: string;
         model: string;
         visits: number;
         totalSpend: number;
-        lastVisit: string;
+        lastVisit: Date;
     }>;
 }
 //# sourceMappingURL=lead.repository.d.ts.map

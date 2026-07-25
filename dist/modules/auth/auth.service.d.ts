@@ -30,7 +30,7 @@ export declare class AuthService {
         hqControlled: boolean;
         franchiseId: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
     }>;
     getRolePermissions(): Promise<{
         role: string;

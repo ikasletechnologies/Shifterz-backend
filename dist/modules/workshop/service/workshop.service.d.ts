@@ -8,11 +8,11 @@ export declare class WorkshopService {
             status: string;
             franchiseId: string | null;
             isDeleted: boolean;
-            deletedAt: string | null;
-            date: string;
+            deletedAt: Date | null;
+            date: Date;
             employeeId: string;
-            clockIn: string | null;
-            clockOut: string | null;
+            clockIn: Date | null;
+            clockOut: Date | null;
         } | {
             status: string;
             clockIn: null;

@@ -19,8 +19,8 @@ export class WorkshopService {
 
     const completedToday = jobs.filter(j =>
       j.status === "Completed" &&
-      typeof j.actualCompletion === 'string' &&
-      j.actualCompletion.startsWith(todayStr)
+      j.actualCompletion instanceof Date &&
+      j.actualCompletion.toISOString().startsWith(todayStr)
     ).length;
 
     return {

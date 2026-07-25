@@ -4,7 +4,7 @@ export declare class ServiceRepository {
         id: string;
         name: string;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
         category: string;
         desc: string;
         price: number;
@@ -15,7 +15,7 @@ export declare class ServiceRepository {
         id: string;
         name: string;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
         category: string;
         desc: string;
         price: number;
@@ -26,7 +26,7 @@ export declare class ServiceRepository {
         id: string;
         name: string;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
         category: string;
         desc: string;
         price: number;
@@ -37,7 +37,7 @@ export declare class ServiceRepository {
         id: string;
         name: string;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
         category: string;
         desc: string;
         price: number;
@@ -48,7 +48,7 @@ export declare class ServiceRepository {
         id: string;
         name: string;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
         category: string;
         desc: string;
         price: number;

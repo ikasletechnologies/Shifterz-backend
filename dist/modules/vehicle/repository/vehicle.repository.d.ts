@@ -6,12 +6,12 @@ export declare class VehicleRepository {
         email: string;
         franchiseId: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
         vehicle: string;
         model: string;
         visits: number;
         totalSpend: number;
-        lastVisit: string;
+        lastVisit: Date;
     } | null>;
     findCarInByVehicle(vehicleNo: string): Promise<{
         id: string;
@@ -19,16 +19,16 @@ export declare class VehicleRepository {
         status: string;
         franchiseId: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
         service: string;
         customer: string;
         vehicle: string;
         notes: string;
         model: string;
         technicianIn: string;
-        inTime: string;
+        inTime: Date;
         odometer: string;
-        outTime: string | null;
+        outTime: Date | null;
         jobCardId: string;
     } | null>;
     findLeadByVehicle(vehicleNo: string): Promise<{
@@ -39,10 +39,10 @@ export declare class VehicleRepository {
         email: string;
         franchiseId: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
         service: string;
         vehicle: string;
-        date: string;
+        date: Date;
         notes: string;
         source: string;
         assignedTo: string;

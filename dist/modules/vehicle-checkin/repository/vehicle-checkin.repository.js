@@ -1,10 +1,21 @@
 import { db } from '../../../lib/db.js';
+function safeIsoDate(input) {
+    if (!input)
+        return new Date().toISOString();
+    const d = typeof input === 'string' ? new Date(input) : input;
+    if (isNaN(d.getTime()))
+        return new Date().toISOString();
+    return d.toISOString();
+}
 export class VehicleCheckinRepository {
     async findAll() {
-        return db.carIn.findMany({ orderBy: { inTime: "desc" } });
+        return db.carIn.findMany({
+            where: { isDeleted: false },
+            orderBy: { inTime: "desc" },
+        });
     }
     async findById(id) {
-        return db.carIn.findUnique({ where: { id } });
+        return db.carIn.findFirst({ where: { id, isDeleted: false } });
     }
     async create(id, data, jobCardId, franchiseId) {
         return db.carIn.create({
@@ -16,7 +27,7 @@ export class VehicleCheckinRepository {
                 phone: data.phone || "",
                 service: data.service || "",
                 technicianIn: data.technicianIn || "",
-                inTime: data.inTime || new Date().toISOString(),
+                inTime: safeIsoDate(data.inTime),
                 outTime: null,
                 status: "In Workshop",
                 odometer: String(data.odometer || "0"),

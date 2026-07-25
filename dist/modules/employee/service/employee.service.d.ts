@@ -5,17 +5,17 @@ export declare class EmployeeService {
     constructor(repository?: EmployeeRepository);
     getAllEmployees(userRole: string, userFranchiseId?: string): Promise<{
         permissions: string[];
-        permission: {
-            id: string;
-            createdAt: Date;
-            employeeId: string;
-            modules: string[];
-            updatedAt: Date;
-        } | null;
         franchise: {
             id: string;
             name: string;
             city: string;
+        } | null;
+        permission: {
+            id: string;
+            createdAt: Date;
+            updatedAt: Date;
+            employeeId: string;
+            modules: string[];
         } | null;
         id: string;
         role: string;
@@ -27,7 +27,7 @@ export declare class EmployeeService {
         hqControlled: boolean;
         franchiseId: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
     }[]>;
     getHqEmployees(): Promise<{
         id: string;
@@ -40,7 +40,7 @@ export declare class EmployeeService {
         hqControlled: boolean;
         franchiseId: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
     }[]>;
     getTechnicians(): Promise<{
         id: string;
@@ -54,16 +54,16 @@ export declare class EmployeeService {
         hqControlled: boolean;
         franchiseId: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
     }[]>;
     createEmployee(data: CreateEmployeeDTO, userRole: string, userFranchiseId?: string, isTechnicianRoute?: boolean): Promise<{
         permissions: string[];
         permission: {
             id: string;
             createdAt: Date;
+            updatedAt: Date;
             employeeId: string;
             modules: string[];
-            updatedAt: Date;
         } | null;
         id: string;
         role: string;
@@ -75,16 +75,16 @@ export declare class EmployeeService {
         hqControlled: boolean;
         franchiseId: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
     }>;
     updateEmployee(id: string, data: UpdateEmployeeDTO): Promise<{
         permissions: string[];
         permission: {
             id: string;
             createdAt: Date;
+            updatedAt: Date;
             employeeId: string;
             modules: string[];
-            updatedAt: Date;
         } | null;
         id: string;
         role: string;
@@ -96,7 +96,7 @@ export declare class EmployeeService {
         hqControlled: boolean;
         franchiseId: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
     }>;
     deleteEmployee(id: string): Promise<{
         id: string;
@@ -110,7 +110,7 @@ export declare class EmployeeService {
         hqControlled: boolean;
         franchiseId: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
     }>;
 }
 //# sourceMappingURL=employee.service.d.ts.map

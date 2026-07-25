@@ -3,9 +3,9 @@ export declare class AuthRepository {
         permission: {
             id: string;
             createdAt: Date;
+            updatedAt: Date;
             employeeId: string;
             modules: string[];
-            updatedAt: Date;
         } | null;
     } & {
         id: string;
@@ -19,15 +19,15 @@ export declare class AuthRepository {
         hqControlled: boolean;
         franchiseId: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
     }) | null>;
     findEmployeeById(id: string): Promise<({
         permission: {
             id: string;
             createdAt: Date;
+            updatedAt: Date;
             employeeId: string;
             modules: string[];
-            updatedAt: Date;
         } | null;
     } & {
         id: string;
@@ -41,7 +41,7 @@ export declare class AuthRepository {
         hqControlled: boolean;
         franchiseId: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
     }) | null>;
     updateEmployee(id: string, data: any): Promise<{
         id: string;
@@ -55,7 +55,7 @@ export declare class AuthRepository {
         hqControlled: boolean;
         franchiseId: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
     }>;
     findAllRolePermissions(): Promise<{
         role: string;

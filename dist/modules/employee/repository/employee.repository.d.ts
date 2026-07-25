@@ -1,16 +1,16 @@
 export declare class EmployeeRepository {
     findAllEmployees(tenantFilter: any): Promise<({
-        permission: {
-            id: string;
-            createdAt: Date;
-            employeeId: string;
-            modules: string[];
-            updatedAt: Date;
-        } | null;
         franchise: {
             id: string;
             name: string;
             city: string;
+        } | null;
+        permission: {
+            id: string;
+            createdAt: Date;
+            updatedAt: Date;
+            employeeId: string;
+            modules: string[];
         } | null;
     } & {
         id: string;
@@ -24,7 +24,7 @@ export declare class EmployeeRepository {
         hqControlled: boolean;
         franchiseId: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
     })[]>;
     findHqEmployees(): Promise<{
         id: string;
@@ -38,7 +38,7 @@ export declare class EmployeeRepository {
         hqControlled: boolean;
         franchiseId: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
     }[]>;
     findTechnicians(): Promise<{
         id: string;
@@ -52,16 +52,16 @@ export declare class EmployeeRepository {
         hqControlled: boolean;
         franchiseId: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
     }[]>;
     countFranchiseUsers(franchiseId: string): Promise<number>;
     create(id: string, data: any, hashedPassword: string | null, normalizedUsername: string | null): Promise<{
         permission: {
             id: string;
             createdAt: Date;
+            updatedAt: Date;
             employeeId: string;
             modules: string[];
-            updatedAt: Date;
         } | null;
     } & {
         id: string;
@@ -75,15 +75,15 @@ export declare class EmployeeRepository {
         hqControlled: boolean;
         franchiseId: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
     }>;
     update(id: string, data: any): Promise<{
         permission: {
             id: string;
             createdAt: Date;
+            updatedAt: Date;
             employeeId: string;
             modules: string[];
-            updatedAt: Date;
         } | null;
     } & {
         id: string;
@@ -97,14 +97,14 @@ export declare class EmployeeRepository {
         hqControlled: boolean;
         franchiseId: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
     }>;
     updatePermissions(employeeId: string, modules: string[]): Promise<{
         id: string;
         createdAt: Date;
+        updatedAt: Date;
         employeeId: string;
         modules: string[];
-        updatedAt: Date;
     }>;
     softDelete(id: string): Promise<{
         id: string;
@@ -118,7 +118,7 @@ export declare class EmployeeRepository {
         hqControlled: boolean;
         franchiseId: string | null;
         isDeleted: boolean;
-        deletedAt: string | null;
+        deletedAt: Date | null;
     }>;
 }
 //# sourceMappingURL=employee.repository.d.ts.map
