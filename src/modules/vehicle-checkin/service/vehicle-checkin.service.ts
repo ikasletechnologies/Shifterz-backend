@@ -3,6 +3,13 @@ import type { CreateCheckinDTO, UpdateCheckinDTO, CheckoutDTO } from '../validat
 import { generateSequentialId, generateUid } from '../../../shared/utils/idGenerator.js';
 import { NotFoundError } from '../../../shared/errors/NotFoundError.js';
 
+function safeIsoDate(input?: string | Date | null): string {
+  if (!input) return new Date().toISOString();
+  const d = typeof input === 'string' ? new Date(input) : input;
+  if (isNaN(d.getTime())) return new Date().toISOString();
+  return d.toISOString();
+}
+
 export class VehicleCheckinService {
   constructor(private readonly repository: VehicleCheckinRepository = new VehicleCheckinRepository()) {}
 
@@ -17,6 +24,7 @@ export class VehicleCheckinService {
     const newCar = await this.repository.create(carId, data, jobCardId, franchiseId);
 
     // Auto-create Job Card
+    const validInTimeISO = safeIsoDate(data.inTime);
     await this.repository.createJobCard({
       id: jobCardId,
       vehicle: data.vehicle,
@@ -25,8 +33,8 @@ export class VehicleCheckinService {
       technician: data.technicianIn || "",
       status: "Pending",
       priority: "Normal",
-      startDate: (data.inTime || new Date().toISOString()).slice(0, 10),
-      estCompletion: (data.inTime || new Date().toISOString()).slice(0, 10),
+      startDate: validInTimeISO,
+      estCompletion: validInTimeISO,
       actualCompletion: null,
       notes: "Auto-created from check-in",
       franchiseId,
@@ -39,7 +47,7 @@ export class VehicleCheckinService {
         await this.repository.updateCustomerVisits(
           existingCust.id,
           existingCust.visits + 1,
-          new Date().toISOString().slice(0, 10)
+          new Date().toISOString()
         );
       } else {
         const custId = await generateSequentialId("CUS");
@@ -52,7 +60,7 @@ export class VehicleCheckinService {
           model: data.model || "",
           visits: 1,
           totalSpend: 0,
-          lastVisit: new Date().toISOString().slice(0, 10),
+          lastVisit: new Date().toISOString(),
           franchiseId,
         });
       }
