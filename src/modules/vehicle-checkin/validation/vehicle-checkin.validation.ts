@@ -7,7 +7,6 @@ export const createCheckinSchema = z.object({
     customer: z.string().optional(),
     phone: z.string().optional(),
     service: z.string().optional(),
-    technicianIn: z.string().optional(),
     inTime: z.string().optional(),
     odometer: z.union([z.string(), z.number()]).optional(),
     notes: z.string().optional(),
@@ -21,7 +20,6 @@ export const updateCheckinSchema = z.object({
     customer: z.string().optional(),
     phone: z.string().optional(),
     service: z.string().optional(),
-    technicianIn: z.string().optional(),
     odometer: z.union([z.string(), z.number()]).optional(),
     notes: z.string().optional(),
   })

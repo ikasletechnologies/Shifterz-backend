@@ -160,7 +160,6 @@ model CarIn {
   customer     String
   phone        String
   service      String
-  technicianIn String
   inTime       DateTime
   outTime      DateTime?
   status       String

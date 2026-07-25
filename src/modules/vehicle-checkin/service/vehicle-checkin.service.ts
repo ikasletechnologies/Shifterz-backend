@@ -11,7 +11,7 @@ function safeIsoDate(input?: string | Date | null): string {
 }
 
 export class VehicleCheckinService {
-  constructor(private readonly repository: VehicleCheckinRepository = new VehicleCheckinRepository()) {}
+  constructor(private readonly repository: VehicleCheckinRepository = new VehicleCheckinRepository()) { }
 
   async getAllCheckins() {
     return this.repository.findAll();
@@ -20,7 +20,7 @@ export class VehicleCheckinService {
   async createCheckin(data: CreateCheckinDTO, franchiseId: string | null) {
     const carId = generateUid("CAR");
     const jobCardId = await generateSequentialId("JOB");
-    
+
     const newCar = await this.repository.create(carId, data, jobCardId, franchiseId);
 
     // Auto-create Job Card
@@ -30,7 +30,7 @@ export class VehicleCheckinService {
       vehicle: data.vehicle,
       customer: data.customer || "",
       service: data.service || "",
-      technician: data.technicianIn || "",
+      technician: "",
       status: "Pending",
       priority: "Normal",
       startDate: validInTimeISO,
@@ -77,7 +77,6 @@ export class VehicleCheckinService {
         vehicle: data.vehicle,
         customer: data.customer,
         service: data.service,
-        technician: data.technicianIn,
       });
     }
 
@@ -114,7 +113,7 @@ export class VehicleCheckinService {
         service: car.service,
         outTime: now,
         securityName: data.securityName || "N/A",
-        technicianName: car.technicianIn,
+        technicianName: "",
         remarks: "Washed and checked out successfully.",
         issued: true,
         carInId: id,
