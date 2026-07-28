@@ -182,7 +182,6 @@ model Job {
   priority         String
   startDate        DateTime
   estCompletion    DateTime
-  actualCompletion DateTime?
   notes            String
   photos           String[]
   technicianId     String?

@@ -35,7 +35,6 @@ export class VehicleCheckinService {
       priority: "Normal",
       startDate: validInTimeISO,
       estCompletion: validInTimeISO,
-      actualCompletion: null,
       notes: "Auto-created from check-in",
       franchiseId,
     });
@@ -96,7 +95,6 @@ export class VehicleCheckinService {
     if (car.jobCardId) {
       await this.repository.updateJobCard(car.jobCardId, {
         status: "Completed",
-        actualCompletion: now.slice(0, 10),
       });
     }
 

@@ -23,7 +23,6 @@ export const updateJobCardSchema = z.object({
     status: z.string().optional(),
     priority: z.string().optional(),
     estCompletion: z.string().optional(),
-    actualCompletion: z.string().nullable().optional(),
     notes: z.string().optional(),
     photos: z.array(z.string()).optional(),
   })

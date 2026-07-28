@@ -3,7 +3,7 @@ import type { CreateJobCardDTO, UpdateJobCardDTO } from '../validation/job-card.
 import { generateSequentialId } from '../../../shared/utils/idGenerator.js';
 
 export class JobCardService {
-  constructor(private readonly repository: JobCardRepository = new JobCardRepository()) {}
+  constructor(private readonly repository: JobCardRepository = new JobCardRepository()) { }
 
   async getJobs(filter: any) {
     return this.repository.findAll(filter);
