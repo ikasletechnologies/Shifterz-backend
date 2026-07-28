@@ -2,6 +2,7 @@ import { VehicleCheckinRepository } from '../repository/vehicle-checkin.reposito
 import type { CreateCheckinDTO, UpdateCheckinDTO, CheckoutDTO } from '../validation/vehicle-checkin.validation.js';
 import { generateSequentialId, generateUid } from '../../../shared/utils/idGenerator.js';
 import { NotFoundError } from '../../../shared/errors/NotFoundError.js';
+import { ValidationError } from '../../../shared/errors/ValidationError.js';
 
 function safeIsoDate(input?: string | Date | null): string {
   if (!input) return new Date().toISOString();
@@ -10,14 +11,35 @@ function safeIsoDate(input?: string | Date | null): string {
   return d.toISOString();
 }
 
+import { db } from '../../../lib/db.js';
+
 export class VehicleCheckinService {
   constructor(private readonly repository: VehicleCheckinRepository = new VehicleCheckinRepository()) { }
 
   async getAllCheckins() {
-    return this.repository.findAll();
+    const checkins = await this.repository.findAll();
+    const jobCardIds = checkins.map((c) => c.jobCardId).filter(Boolean);
+    const jobs = await db.job.findMany({
+      where: { id: { in: jobCardIds } },
+      select: { id: true, technician: true },
+    });
+    const jobMap = new Map(jobs.map((j) => [j.id, j.technician]));
+
+    return checkins.map((c) => ({
+      ...c,
+      entryId: c.id,
+      technician: jobMap.get(c.jobCardId) || "",
+    }));
   }
 
   async createCheckin(data: CreateCheckinDTO, franchiseId: string | null) {
+    const recentEntry = await this.repository.findRecentCheckinByVehicle(data.vehicle, 24);
+    if (recentEntry) {
+      throw new ValidationError(
+        `Vehicle ${data.vehicle} was already checked.`
+      );
+    }
+
     const carId = generateUid("CAR");
     const jobCardId = await generateSequentialId("JOB");
 
@@ -32,10 +54,10 @@ export class VehicleCheckinService {
       service: data.service || "",
       technician: "",
       status: "Pending",
-      priority: "Normal",
+      priority: "",
       startDate: validInTimeISO,
-      estCompletion: validInTimeISO,
-      notes: "Auto-created from check-in",
+      estCompletion: "",
+      notes: (data.notes && data.notes.trim()) ? data.notes.trim() : "Auto-created from check-in",
       franchiseId,
     });
 
@@ -76,6 +98,7 @@ export class VehicleCheckinService {
         vehicle: data.vehicle,
         customer: data.customer,
         service: data.service,
+        notes: data.notes,
       });
     }
 
@@ -95,6 +118,7 @@ export class VehicleCheckinService {
     if (car.jobCardId) {
       await this.repository.updateJobCard(car.jobCardId, {
         status: "Completed",
+        estCompletion: now,
       });
     }
 

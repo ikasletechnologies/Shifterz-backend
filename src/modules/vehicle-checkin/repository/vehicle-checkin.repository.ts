@@ -1,4 +1,5 @@
 import { db } from '../../../lib/db.js';
+import { logger } from '../../../shared/logger/logger.js';
 import type { CreateCheckinDTO, UpdateCheckinDTO } from '../validation/vehicle-checkin.validation.js';
 
 function safeIsoDate(input?: string | Date | null): string {
@@ -18,6 +19,24 @@ export class VehicleCheckinRepository {
 
   async findById(id: string) {
     return db.carIn.findFirst({ where: { id, isDeleted: false } });
+  }
+
+  async findRecentCheckinByVehicle(vehicleNo: string, hours = 24) {
+    const cutoffDate = new Date(Date.now() - hours * 60 * 60 * 1000);
+    const normalizedInput = vehicleNo.replace(/\s+/g, "").toUpperCase();
+
+    const checkins = await db.carIn.findMany({
+      where: {
+        isDeleted: false,
+        inTime: { gte: cutoffDate },
+      },
+      orderBy: { inTime: "desc" },
+    });
+
+    return checkins.find((car) => {
+      const norm = car.vehicle.replace(/\s+/g, "").toUpperCase();
+      return norm === normalizedInput;
+    });
   }
 
   async create(id: string, data: CreateCheckinDTO, jobCardId: string, franchiseId: string | null) {
@@ -72,7 +91,15 @@ export class VehicleCheckinRepository {
   }
 
   async updateJobCard(id: string, data: any) {
-    return db.job.update({ where: { id }, data });
+    try {
+      return await db.job.update({ where: { id }, data });
+    } catch (err: any) {
+      if (err.code === 'P2025') {
+        logger.warn(`Job card with ID ${id} not found during updateJobCard operation.`);
+        return null;
+      }
+      throw err;
+    }
   }
 
   async findCustomerByPhone(phone: string) {
