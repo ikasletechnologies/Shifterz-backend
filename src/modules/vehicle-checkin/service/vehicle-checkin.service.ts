@@ -6,6 +6,7 @@ import { ValidationError } from '../../../shared/errors/ValidationError.js';
 
 function safeIsoDate(input?: string | Date | null): string {
   if (!input) return new Date().toISOString();
+  if (typeof input === 'string' && !input.trim()) return new Date().toISOString();
   const d = typeof input === 'string' ? new Date(input) : input;
   if (isNaN(d.getTime())) return new Date().toISOString();
   return d.toISOString();
@@ -56,7 +57,7 @@ export class VehicleCheckinService {
       status: "Pending",
       priority: "",
       startDate: validInTimeISO,
-      estCompletion: "",
+      estCompletion: validInTimeISO,
       notes: (data.notes && data.notes.trim()) ? data.notes.trim() : "Auto-created from check-in",
       franchiseId,
     });

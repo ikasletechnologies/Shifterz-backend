@@ -87,12 +87,26 @@ export class VehicleCheckinRepository {
 
   // Related auto-creation methods
   async createJobCard(data: any) {
-    return db.job.create({ data });
+    const jobData = { ...data };
+    if (!jobData.startDate || (typeof jobData.startDate === 'string' && !jobData.startDate.trim())) {
+      jobData.startDate = safeIsoDate(null);
+    } else {
+      jobData.startDate = safeIsoDate(jobData.startDate);
+    }
+    if (!jobData.estCompletion || (typeof jobData.estCompletion === 'string' && !jobData.estCompletion.trim())) {
+      jobData.estCompletion = safeIsoDate(jobData.startDate);
+    } else {
+      jobData.estCompletion = safeIsoDate(jobData.estCompletion);
+    }
+    return db.job.create({ data: jobData });
   }
 
   async updateJobCard(id: string, data: any) {
     try {
-      return await db.job.update({ where: { id }, data });
+      const updateData: any = { ...data };
+      if (updateData.startDate) updateData.startDate = safeIsoDate(updateData.startDate);
+      if (updateData.estCompletion) updateData.estCompletion = safeIsoDate(updateData.estCompletion);
+      return await db.job.update({ where: { id }, data: updateData });
     } catch (err: any) {
       if (err.code === 'P2025') {
         logger.warn(`Job card with ID ${id} not found during updateJobCard operation.`);
