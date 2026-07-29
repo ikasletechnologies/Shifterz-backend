@@ -8,6 +8,7 @@ export class VehicleService {
     const customer = await this.repository.findCustomerByVehicle(vehicleNo);
     if (customer) {
       return { 
+        found: true,
         name: customer.name, 
         phone: customer.phone, 
         email: customer.email, 
@@ -18,6 +19,7 @@ export class VehicleService {
     const carIn = await this.repository.findCarInByVehicle(vehicleNo);
     if (carIn) {
       return { 
+        found: true,
         name: carIn.customer, 
         phone: carIn.phone, 
         model: carIn.model 
@@ -27,11 +29,17 @@ export class VehicleService {
     const lead = await this.repository.findLeadByVehicle(vehicleNo);
     if (lead) {
       return { 
+        found: true,
         name: lead.name, 
         phone: lead.phone 
       };
     }
 
-    throw new NotFoundError("Vehicle not found in any records");
+    return {
+      found: false,
+      name: null,
+      phone: null,
+      model: null
+    };
   }
 }

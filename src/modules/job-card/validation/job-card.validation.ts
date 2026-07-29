@@ -18,11 +18,16 @@ export const createJobCardSchema = z.object({
 
 export const updateJobCardSchema = z.object({
   body: z.object({
+    vehicle: z.string().optional(),
+    customer: z.string().optional(),
+    service: z.string().optional(),
     technician: z.string().optional(),
     technicianId: z.string().nullable().optional(),
     status: z.string().optional(),
     priority: z.string().optional(),
+    startDate: z.string().optional(),
     estCompletion: z.string().optional(),
+    actualCompletion: z.string().optional(),
     notes: z.string().optional(),
     photos: z.array(z.string()).optional(),
   })

@@ -6,15 +6,11 @@ export class VehicleController {
 
   lookupVehicle = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const vehicleNo = String(req.params.vehicleNo || "").toUpperCase();
+      const vehicleNo = String(req.params.vehicleNo || "").trim().toUpperCase();
       const result = await this.service.lookupVehicle(vehicleNo);
       res.json(result);
     } catch (error: any) {
-      if (error.message === "Vehicle not found in any records") {
-        res.status(404).json({ error: error.message });
-      } else {
-        next(error);
-      }
+      next(error);
     }
   };
 }
