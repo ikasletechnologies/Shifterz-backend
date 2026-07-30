@@ -9,6 +9,8 @@ export interface AuthRequest extends Request {
   user?: {
     id: string;
     role: string;
+    name?: string;
+    username?: string;
     franchiseId?: string | null;
     permissions?: string[];
   };
@@ -27,6 +29,8 @@ export const authenticate = (req: AuthRequest, res: Response, next: NextFunction
     req.user = {
       id: decoded.id,
       role: decoded.role,
+      name: decoded.name || decoded.username,
+      username: decoded.username,
       franchiseId: decoded.franchiseId || null,
       permissions: decoded.permissions || [],
     };

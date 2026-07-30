@@ -2,10 +2,11 @@ import { db } from '../../../lib/db.js';
 
 export class WorkshopRepository {
   async getAttendanceByDateAndEmployee(employeeId: string, date: string) {
+    const isoDate = new Date(date).toISOString();
     return db.attendance.findFirst({
       where: {
         employeeId,
-        date,
+        date: isoDate,
         isDeleted: false
       }
     });

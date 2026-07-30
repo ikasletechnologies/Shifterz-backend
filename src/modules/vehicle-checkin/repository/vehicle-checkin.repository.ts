@@ -116,6 +116,18 @@ export class VehicleCheckinRepository {
     }
   }
 
+  async deleteJobCard(id: string) {
+    try {
+      return await db.job.delete({ where: { id } });
+    } catch (err: any) {
+      if (err.code === 'P2025') {
+        logger.warn(`Job card with ID ${id} not found during deleteJobCard operation.`);
+        return null;
+      }
+      throw err;
+    }
+  }
+
   async findCustomerByPhone(phone: string) {
     return db.customer.findFirst({ where: { phone } });
   }

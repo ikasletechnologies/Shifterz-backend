@@ -15,11 +15,17 @@ export class WorkshopService {
     const waitingMaterial = jobs.filter(j => j.status === "Waiting Material").length;
     const waitingCustomer = jobs.filter(j => j.status === "Waiting Customer").length;
     const waitingQC = jobs.filter(j => j.status === "Waiting QC").length;
-    const completed = jobs.filter(j => j.status === "Completed").length;
+    const isCompleted = (s: string) => [
+      "Completed", "QC Pending", "QC Passed", "Ready For Billing", "Work Completed", "Delivered", "Out"
+    ].includes(s);
 
-    const completedToday = jobs.filter(j =>
-      j.status === "Completed"
-    ).length;
+    const completed = jobs.filter(j => isCompleted(j.status)).length;
+    const completedToday = jobs.filter(j => {
+      if (!isCompleted(j.status)) return false;
+      const updatedDate = (j as any).updatedAt ? new Date((j as any).updatedAt).toISOString().split("T")[0] : null;
+      const actualDate = (j as any).actualCompletion ? new Date((j as any).actualCompletion).toISOString().split("T")[0] : null;
+      return !updatedDate || updatedDate === todayStr || actualDate === todayStr;
+    }).length;
 
     return {
       attendance: attendance || { status: "Not Checked In", clockIn: null, clockOut: null },

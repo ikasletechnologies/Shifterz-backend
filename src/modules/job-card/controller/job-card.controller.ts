@@ -8,11 +8,28 @@ export class JobCardController {
 
   getJobs = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      let filter = {};
+      let filter: any = {};
       if (req.user) {
-        if (req.user.role?.toUpperCase() === "TECHNICIAN" && req.user.id) {
-          // Changed to user.id because token uses id for employeeId, not technicianId natively in all cases
-          filter = { technicianId: req.user.id };
+        const userRole = (req.user.role || "").toUpperCase().replace(/[\s_]+/g, "_");
+        if (userRole === "TECHNICIAN") {
+          if (req.user.id) {
+            filter = {
+              OR: [
+                { technicianId: req.user.id },
+                { technician: { equals: req.user.name || "", mode: "insensitive" } }
+              ]
+            };
+          }
+        } else if (
+          userRole === "QUALITY_INSPECTOR" ||
+          userRole === "QUALITY_INSPECTION" ||
+          userRole === "QC_INSPECTOR" ||
+          userRole === "QC" ||
+          userRole === "QUALITY_ASSURANCE"
+        ) {
+          filter = {
+            status: { in: ["Completed", "QC Pending", "QC Passed", "Ready For Billing"] }
+          };
         }
       }
 
