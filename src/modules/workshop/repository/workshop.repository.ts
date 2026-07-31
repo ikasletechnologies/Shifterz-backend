@@ -13,10 +13,18 @@ export class WorkshopRepository {
   }
 
   async getJobsByTechnician(technicianId: string) {
+    const employee = await db.employee.findFirst({ where: { id: technicianId } });
+    const empName = employee?.name ? employee.name.trim() : "";
+
+    const conditions: any[] = [{ technicianId }];
+    if (empName) {
+      conditions.push({ technician: { equals: empName, mode: "insensitive" } });
+    }
+
     return db.job.findMany({
       where: {
-        technicianId,
-        isDeleted: false
+        isDeleted: false,
+        OR: conditions
       }
     });
   }

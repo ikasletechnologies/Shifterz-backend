@@ -5,9 +5,9 @@ import type { AuthRequest } from '../../../middleware/auth.middleware.js';
 export class VehicleCheckinController {
   constructor(private readonly service: VehicleCheckinService = new VehicleCheckinService()) {}
 
-  getAll = async (req: Request, res: Response, next: NextFunction) => {
+  getAll = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const list = await this.service.getAllCheckins();
+      const list = await this.service.getAllCheckins(req.user);
       res.json(list);
     } catch (error) {
       next(error);
@@ -24,9 +24,10 @@ export class VehicleCheckinController {
     }
   };
 
-  update = async (req: Request, res: Response, next: NextFunction) => {
+  update = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const id = String(req.params.id);
+      await this.service.checkTechnicianAccess(id, req.user);
       const updated = await this.service.updateCheckin(id, req.body);
       res.json(updated);
     } catch (error) {
@@ -34,9 +35,10 @@ export class VehicleCheckinController {
     }
   };
 
-  checkout = async (req: Request, res: Response, next: NextFunction) => {
+  checkout = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const id = String(req.params.id);
+      await this.service.checkTechnicianAccess(id, req.user);
       const result = await this.service.checkout(id, req.body);
       res.json(result);
     } catch (error) {
@@ -44,9 +46,10 @@ export class VehicleCheckinController {
     }
   };
 
-  delete = async (req: Request, res: Response, next: NextFunction) => {
+  delete = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const id = String(req.params.id);
+      await this.service.checkTechnicianAccess(id, req.user);
       await this.service.deleteCheckin(id);
       res.json({ success: true, message: "Car entry deleted" });
     } catch (error) {

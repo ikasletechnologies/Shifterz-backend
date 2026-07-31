@@ -10,6 +10,10 @@ export class JobCardRepository {
     });
   }
 
+  async findById(id: string) {
+    return db.job.findFirst({ where: { id, isDeleted: false } });
+  }
+
   async findEmployeeByName(name: string) {
     return db.employee.findFirst({ where: { name } });
   }

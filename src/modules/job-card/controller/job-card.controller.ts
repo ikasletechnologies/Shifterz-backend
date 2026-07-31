@@ -12,13 +12,17 @@ export class JobCardController {
       if (req.user) {
         const userRole = (req.user.role || "").toUpperCase().replace(/[\s_]+/g, "_");
         if (userRole === "TECHNICIAN") {
+          const conditions: any[] = [];
           if (req.user.id) {
-            filter = {
-              OR: [
-                { technicianId: req.user.id },
-                { technician: { equals: req.user.name || "", mode: "insensitive" } }
-              ]
-            };
+            conditions.push({ technicianId: req.user.id });
+          }
+          if (req.user.name && req.user.name.trim() !== "") {
+            conditions.push({ technician: { equals: req.user.name.trim(), mode: "insensitive" } });
+          }
+          if (conditions.length > 0) {
+            filter = { OR: conditions };
+          } else {
+            filter = { id: "__NO_MATCH__" };
           }
         } else if (
           userRole === "QUALITY_INSPECTOR" ||
@@ -29,6 +33,13 @@ export class JobCardController {
         ) {
           filter = {
             status: { in: ["Completed", "QC Pending", "QC Passed", "Ready For Billing"] }
+          };
+        } else if (
+          userRole.includes("BILLING") ||
+          userRole.includes("ACCOUNTANT")
+        ) {
+          filter = {
+            status: { in: ["Ready For Billing", "QC Passed", "Delivered", "Out"] }
           };
         }
       }
@@ -52,9 +63,10 @@ export class JobCardController {
     }
   };
 
-  updateJob = async (req: Request, res: Response, next: NextFunction) => {
+  updateJob = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const id = String(req.params.id);
+      await this.service.checkTechnicianAccess(id, req.user);
       const result = await this.service.updateJob(id, req.body);
       res.json(result);
     } catch (error) {
@@ -62,9 +74,10 @@ export class JobCardController {
     }
   };
 
-  deleteJob = async (req: Request, res: Response, next: NextFunction) => {
+  deleteJob = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const id = String(req.params.id);
+      await this.service.checkTechnicianAccess(id, req.user);
       await this.service.deleteJob(id);
       res.json({ success: true, message: "Job deleted" });
     } catch (error) {
