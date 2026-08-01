@@ -82,7 +82,16 @@ export class VehicleCheckinRepository {
   }
 
   async delete(id: string) {
-    return db.carIn.delete({ where: { id } });
+    try {
+      await db.carIn.updateMany({
+        where: { id },
+        data: { isDeleted: true, deletedAt: new Date() },
+      });
+      return await db.carIn.delete({ where: { id } }).catch(() => null);
+    } catch (err: any) {
+      if (err.code === 'P2025') return null;
+      throw err;
+    }
   }
 
   // Related auto-creation methods
@@ -118,7 +127,21 @@ export class VehicleCheckinRepository {
 
   async deleteJobCard(id: string) {
     try {
-      return await db.job.delete({ where: { id } });
+      let targetJobId = id;
+      const existing = await db.job.findFirst({ where: { id } });
+      if (!existing) {
+        const carIn = await db.carIn.findFirst({ where: { id } });
+        if (carIn && carIn.jobCardId) {
+          targetJobId = carIn.jobCardId;
+        }
+      }
+
+      await db.job.updateMany({
+        where: { id: targetJobId },
+        data: { isDeleted: true, deletedAt: new Date() },
+      });
+
+      return await db.job.delete({ where: { id: targetJobId } }).catch(() => null);
     } catch (err: any) {
       if (err.code === 'P2025') {
         logger.warn(`Job card with ID ${id} not found during deleteJobCard operation.`);

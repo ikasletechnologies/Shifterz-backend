@@ -210,11 +210,21 @@ export class VehicleCheckinService {
   }
 
   async deleteCheckin(id: string) {
-    const car = await this.repository.findById(id);
-    if (car && car.jobCardId) {
-      await this.repository.deleteJobCard(car.jobCardId);
+    let car = await this.repository.findById(id);
+    if (!car) {
+      car = await db.carIn.findFirst({ where: { jobCardId: id, isDeleted: false } });
     }
-    await this.repository.deleteOutpassesByCarInId(id);
-    await this.repository.delete(id);
+
+    if (car) {
+      if (car.jobCardId) {
+        await this.repository.deleteJobCard(car.jobCardId);
+      }
+      await this.repository.deleteJobCard(car.id);
+      await this.repository.deleteOutpassesByCarInId(car.id);
+      await this.repository.delete(car.id);
+    } else {
+      await this.repository.deleteJobCard(id);
+      await this.repository.delete(id);
+    }
   }
 }

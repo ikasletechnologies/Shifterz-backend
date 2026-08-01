@@ -4,14 +4,53 @@ import { NotFoundError } from '../../../shared/errors/NotFoundError.js';
 
 export class JobCardRepository {
   async findAll(filter: any) {
-    return db.job.findMany({
-      where: filter,
+    const isDeletedFilter = { isDeleted: false };
+    const whereClause = filter && Object.keys(filter).length > 0
+      ? { AND: [filter, isDeletedFilter] }
+      : isDeletedFilter;
+
+    const jobs = await db.job.findMany({
+      where: whereClause,
       orderBy: { createdAt: "desc" },
+    });
+
+    const carIns = await db.carIn.findMany({ where: { isDeleted: false } });
+    const customers = await db.customer.findMany({ where: { isDeleted: false } });
+
+    const carInMapByJobId = new Map<string, string>();
+    const carInMapByVehicle = new Map<string, string>();
+    carIns.forEach((ci) => {
+      if (ci.jobCardId && ci.phone) carInMapByJobId.set(ci.jobCardId, ci.phone);
+      if (ci.vehicle && ci.phone) carInMapByVehicle.set(ci.vehicle.trim().toUpperCase(), ci.phone);
+    });
+
+    const customerMapByName = new Map<string, string>();
+    customers.forEach((c) => {
+      if (c.name && c.phone) customerMapByName.set(c.name.trim().toLowerCase(), c.phone);
+    });
+
+    return jobs.map((j) => {
+      const phone =
+        carInMapByJobId.get(j.id) ||
+        carInMapByVehicle.get((j.vehicle || "").trim().toUpperCase()) ||
+        customerMapByName.get((j.customer || "").trim().toLowerCase()) ||
+        "";
+      return {
+        ...j,
+        phone,
+        customerPhone: phone,
+      };
     });
   }
 
   async findById(id: string) {
-    return db.job.findFirst({ where: { id, isDeleted: false } });
+    const job = await db.job.findFirst({ where: { id, isDeleted: false } });
+    if (job) return job;
+    const carIn = await db.carIn.findFirst({ where: { id, isDeleted: false } });
+    if (carIn && carIn.jobCardId) {
+      return db.job.findFirst({ where: { id: carIn.jobCardId, isDeleted: false } });
+    }
+    return null;
   }
 
   async findEmployeeByName(name: string) {
@@ -48,6 +87,15 @@ export class JobCardRepository {
 
   async update(id: string, data: any) {
     try {
+      let targetJobId = id;
+      const existing = await db.job.findFirst({ where: { id, isDeleted: false } });
+      if (!existing) {
+        const carIn = await db.carIn.findFirst({ where: { id, isDeleted: false } });
+        if (carIn && carIn.jobCardId) {
+          targetJobId = carIn.jobCardId;
+        }
+      }
+
       const updateData: any = {};
       if (data.vehicle !== undefined) updateData.vehicle = data.vehicle;
       if (data.customer !== undefined) updateData.customer = data.customer;
@@ -78,7 +126,7 @@ export class JobCardRepository {
       }
 
       return await db.job.update({
-        where: { id },
+        where: { id: targetJobId },
         data: updateData,
       });
     } catch (err: any) {
@@ -91,10 +139,21 @@ export class JobCardRepository {
 
   async softDelete(id: string) {
     try {
-      return await db.job.update({
-        where: { id },
+      let targetJobId = id;
+      const existing = await db.job.findFirst({ where: { id } });
+      if (!existing) {
+        const carIn = await db.carIn.findFirst({ where: { id } });
+        if (carIn && carIn.jobCardId) {
+          targetJobId = carIn.jobCardId;
+        }
+      }
+
+      await db.job.updateMany({
+        where: { id: targetJobId },
         data: { isDeleted: true, deletedAt: new Date().toISOString() },
       });
+
+      return await db.job.delete({ where: { id: targetJobId } }).catch(() => null);
     } catch (err: any) {
       if (err.code === 'P2025') {
         throw new NotFoundError(`Job card with ID '${id}' not found.`);
