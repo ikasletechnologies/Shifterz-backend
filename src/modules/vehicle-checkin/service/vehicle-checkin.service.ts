@@ -56,7 +56,7 @@ export class VehicleCheckinService {
     const jobCardIds = checkins.map((c) => c.jobCardId).filter(Boolean);
     const jobs = await db.job.findMany({
       where: { id: { in: jobCardIds } },
-      select: { id: true, technician: true, technicianId: true },
+      select: { id: true, technician: true, technicianId: true, status: true },
     });
     const jobMap = new Map(jobs.map((j) => [j.id, j]));
 
@@ -67,6 +67,8 @@ export class VehicleCheckinService {
         entryId: c.id,
         technician: job?.technician || "",
         technicianId: job?.technicianId || null,
+        technicianStatus: job?.status || "",
+        jobStatus: job?.status || "",
       };
     });
 
