@@ -116,7 +116,18 @@ export class EmployeeService {
   async updateEmployee(id: string, data: UpdateEmployeeDTO) {
     const updateData: any = { ...data };
     delete updateData.permissions;
-    
+
+    if (updateData.username !== undefined) {
+      const trimmed = updateData.username ? String(updateData.username).trim().toLowerCase() : "";
+      updateData.username = trimmed || null;
+    }
+
+    if (updateData.password) {
+      updateData.password = await bcrypt.hash(updateData.password, 10);
+    } else {
+      delete updateData.password;
+    }
+
     const updated = await this.repository.update(id, updateData);
     
     if (data.permissions) {

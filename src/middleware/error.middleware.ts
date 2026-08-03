@@ -29,6 +29,15 @@ export const errorMiddleware = (err: any, req: Request, res: Response, next: Nex
     return;
   }
 
+  if (err?.code === 'P2002') {
+    const fields = Array.isArray(err.meta?.target) ? err.meta.target.join(', ') : err.meta?.target || 'field';
+    res.status(409).json({
+      success: false,
+      error: `A record with this ${fields} already exists`
+    });
+    return;
+  }
+
   logger.error(err);
 
   res.status(500).json({

@@ -21,6 +21,7 @@ export const updateEmployeeSchema = z.object({
     email: z.string().optional(),
     status: z.string().optional(),
     username: z.string().optional(),
+    password: z.string().optional(),
     role: z.string().optional(),
     franchiseId: z.string().nullable().optional(),
     permissions: z.array(z.string()).optional()
