@@ -180,11 +180,12 @@ export class VehicleCheckinService {
 
     const updatedCar = await this.repository.checkout(id, now);
 
-    // Auto-complete Job Card
+    // Auto-deliver Job Card when vehicle is checked out in Car In/Out workflow
     if (car.jobCardId) {
       await this.repository.updateJobCard(car.jobCardId, {
-        status: "Completed",
+        status: "Delivered",
         estCompletion: now,
+        actualCompletion: now,
       });
     }
 
