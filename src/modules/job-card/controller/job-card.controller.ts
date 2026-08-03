@@ -32,7 +32,7 @@ export class JobCardController {
           userRole === "QUALITY_ASSURANCE"
         ) {
           filter = {
-            status: { in: ["Waiting QC", "Inspecting", "QC Passed", "QC Failed", "Rework", "Ready For Billing"] }
+            status: { in: ["Completed", "Work Completed", "QC Pending", "Waiting QC", "Inspecting", "QC Passed", "QC Failed", "Ready For Billing"] }
           };
         } else if (
           userRole.includes("BILLING") ||

@@ -13,7 +13,7 @@ export class WorkshopService {
 
     const totalAssigned = jobs.length;
     const inProgress = jobs.filter(j => j.status === "In Progress").length;
-    const waitingMaterial = jobs.filter(j => j.status === "Waiting Material").length;
+    const waitingMaterial = jobs.filter(j => j.status === "Waiting Material" || j.status === "Waiting for Parts" || j.status === "Waiting Parts").length;
     const waitingCustomer = jobs.filter(j => j.status === "Waiting Customer").length;
     const waitingQC = jobs.filter(j => j.status === "Waiting QC").length;
     const isCompleted = (s: string) => COMPLETED_JOB_STATUSES.includes(s);

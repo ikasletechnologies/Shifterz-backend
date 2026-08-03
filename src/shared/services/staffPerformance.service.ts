@@ -41,7 +41,13 @@ export async function computeStaffPerformance(params: StaffPerformanceParams) {
     orderBy: { id: "asc" },
   });
 
-  const jobWhere: any = { isDeleted: false, [assigneeIdField]: { not: null } };
+  const jobWhere: any = { isDeleted: false };
+  if (tenantFilter && tenantFilter.franchiseId) {
+    jobWhere.franchiseId = tenantFilter.franchiseId;
+  }
+  if (franchiseId !== undefined) {
+    jobWhere.franchiseId = franchiseId === "HQ" ? null : franchiseId;
+  }
   if (serviceType) jobWhere.service = serviceType;
   if (dateFrom || dateTo) {
     jobWhere.startDate = {};
@@ -51,24 +57,32 @@ export async function computeStaffPerformance(params: StaffPerformanceParams) {
 
   const jobs = await db.job.findMany({ where: jobWhere });
 
-  const jobsByAssignee = new Map<string, typeof jobs>();
-  for (const job of jobs) {
-    const key = (job as any)[assigneeIdField] as string | null;
-    if (!key) continue;
-    if (!jobsByAssignee.has(key)) jobsByAssignee.set(key, []);
-    jobsByAssignee.get(key)!.push(job);
-  }
+  const isWaitingParts = (s: string) => {
+    if (!s) return false;
+    const norm = s.trim().toLowerCase();
+    return norm === "waiting for parts" || norm === "waiting material" || norm === "waiting parts" || (norm.includes("waiting") && norm.includes("part"));
+  };
+
+  const isCompleted = (s: string) => COMPLETED_JOB_STATUSES.includes(s);
+  const isInProgress = (s: string) => s === "In Progress";
+  const isQcPending = (s: string) => s === "QC Pending" || s === "Waiting QC" || s === "QC";
 
   const todayStr = new Date().toISOString().split("T")[0];
 
   const fullList = employees.map((emp) => {
-    const empJobs = jobsByAssignee.get(emp.id) || [];
+    const empJobs = jobs.filter((j) => {
+      const techIdMatch = Boolean(j.technicianId && j.technicianId === emp.id);
+      const nameMatch = Boolean(j.technician && emp.name && j.technician.trim().toLowerCase() === emp.name.trim().toLowerCase());
+      const usernameMatch = Boolean(j.technician && emp.username && j.technician.trim().toLowerCase() === emp.username.trim().toLowerCase());
+      return techIdMatch || nameMatch || usernameMatch;
+    });
+
     const assignedJobs = empJobs.length;
-    const inProgress = empJobs.filter((j) => j.status === "In Progress").length;
-    const waitingParts = empJobs.filter((j) => j.status === "Waiting Material").length;
-    const completed = empJobs.filter((j) => COMPLETED_JOB_STATUSES.includes(j.status)).length;
+    const inProgress = empJobs.filter((j) => isInProgress(j.status)).length;
+    const waitingParts = empJobs.filter((j) => isWaitingParts(j.status)).length;
+    const completed = empJobs.filter((j) => isCompleted(j.status)).length;
     const completedToday = empJobs.filter((j) => {
-      if (!COMPLETED_JOB_STATUSES.includes(j.status)) return false;
+      if (!isCompleted(j.status)) return false;
       const d = j.actualCompletion ? new Date(j.actualCompletion).toISOString().split("T")[0] : null;
       return d === todayStr;
     }).length;
@@ -76,6 +90,7 @@ export async function computeStaffPerformance(params: StaffPerformanceParams) {
     const passed = empJobs.filter((j) => j.status === "QC Passed").length;
     const failed = empJobs.filter((j) => j.status === "QC Failed").length;
     const inspected = passed + failed;
+    const qcPending = empJobs.filter((j) => isQcPending(j.status)).length;
     const productivity = assignedJobs > 0 ? Math.round((completed / assignedJobs) * 100) : 0;
     const passRate = inspected > 0 ? Math.round((passed / inspected) * 100) : 0;
 
@@ -92,6 +107,7 @@ export async function computeStaffPerformance(params: StaffPerformanceParams) {
       completed,
       completedToday,
       rework,
+      qcPending,
       productivity,
       inspected,
       passed,
@@ -104,11 +120,18 @@ export async function computeStaffPerformance(params: StaffPerformanceParams) {
     total: fullList.length,
     active: employees.filter((e) => e.status === "Active").length,
     inactive: employees.filter((e) => e.status !== "Active").length,
-    assignedJobs: fullList.reduce((s, e) => s + e.assignedJobs, 0),
-    inProgress: fullList.reduce((s, e) => s + e.inProgress, 0),
-    waitingParts: fullList.reduce((s, e) => s + e.waitingParts, 0),
-    completedToday: fullList.reduce((s, e) => s + e.completedToday, 0),
-    rework: fullList.reduce((s, e) => s + e.rework, 0),
+    assignedJobs: jobs.length,
+    inProgress: jobs.filter((j) => isInProgress(j.status)).length,
+    waitingParts: jobs.filter((j) => isWaitingParts(j.status)).length,
+    completed: jobs.filter((j) => isCompleted(j.status)).length,
+    totalCompleted: jobs.filter((j) => isCompleted(j.status)).length,
+    completedToday: jobs.filter((j) => {
+      if (!isCompleted(j.status)) return false;
+      const d = j.actualCompletion ? new Date(j.actualCompletion).toISOString().split("T")[0] : null;
+      return d === todayStr;
+    }).length,
+    rework: jobs.filter((j) => j.isRework || j.status === "Rework" || j.status === "QC Failed").length,
+    qcPending: jobs.filter((j) => isQcPending(j.status)).length,
     avgProductivity: fullList.length > 0
       ? Math.round(fullList.reduce((s, e) => s + e.productivity, 0) / fullList.length)
       : 0,
