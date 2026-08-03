@@ -4,6 +4,18 @@ import { generateUid } from '../../../shared/utils/idGenerator.js';
 import bcrypt from 'bcrypt';
 import { UnauthorizedError } from '../../../shared/errors/UnauthorizedError.js';
 import { ApiError } from '../../../shared/errors/ApiError.js';
+import { computeStaffPerformance } from '../../../shared/services/staffPerformance.service.js';
+
+export interface StaffManagementQuery {
+  search?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  franchiseId?: string;
+  serviceType?: string;
+  status?: string;
+  page?: string;
+  pageSize?: string;
+}
 
 export class EmployeeService {
   constructor(private readonly repository: EmployeeRepository = new EmployeeRepository()) {}
@@ -34,6 +46,27 @@ export class EmployeeService {
 
   async getTechnicians() {
     return this.repository.findTechnicians();
+  }
+
+  async getTechnicianManagement(userRole: string, userFranchiseId: string | undefined, query: StaffManagementQuery) {
+    const tenantFilter: any = {};
+    if (userRole !== "SUPER_ADMIN" && userRole !== "HQ_USER" && userFranchiseId) {
+      tenantFilter.franchiseId = userFranchiseId;
+    }
+
+    return computeStaffPerformance({
+      role: "TECHNICIAN",
+      assigneeIdField: "technicianId",
+      tenantFilter,
+      search: query.search,
+      dateFrom: query.dateFrom,
+      dateTo: query.dateTo,
+      franchiseId: query.franchiseId,
+      serviceType: query.serviceType,
+      status: query.status,
+      page: query.page ? parseInt(query.page, 10) : undefined,
+      pageSize: query.pageSize ? parseInt(query.pageSize, 10) : undefined,
+    });
   }
 
   async createEmployee(data: CreateEmployeeDTO, userRole: string, userFranchiseId?: string, isTechnicianRoute = false) {

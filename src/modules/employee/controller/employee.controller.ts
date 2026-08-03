@@ -34,6 +34,17 @@ export class EmployeeController {
     }
   };
 
+  getTechnicianManagement = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const userRole = req.user?.role || "UNKNOWN";
+      const userFranchiseId = req.user?.franchiseId || undefined;
+      const result = await this.service.getTechnicianManagement(userRole, userFranchiseId, req.query as any);
+      res.json(result);
+    } catch (error) {
+      next(error);
+    }
+  };
+
   createEmployee = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const userRole = req.user?.role || "UNKNOWN";

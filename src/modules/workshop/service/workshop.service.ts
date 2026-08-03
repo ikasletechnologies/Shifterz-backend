@@ -1,4 +1,5 @@
 import { WorkshopRepository } from '../repository/workshop.repository.js';
+import { COMPLETED_JOB_STATUSES } from '../../../shared/constants/jobStatus.constants.js';
 
 export class WorkshopService {
   constructor(private readonly repository: WorkshopRepository = new WorkshopRepository()) {}
@@ -15,9 +16,7 @@ export class WorkshopService {
     const waitingMaterial = jobs.filter(j => j.status === "Waiting Material").length;
     const waitingCustomer = jobs.filter(j => j.status === "Waiting Customer").length;
     const waitingQC = jobs.filter(j => j.status === "Waiting QC").length;
-    const isCompleted = (s: string) => [
-      "Completed", "QC Pending", "QC Passed", "Ready For Billing", "Work Completed", "Delivered", "Out"
-    ].includes(s);
+    const isCompleted = (s: string) => COMPLETED_JOB_STATUSES.includes(s);
 
     const completed = jobs.filter(j => isCompleted(j.status)).length;
     const completedToday = jobs.filter(j => {

@@ -25,6 +25,7 @@ employeeRouter.delete('/:id', controller.deleteEmployee);
 hqEmployeeRouter.get('/', controller.getHqEmployees);
 
 // Technicians
+technicianRouter.get('/management', controller.getTechnicianManagement);
 technicianRouter.get('/', controller.getTechnicians);
 technicianRouter.post('/', validate(createEmployeeSchema), controller.createTechnician);
 technicianRouter.delete('/:id', controller.deleteEmployee);

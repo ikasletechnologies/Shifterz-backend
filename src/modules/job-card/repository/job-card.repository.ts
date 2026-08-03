@@ -39,6 +39,7 @@ export class JobCardRepository {
         ...j,
         phone,
         customerPhone: phone,
+        receivedAt: j.createdAt,
       };
     });
   }
@@ -75,6 +76,8 @@ export class JobCardRepository {
         service: data.service || "",
         technician: data.technician || "",
         technicianId: techId,
+        serviceAdvisor: data.serviceAdvisor || "",
+        serviceAdvisorId: data.serviceAdvisorId || null,
         status: data.status || "Pending",
         priority: data.priority ?? "",
         startDate,
@@ -102,10 +105,17 @@ export class JobCardRepository {
       if (data.service !== undefined) updateData.service = data.service;
       if (data.technician !== undefined) updateData.technician = data.technician;
       if (data.technicianId !== undefined) updateData.technicianId = data.technicianId;
+      if (data.serviceAdvisor !== undefined) updateData.serviceAdvisor = data.serviceAdvisor;
+      if (data.serviceAdvisorId !== undefined) updateData.serviceAdvisorId = data.serviceAdvisorId;
       if (data.status !== undefined) updateData.status = data.status;
       if (data.priority !== undefined) updateData.priority = data.priority;
       if (data.notes !== undefined) updateData.notes = data.notes;
       if (data.photos !== undefined) updateData.photos = data.photos;
+      if (data.qcNotes !== undefined) updateData.qcNotes = data.qcNotes;
+      if (data.qcById !== undefined) updateData.qcById = data.qcById;
+      if (data.qcBy !== undefined) updateData.qcBy = data.qcBy;
+      if (data.isRework !== undefined) updateData.isRework = data.isRework;
+      if (data.reworkCount !== undefined) updateData.reworkCount = data.reworkCount;
 
       if (data.startDate !== undefined && data.startDate !== null) {
         if (typeof data.startDate === 'string' && data.startDate.trim()) {
@@ -125,6 +135,36 @@ export class JobCardRepository {
         }
       }
 
+      if (data.actualCompletion !== undefined && data.actualCompletion !== null) {
+        const raw = data.actualCompletion;
+        if (typeof raw === 'string' && raw.trim()) {
+          const d = new Date(raw);
+          if (!isNaN(d.getTime())) updateData.actualCompletion = d;
+        } else if (raw instanceof Date) {
+          updateData.actualCompletion = raw;
+        }
+      }
+
+      if (data.passedAt !== undefined && data.passedAt !== null) {
+        const raw = data.passedAt;
+        if (typeof raw === 'string' && raw.trim()) {
+          const d = new Date(raw);
+          if (!isNaN(d.getTime())) updateData.passedAt = d;
+        } else if (raw instanceof Date) {
+          updateData.passedAt = raw;
+        }
+      }
+
+      if (data.failedAt !== undefined && data.failedAt !== null) {
+        const raw = data.failedAt;
+        if (typeof raw === 'string' && raw.trim()) {
+          const d = new Date(raw);
+          if (!isNaN(d.getTime())) updateData.failedAt = d;
+        } else if (raw instanceof Date) {
+          updateData.failedAt = raw;
+        }
+      }
+
       return await db.job.update({
         where: { id: targetJobId },
         data: updateData,
@@ -135,6 +175,16 @@ export class JobCardRepository {
       }
       throw err;
     }
+  }
+
+  async updateChecklist(id: string, checklist: any) {
+    return db.job.update({ where: { id }, data: { checklist } });
+  }
+
+  async appendQcPhotos(id: string, urls: string[]) {
+    const job = await db.job.findFirst({ where: { id } });
+    const existing = job?.qcPhotos || [];
+    return db.job.update({ where: { id }, data: { qcPhotos: [...existing, ...urls] } });
   }
 
   async softDelete(id: string) {

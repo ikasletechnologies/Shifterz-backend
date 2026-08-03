@@ -41,6 +41,7 @@ import { settingsRouter } from "./modules/settings/routes/settings.routes.js";
 import { reportRouter } from "./modules/report/routes/report.routes.js";
 import { uploadRouter } from "./modules/upload/routes/upload.routes.js";
 import { vehicleRouter } from "./modules/vehicle/routes/vehicle.routes.js";
+import { serviceAdvisorRouter } from "./modules/service-advisor/service-advisor.routes.js";
 import { errorMiddleware } from "./middleware/error.middleware.js";
 
 // Routes
@@ -65,6 +66,7 @@ app.use("/api/settings", settingsRouter);
 app.use("/api/reports", reportRouter);
 app.use("/api/upload", uploadRouter);
 app.use("/api/vehicle", vehicleRouter);
+app.use("/api/service-advisors", serviceAdvisorRouter);
 app.use("/api/hq", hqRouter);
 app.use("/api/dashboard", dashboardRouter);
 

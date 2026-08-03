@@ -182,9 +182,21 @@ model Job {
   priority         String
   startDate        DateTime
   estCompletion    DateTime
+  actualCompletion DateTime?
   notes            String
   photos           String[]
   technicianId     String?
+  serviceAdvisorId String?
+  serviceAdvisor   String?
+  qcNotes          String?
+  passedAt         DateTime?
+  failedAt         DateTime?
+  checklist        Json?
+  qcPhotos         String[]   @default([])
+  qcById           String?
+  qcBy             String?
+  isRework         Boolean    @default(false)
+  reworkCount      Int        @default(0)
   franchiseId      String?
   createdAt        DateTime   @default(now())
   isDeleted        Boolean    @default(false)

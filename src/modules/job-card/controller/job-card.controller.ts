@@ -32,7 +32,7 @@ export class JobCardController {
           userRole === "QUALITY_ASSURANCE"
         ) {
           filter = {
-            status: { in: ["Completed", "QC Pending", "QC Passed", "Ready For Billing"] }
+            status: { in: ["Waiting QC", "Inspecting", "QC Passed", "QC Failed", "Rework", "Ready For Billing"] }
           };
         } else if (
           userRole.includes("BILLING") ||
@@ -67,8 +67,34 @@ export class JobCardController {
     try {
       const id = String(req.params.id);
       await this.service.checkTechnicianAccess(id, req.user);
-      const result = await this.service.updateJob(id, req.body);
+      const result = await this.service.updateJob(id, req.body, req.user);
       res.json(result);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  submitChecklist = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const id = String(req.params.id);
+      const result = await this.service.submitChecklist(id, req.body.checklist);
+      res.json(result);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  uploadQcPhotos = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const id = String(req.params.id);
+      const files = (req.files as Express.Multer.File[]) || [];
+      if (files.length === 0) {
+        res.status(400).json({ error: "No files uploaded" });
+        return;
+      }
+      const urls = files.map((f) => `/uploads/${f.filename}`);
+      const result = await this.service.appendQcPhotos(id, urls);
+      res.json({ photos: result.qcPhotos });
     } catch (error) {
       next(error);
     }
