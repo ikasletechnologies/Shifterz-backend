@@ -17,11 +17,11 @@ export class JobCardRepository {
     const carIns = await db.carIn.findMany({ where: { isDeleted: false } });
     const customers = await db.customer.findMany({ where: { isDeleted: false } });
 
-    const carInMapByJobId = new Map<string, string>();
-    const carInMapByVehicle = new Map<string, string>();
+    const carInMapByJobId = new Map<string, any>();
+    const carInMapByVehicle = new Map<string, any>();
     carIns.forEach((ci) => {
-      if (ci.jobCardId && ci.phone) carInMapByJobId.set(ci.jobCardId, ci.phone);
-      if (ci.vehicle && ci.phone) carInMapByVehicle.set(ci.vehicle.trim().toUpperCase(), ci.phone);
+      if (ci.jobCardId) carInMapByJobId.set(ci.jobCardId, ci);
+      if (ci.vehicle) carInMapByVehicle.set(ci.vehicle.trim().toUpperCase(), ci);
     });
 
     const customerMapByName = new Map<string, string>();
@@ -29,19 +29,55 @@ export class JobCardRepository {
       if (c.name && c.phone) customerMapByName.set(c.name.trim().toLowerCase(), c.phone);
     });
 
-    return jobs.map((j) => {
+    const existingJobIds = new Set(jobs.map((j) => j.id));
+    const existingVehicles = new Set(jobs.map((j) => (j.vehicle || "").trim().toUpperCase()));
+
+    const resultList = jobs.map((j) => {
+      const ci = carInMapByJobId.get(j.id) || carInMapByVehicle.get((j.vehicle || "").trim().toUpperCase());
+      const isDeliveredInCarIn = ci && (ci.status === "Delivered" || ci.status === "Out" || ci.outTime !== null);
+      const finalStatus = isDeliveredInCarIn ? "Delivered" : j.status;
+
       const phone =
-        carInMapByJobId.get(j.id) ||
-        carInMapByVehicle.get((j.vehicle || "").trim().toUpperCase()) ||
+        (ci && ci.phone) ||
         customerMapByName.get((j.customer || "").trim().toLowerCase()) ||
         "";
+
       return {
         ...j,
+        status: finalStatus,
         phone,
         customerPhone: phone,
         receivedAt: j.createdAt,
       };
     });
+
+    carIns.forEach((ci) => {
+      const isDelivered = ci.status === "Delivered" || ci.status === "Out" || ci.outTime !== null;
+      const vNorm = (ci.vehicle || "").trim().toUpperCase();
+      const hasJob = (ci.jobCardId && existingJobIds.has(ci.jobCardId)) || existingVehicles.has(vNorm);
+
+      if (isDelivered && !hasJob) {
+        resultList.push({
+          id: ci.jobCardId || ci.id,
+          vehicle: ci.vehicle || "",
+          customer: ci.customer || "",
+          service: ci.service || "",
+          technician: "",
+          status: "Delivered",
+          priority: "",
+          startDate: ci.inTime || new Date(),
+          estCompletion: ci.outTime || ci.inTime || new Date(),
+          actualCompletion: ci.outTime || ci.inTime || new Date(),
+          notes: ci.notes || "",
+          photos: [],
+          phone: ci.phone || "",
+          customerPhone: ci.phone || "",
+          receivedAt: ci.inTime || new Date(),
+        } as any);
+      }
+    });
+
+    return resultList;
   }
 
   async findById(id: string) {
