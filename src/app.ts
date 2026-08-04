@@ -35,6 +35,7 @@ import { inventoryRouter } from "./modules/inventory/routes/inventory.routes.js"
 import { employeeRouter, hqEmployeeRouter, technicianRouter } from "./modules/employee/routes/employee.routes.js";
 import { attendanceRouter } from "./modules/employee/routes/attendance.routes.js";
 import { transferRouter } from "./modules/employee/routes/transfer.routes.js";
+import { leaveRouter } from "./modules/employee/routes/leave.routes.js";
 import { serviceRouter } from "./modules/service/routes/service.routes.js";
 import { franchiseRouter } from "./modules/franchise/routes/franchise.routes.js";
 import { settingsRouter } from "./modules/settings/routes/settings.routes.js";
@@ -42,11 +43,18 @@ import { reportRouter } from "./modules/report/routes/report.routes.js";
 import { uploadRouter } from "./modules/upload/routes/upload.routes.js";
 import { vehicleRouter } from "./modules/vehicle/routes/vehicle.routes.js";
 import { serviceAdvisorRouter } from "./modules/service-advisor/service-advisor.routes.js";
+import { callbackRouter } from "./modules/lead/routes/callback.routes.js";
+import { referralRouter } from "./modules/lead/routes/referral.routes.js";
+import { appointmentRouter } from "./modules/appointments/appointments.routes.js";
+import { workflowStageRouter } from "./modules/workflow-stage/routes/workflow-stage.routes.js";
+import { qcRouter } from "./modules/qc/qc.routes.js";
 import { errorMiddleware } from "./middleware/error.middleware.js";
 
 // Routes
 app.use("/api/auth", authRoutes);
 app.use("/api/leads", leadRouter);
+app.use("/api/callbacks", callbackRouter);
+app.use("/api/referrals", referralRouter);
 app.use("/api/customers", customerRouter);
 app.use("/api/carin", vehicleCheckinRouter);
 app.use("/api/jobs", jobCardRouter);
@@ -60,6 +68,7 @@ app.use("/api/hq-employees", hqEmployeeRouter);
 app.use("/api/technicians", technicianRouter);
 app.use("/api/attendance", attendanceRouter);
 app.use("/api/member-transfers", transferRouter);
+app.use("/api/leaves", leaveRouter);
 app.use("/api/services", serviceRouter);
 app.use("/api/franchise", franchiseRouter);
 app.use("/api/settings", settingsRouter);
@@ -67,8 +76,11 @@ app.use("/api/reports", reportRouter);
 app.use("/api/upload", uploadRouter);
 app.use("/api/vehicle", vehicleRouter);
 app.use("/api/service-advisors", serviceAdvisorRouter);
+app.use("/api/appointments", appointmentRouter);
 app.use("/api/hq", hqRouter);
 app.use("/api/dashboard", dashboardRouter);
+app.use("/api/workflow-stages", workflowStageRouter);
+app.use("/api/qc", qcRouter);
 
 app.use(errorMiddleware);
 

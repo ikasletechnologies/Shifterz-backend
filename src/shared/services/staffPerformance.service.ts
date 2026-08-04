@@ -56,6 +56,14 @@ export async function computeStaffPerformance(params: StaffPerformanceParams) {
   }
 
   const jobs = await db.job.findMany({ where: jobWhere });
+  const jobIds = jobs.map((j) => j.id);
+
+  // 10.11: Revenue from Assigned Jobs / Customer Complaints — only invoices/complaints
+  // linked via the (additive) Invoice.jobId / CustomerComplaint.jobId columns count here.
+  const [invoices, complaints] = await Promise.all([
+    jobIds.length > 0 ? db.invoice.findMany({ where: { jobId: { in: jobIds }, isDeleted: false } }) : Promise.resolve([]),
+    jobIds.length > 0 ? db.customerComplaint.findMany({ where: { jobId: { in: jobIds } } }) : Promise.resolve([]),
+  ]);
 
   const isWaitingParts = (s: string) => {
     if (!s) return false;
@@ -87,12 +95,28 @@ export async function computeStaffPerformance(params: StaffPerformanceParams) {
       return d === todayStr;
     }).length;
     const rework = empJobs.filter((j) => j.isRework).length;
-    const passed = empJobs.filter((j) => j.status === "QC Passed").length;
-    const failed = empJobs.filter((j) => j.status === "QC Failed").length;
+    // Matched via passedAt/failedAt (set by both the legacy generic status flow
+    // and the dedicated QC module's decide()) rather than exact status strings,
+    // since a passed job's status moves on to "Ready For Billing"/"Delivered".
+    const passed = empJobs.filter((j) => j.passedAt).length;
+    const failed = empJobs.filter((j) => j.failedAt && !j.passedAt).length;
     const inspected = passed + failed;
+    const qcAttempts = empJobs.reduce((sum, j) => sum + (j.qcAttemptCount || 0), 0);
     const qcPending = empJobs.filter((j) => isQcPending(j.status)).length;
     const productivity = assignedJobs > 0 ? Math.round((completed / assignedJobs) * 100) : 0;
     const passRate = inspected > 0 ? Math.round((passed / inspected) * 100) : 0;
+
+    // 10.11: additional workshop performance metrics
+    const now = new Date();
+    const delayCount = empJobs.filter((j) => {
+      const end = j.actualCompletion ? new Date(j.actualCompletion) : now;
+      return !isCompleted(j.status) ? now > new Date(j.estCompletion) : end > new Date(j.estCompletion);
+    }).length;
+    const empJobIds = new Set(empJobs.map((j) => j.id));
+    const revenue = invoices
+      .filter((inv) => inv.jobId && empJobIds.has(inv.jobId))
+      .reduce((sum, inv) => sum + (inv.amount + inv.gst - inv.discount), 0);
+    const customerComplaints = complaints.filter((c) => c.jobId && empJobIds.has(c.jobId)).length;
 
     return {
       id: emp.id,
@@ -113,6 +137,10 @@ export async function computeStaffPerformance(params: StaffPerformanceParams) {
       passed,
       failed,
       passRate,
+      delayCount,
+      revenue,
+      customerComplaints,
+      qcAttempts,
     };
   });
 

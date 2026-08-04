@@ -4,6 +4,11 @@ import { generateSequentialId, generateUid } from '../../../shared/utils/idGener
 import { NotFoundError } from '../../../shared/errors/NotFoundError.js';
 import { ValidationError } from '../../../shared/errors/ValidationError.js';
 import { ForbiddenError } from '../../../shared/errors/ForbiddenError.js';
+import {
+  notifyJobAssigned,
+  notifyVehicleReady,
+  notifyEstimatedDeliveryUpdate,
+} from '../../../shared/services/notification.service.js';
 
 function safeIsoDate(input?: string | Date | null): string {
   if (!input) return new Date().toISOString();
@@ -127,31 +132,57 @@ export class VehicleCheckinService {
       franchiseId,
     });
 
-    // Auto-upsert Customer
+    // Auto-upsert Customer & Vehicle association
     if (data.phone) {
-      const existingCust = await this.repository.findCustomerByPhone(data.phone);
-      if (existingCust) {
+      let customer = await this.repository.findCustomerByPhone(data.phone);
+      if (customer) {
         await this.repository.updateCustomerVisits(
-          existingCust.id,
-          existingCust.visits + 1,
+          customer.id,
+          customer.visits + 1,
           new Date().toISOString()
         );
       } else {
         const custId = await generateSequentialId("CUS");
-        await this.repository.createCustomer({
+        customer = await this.repository.createCustomer({
           id: custId,
           name: data.customer || "Walk-in",
           phone: data.phone || "",
           email: "",
-          vehicle: data.vehicle,
-          model: data.model || "",
           visits: 1,
           totalSpend: 0,
           lastVisit: new Date().toISOString(),
           franchiseId,
         });
       }
+
+      // Check if vehicle is already linked to the customer, if not create a new CustomerVehicle
+      const uppercaseVehicle = data.vehicle.toUpperCase();
+      const existingVehicle = await db.customerVehicle.findFirst({
+        where: { customerId: customer.id, vehicleNo: uppercaseVehicle, isDeleted: false }
+      });
+      if (!existingVehicle) {
+        await db.customerVehicle.create({
+          data: {
+            customerId: customer.id,
+            vehicleNo: uppercaseVehicle,
+            make: data.model ? (data.model.split(' ')[0] || 'Unknown') : 'Unknown',
+            model: data.model || 'Unknown',
+            odometer: data.odometer ? Number(data.odometer) : 0
+          }
+        });
+      }
     }
+
+    // ── Notification: Job Assigned ──────────────────────────────────────────
+    // Fires after job card auto-creation; technician may be assigned later
+    notifyJobAssigned({
+      franchiseId,
+      jobId: jobCardId,
+      vehicle: data.vehicle,
+      customerName: data.customer || 'Customer',
+      technicianId: null,   // assigned later via job card update
+      technicianName: null,
+    }).catch(console.error);
 
     return newCar;
   }
@@ -178,36 +209,81 @@ export class VehicleCheckinService {
       throw new NotFoundError("Car entry not found");
     }
 
-    const updatedCar = await this.repository.checkout(id, now);
+    // 1. Job Card Validation
+    if (!car.jobCardId) {
+      throw new ValidationError("No Job Card associated with this check-in.");
+    }
+    const job = await db.job.findUnique({ where: { id: car.jobCardId } });
+    if (!job) {
+      throw new ValidationError("Associated Job Card not found.");
+    }
+    const isJobCompleted = job.status === "Completed" || job.status === "QC Passed" || job.status === "Ready For Billing" || job.status === "Delivered" || job.status === "Out" || job.status === "Work Completed";
+    if (!isJobCompleted) {
+      throw new ValidationError(`Job is not completed. Current status: ${job.status}`);
+    }
+
+    // 2. QC Approval Check
+    const hasQcPassed = job.passedAt !== null || job.status === "QC Passed" || job.status === "Ready For Billing" || job.status === "Delivered" || job.status === "Out";
+    if (!hasQcPassed) {
+      throw new ValidationError("Quality Control has not approved/passed this job.");
+    }
+
+    // 3. Invoice Generated Check
+    const invoice = await db.invoice.findFirst({
+      where: { vehicle: car.vehicle, isDeleted: false, status: { not: "Cancelled" } },
+      orderBy: { createdAt: "desc" }
+    });
+    if (!invoice) {
+      throw new ValidationError("No active invoice has been generated for this vehicle.");
+    }
+
+    // 4. Payment Completed or Approved Credit Check
+    const payments = await db.payment.findMany({
+      where: { invoiceId: invoice.id, isDeleted: false }
+    });
+    const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
+    const invoiceAmount = invoice.amount + invoice.gst - invoice.discount;
+    const isCreditApproved = invoice.status === "Approved Credit" || invoice.status === "Paid";
+    if (totalPaid < invoiceAmount && !isCreditApproved) {
+      throw new ValidationError(`Payment incomplete. Invoiced: ₹${invoiceAmount}, Paid: ₹${totalPaid}. Approved credit is required for outstanding balance.`);
+    }
+
+    // 5. Outpass Generated & Approved Check
+    const outpass = await db.outPass.findFirst({
+      where: { carInId: id, isDeleted: false }
+    });
+    if (!outpass) {
+      throw new ValidationError("Outpass must be generated before vehicle delivery.");
+    }
+    if (outpass.status !== "Approved" && !outpass.issued) {
+      throw new ValidationError("Outpass must be Approved by authorized personnel before checkout.");
+    }
+
+    const updatedCar = await this.repository.checkout(id, now, {
+      deliveredById: data.deliveredById,
+      deliveredByName: data.deliveredByName,
+      customerAcknowledgement: data.customerAcknowledgement,
+    });
 
     // Auto-deliver Job Card when vehicle is checked out in Car In/Out workflow
-    if (car.jobCardId) {
-      await this.repository.updateJobCard(car.jobCardId, {
-        status: "Delivered",
-        estCompletion: now,
-        actualCompletion: now,
-      });
-    }
+    await this.repository.updateJobCard(car.jobCardId, {
+      status: "Delivered",
+      estCompletion: now,
+      actualCompletion: now,
+    });
 
-    // Auto-create OutPass
-    const existPass = await this.repository.findOutpassByCarInId(id);
-    if (!existPass) {
-      const opId = generateUid("OP");
-      await this.repository.createOutpass({
-        id: opId,
-        vehicle: car.vehicle,
-        model: car.model,
-        customer: car.customer,
-        phone: car.phone,
-        service: car.service,
-        outTime: now,
-        securityName: data.securityName || "N/A",
-        technicianName: "",
-        remarks: "Washed and checked out successfully.",
-        issued: true,
-        carInId: id,
-      });
-    }
+    // ── Notification: Vehicle Ready / Delivered ────────────────────────────
+    const customer = car.phone
+      ? await db.customer.findFirst({ where: { phone: car.phone, isDeleted: false }, select: { name: true, phone: true, email: true } }).catch(() => null)
+      : null;
+    notifyVehicleReady({
+      franchiseId: car.franchiseId,
+      customerName: customer?.name || car.customer,
+      customerPhone: customer?.phone || car.phone,
+      customerEmail: customer?.email,
+      vehicle: car.vehicle,
+      jobCardId: car.jobCardId,
+    }).catch(console.error);
 
     return updatedCar;
   }

@@ -1,11 +1,25 @@
 import { BillingRepository } from '../repository/billing.repository.js';
 import type { CreateInvoiceDTO, UpdateInvoiceDTO } from '../validation/billing.validation.js';
+import { db } from '../../../lib/db.js';
+import { ValidationError } from '../../../shared/errors/ValidationError.js';
+import { logAudit } from '../../../shared/services/audit.service.js';
+import { notifyCustomer, notifyManagers } from '../../../shared/services/notification.service.js';
+
+// 13.14: HQ is notified when an overall discount looks abnormal.
+const ABNORMAL_DISCOUNT_THRESHOLD_PERCENT = 20;
+
+export interface BillingActor {
+  id?: string;
+  name?: string;
+  role?: string;
+  franchiseId?: string | null;
+}
 
 export class BillingService {
   constructor(private readonly repository: BillingRepository = new BillingRepository()) {}
 
-  async getAllInvoices() {
-    const list = await this.repository.findAll();
+  async getAllInvoices(franchiseId?: string | null) {
+    const list = await this.repository.findAll(franchiseId);
     const payments = await this.repository.findAllPayments();
 
     return list.map(inv => {
@@ -15,7 +29,20 @@ export class BillingService {
     });
   }
 
-  async createInvoice(data: CreateInvoiceDTO) {
+  async createInvoice(data: CreateInvoiceDTO, actor?: BillingActor) {
+    // 12.11.4: No vehicle shall proceed to billing until QC is marked as Passed.
+    // Only enforced for actual Invoices linked to a job (Quotations/Estimates
+    // are pre-service documents, not billing, and non-job invoices are unaffected).
+    if (data.jobId && data.type === 'Invoice') {
+      const job = await db.job.findFirst({ where: { id: data.jobId, isDeleted: false } });
+      if (!job) throw new ValidationError(`Job ${data.jobId} not found`);
+      if (!job.passedAt) {
+        throw new ValidationError(
+          `Job ${data.jobId} has not passed Quality Control yet (current status: "${job.status}"). Billing cannot proceed until QC is passed.`
+        );
+      }
+    }
+
     const date = new Date(data.date || Date.now());
     const year = date.getFullYear();
     const month = date.getMonth();
@@ -29,15 +56,40 @@ export class BillingService {
       Estimate: `STZ-EST-${fy}-`,
     }[data.type] || `STZ-DOC-${fy}-`;
 
-    const maxId = await this.repository.findMaxIdForPrefix(docTypePrefix);
-    const invId = `${docTypePrefix}${maxId + 1}`;
+    const sequenceNumber = await this.repository.allocateSequence(docTypePrefix);
+    const invId = `${docTypePrefix}${sequenceNumber}`;
 
-    return this.repository.create(invId, data);
+    const invoice = await this.repository.create(invId, docTypePrefix, sequenceNumber, data);
+
+    await logAudit({
+      module: "billing",
+      recordId: invoice.id,
+      action: "create",
+      userId: actor?.id || "system",
+      branchId: invoice.franchiseId,
+      newValue: invoice,
+    });
+
+    if (data.type === "Invoice" && invoice.phone) {
+      await notifyCustomer(invoice.phone, null, "Invoice Generated", `Your invoice ${invoice.id} for ${invoice.vehicle} has been generated.`);
+    }
+
+    const subtotal = Number(data.amount || 0);
+    const discountPercent = subtotal > 0 ? (Number(data.discount || 0) / subtotal) * 100 : 0;
+    if (discountPercent > ABNORMAL_DISCOUNT_THRESHOLD_PERCENT) {
+      await notifyManagers(
+        invoice.franchiseId,
+        "Abnormal Discount",
+        `Invoice ${invoice.id} was created with a ${discountPercent.toFixed(1)}% discount.`
+      );
+    }
+
+    return invoice;
   }
 
-  async updateInvoice(id: string, data: UpdateInvoiceDTO) {
+  async updateInvoice(id: string, data: UpdateInvoiceDTO, actor?: BillingActor) {
     const existing = await this.repository.findById(id);
-    
+
     const auditData: any = {};
     if (data.modifiedBy) auditData.modifiedBy = data.modifiedBy;
     if (data.status === "Cancelled" && existing?.status !== "Cancelled") auditData.cancelledBy = data.modifiedBy || data.cancelledBy;
@@ -61,16 +113,92 @@ export class BillingService {
       paymentTerms: data.paymentTerms !== undefined ? data.paymentTerms : undefined,
       deliveryTerms: data.deliveryTerms !== undefined ? data.deliveryTerms : undefined,
       authorizedSignatory: data.authorizedSignatory !== undefined ? data.authorizedSignatory : undefined,
+      warranty: data.warranty !== undefined ? data.warranty : undefined,
+      discountReason: data.discountReason !== undefined ? data.discountReason : undefined,
     };
 
-    return this.repository.update(id, updateData);
+    const updated = await this.repository.update(id, updateData);
+
+    await logAudit({
+      module: "billing",
+      recordId: id,
+      action: "update",
+      userId: actor?.id || "system",
+      branchId: updated.franchiseId,
+      oldValue: existing,
+      newValue: updated,
+    });
+
+    return updated;
   }
 
-  async deleteInvoice(id: string) {
-    // Delete related payments first
+  async cancelInvoice(id: string, reason: string, actor?: BillingActor) {
+    const existing = await this.repository.findById(id);
+    if (!existing) throw new ValidationError("Invoice not found");
+
+    const cancelled = await this.repository.cancel(id, reason, actor?.id);
+
+    await logAudit({
+      module: "billing",
+      recordId: id,
+      action: "cancel",
+      userId: actor?.id || "system",
+      branchId: cancelled.franchiseId,
+      oldValue: existing,
+      newValue: cancelled,
+    });
+
+    return cancelled;
+  }
+
+  async shareInvoice(id: string, channel: "whatsapp" | "email", actor?: BillingActor) {
+    const invoice = await this.repository.findById(id);
+    if (!invoice) throw new ValidationError("Invoice not found");
+
+    await logAudit({
+      module: "billing",
+      recordId: id,
+      action: "share",
+      userId: actor?.id || "system",
+      branchId: invoice.franchiseId,
+      newValue: { channel },
+    });
+
+    const message = `Your invoice ${invoice.id} for ${invoice.vehicle} — total ₹${(invoice.amount + invoice.gst - invoice.discount).toFixed(2)}.`;
+    if (channel === "whatsapp") {
+      await notifyCustomer(invoice.phone, null, "Invoice Shared", message);
+    } else {
+      await notifyCustomer(null, invoice.client, "Invoice Shared", message);
+    }
+
+    return { success: true };
+  }
+
+  async deleteInvoice(id: string, actor?: BillingActor) {
+    const existing = await this.repository.findById(id);
+    if (!existing) throw new ValidationError("Invoice not found");
+
+    // 13.12: release the sequence number only if this was the most recently issued
+    // invoice for its prefix — otherwise the gap stays open, matching the spec example.
+    if (existing.numberPrefix && existing.sequenceNumber != null) {
+      await this.repository.releaseSequenceIfLast(existing.numberPrefix, existing.sequenceNumber);
+    }
+
+    // Delete related payments first (FK)
     await this.repository.deletePaymentsByInvoiceId(id);
-    
-    // Then delete the invoice
-    await this.repository.deleteInvoice(id);
+
+    // Then hard-delete the invoice — see hardDeleteInvoice for why this isn't soft delete
+    const deleted = await this.repository.hardDeleteInvoice(id);
+
+    await logAudit({
+      module: "billing",
+      recordId: id,
+      action: "delete",
+      userId: actor?.id || "system",
+      branchId: existing.franchiseId,
+      oldValue: existing,
+    });
+
+    return deleted;
   }
 }

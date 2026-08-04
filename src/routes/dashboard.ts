@@ -122,3 +122,85 @@ dashboardRouter.get("/", async (req: Request, res: Response) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+// Employee Personalized Dashboard
+dashboardRouter.get("/employee{/:id}", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const reqUser = (req as any).user;
+    const targetEmployeeId = req.params.id || reqUser.id;
+
+    // Security check: Employees can view their own dashboard.
+    // Managers or HQ can view dashboards of their reporting employees.
+    if (targetEmployeeId !== reqUser.id) {
+      const targetEmp = await db.employee.findUnique({ where: { id: targetEmployeeId } });
+      const isManager = targetEmp?.reportingManager === reqUser.name || 
+                        reqUser.role === "SUPER_ADMIN" || 
+                        reqUser.role === "HQ_USER" || 
+                        reqUser.role === "FRANCHISE_ADMIN";
+      if (!isManager) {
+        res.status(403).json({ error: "Access denied. Only reporting managers or administrators can access this employee's dashboard." });
+        return;
+      }
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // 1. Attendance Status
+    const attendance = await db.attendance.findFirst({
+      where: { employeeId: targetEmployeeId, date: { gte: today }, isDeleted: false }
+    });
+
+    // 2. Assigned Tasks (Jobs)
+    const personalJobs = await db.job.findMany({
+      where: {
+        OR: [
+          { technicianId: targetEmployeeId },
+          { serviceAdvisorId: targetEmployeeId }
+        ],
+        isDeleted: false
+      }
+    });
+
+    const assignedTasks = personalJobs.length;
+    const pendingTasks = personalJobs.filter(j => j.status === "Pending" || j.status === "In Progress").length;
+    const completedTasks = personalJobs.filter(j => j.status === "Completed" || j.status === "Delivered" || j.status === "QC Passed").length;
+
+    // 3. Notifications
+    const notifications = await db.notification.findMany({
+      where: { userId: targetEmployeeId, read: false },
+      orderBy: { createdAt: "desc" },
+      take: 5
+    });
+
+    // 4. Performance Summary
+    const totalLeads = await db.lead.count({ where: { assignedTo: targetEmployeeId, isDeleted: false } });
+    const convertedLeads = await db.lead.count({ where: { assignedTo: targetEmployeeId, status: "Converted", isDeleted: false } });
+    const conversionRate = totalLeads > 0 ? Number(((convertedLeads / totalLeads) * 100).toFixed(2)) : 0;
+
+    res.json({
+      employeeId: targetEmployeeId,
+      attendance: attendance ? {
+        status: attendance.status,
+        clockIn: attendance.clockIn,
+        clockOut: attendance.clockOut,
+        workingHours: attendance.workingHours,
+        lateArrival: attendance.lateArrival,
+        earlyDeparture: attendance.earlyDeparture
+      } : { status: "Not Logged" },
+      tasks: {
+        assigned: assignedTasks,
+        pending: pendingTasks,
+        completed: completedTasks
+      },
+      notifications,
+      performance: {
+        leadsAssigned: totalLeads,
+        conversionRate,
+        reworkCount: personalJobs.reduce((sum, j) => sum + j.reworkCount, 0)
+      }
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});

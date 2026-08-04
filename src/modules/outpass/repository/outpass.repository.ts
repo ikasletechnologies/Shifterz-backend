@@ -6,7 +6,7 @@ export class OutpassRepository {
     return db.outPass.findMany({ orderBy: { outTime: "desc" } });
   }
 
-  async create(id: string, data: CreateOutpassDTO) {
+  async create(id: string, data: any) {
     return db.outPass.create({
       data: {
         id,
@@ -19,8 +19,12 @@ export class OutpassRepository {
         securityName: data.securityName || "",
         technicianName: data.technicianName || "",
         remarks: data.remarks || "",
-        issued: true,
+        issued: data.issued !== undefined ? data.issued : false,
+        status: data.status || "Pending",
+        approvedBy: data.approvedBy || null,
+        approvedAt: data.approvedAt || null,
         carInId: data.carInId || "",
+        franchiseId: data.franchiseId || null,
       },
     });
   }

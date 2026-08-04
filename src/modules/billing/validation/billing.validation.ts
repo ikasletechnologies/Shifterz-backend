@@ -21,6 +21,10 @@ export const createInvoiceSchema = z.object({
     deliveryTerms: z.string().nullable().optional(),
     authorizedSignatory: z.string().nullable().optional(),
     createdBy: z.string().nullable().optional(),
+    jobId: z.string().nullable().optional(),
+    franchiseId: z.string().nullable().optional(),
+    warranty: z.string().nullable().optional(),
+    discountReason: z.string().nullable().optional(),
   })
 });
 
@@ -45,8 +49,24 @@ export const updateInvoiceSchema = z.object({
     modifiedBy: z.string().optional(),
     cancelledBy: z.string().optional(),
     approvedBy: z.string().optional(),
+    warranty: z.string().nullable().optional(),
+    discountReason: z.string().nullable().optional(),
+  })
+});
+
+export const cancelInvoiceSchema = z.object({
+  body: z.object({
+    reason: z.string().min(1, "Cancellation reason is required"),
+  })
+});
+
+export const shareInvoiceSchema = z.object({
+  body: z.object({
+    channel: z.enum(["whatsapp", "email"]),
   })
 });
 
 export type CreateInvoiceDTO = z.infer<typeof createInvoiceSchema>['body'];
 export type UpdateInvoiceDTO = z.infer<typeof updateInvoiceSchema>['body'];
+export type CancelInvoiceDTO = z.infer<typeof cancelInvoiceSchema>['body'];
+export type ShareInvoiceDTO = z.infer<typeof shareInvoiceSchema>['body'];

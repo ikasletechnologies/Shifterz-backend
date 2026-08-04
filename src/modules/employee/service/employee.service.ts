@@ -1,9 +1,11 @@
 import { EmployeeRepository } from '../repository/employee.repository.js';
 import type { CreateEmployeeDTO, UpdateEmployeeDTO } from '../validation/employee.validation.js';
 import { generateUid } from '../../../shared/utils/idGenerator.js';
+import { db } from '../../../lib/db.js';
 import bcrypt from 'bcrypt';
 import { UnauthorizedError } from '../../../shared/errors/UnauthorizedError.js';
 import { ApiError } from '../../../shared/errors/ApiError.js';
+import { NotFoundError } from '../../../shared/errors/NotFoundError.js';
 import { computeStaffPerformance } from '../../../shared/services/staffPerformance.service.js';
 
 export interface StaffManagementQuery {
@@ -84,10 +86,43 @@ export class EmployeeService {
       if (userRole === "SUPER_ADMIN" || userRole === "HQ_USER") {
         franchiseId = data.franchiseId || null;
       }
-      if (franchiseId) {
-        const userCount = await this.repository.countFranchiseUsers(franchiseId);
-        if (userCount >= 6) {
-          throw new ApiError(403, "License limit reached. Maximum 6 users allowed per franchise.");
+    }
+
+    // Dynamic licensing enforcement
+    let license = null;
+    if (franchiseId) {
+      license = await db.license.findFirst({
+        where: { organizationId: franchiseId, status: "Active" }
+      });
+    }
+
+    const limitFranchiseUsers = license ? license.maxFranchiseUsers : 6;
+    const limitFranchiseAdmins = license ? license.maxFranchiseAdmins : 1;
+    const limitHQUsers = license ? license.maxHQUsers : 6;
+    const limitSuperAdmins = license ? license.maxSuperAdmins : 1;
+
+    const roleToCheck = data.role || (isTechnicianRoute ? "TECHNICIAN" : "EMPLOYEE");
+
+    if (roleToCheck === "SUPER_ADMIN") {
+      const count = await db.employee.count({ where: { role: "SUPER_ADMIN", isDeleted: false } });
+      if (count >= limitSuperAdmins) {
+        throw new ApiError(403, `License limit reached. Maximum ${limitSuperAdmins} Super Administrator allowed.`);
+      }
+    } else if (roleToCheck === "HQ_USER") {
+      const count = await db.employee.count({ where: { role: "HQ_USER", isDeleted: false } });
+      if (count >= limitHQUsers) {
+        throw new ApiError(403, `License limit reached. Maximum ${limitHQUsers} HQ Users allowed.`);
+      }
+    } else if (franchiseId) {
+      if (roleToCheck === "FRANCHISE_ADMIN") {
+        const count = await db.employee.count({ where: { franchiseId, role: "FRANCHISE_ADMIN", isDeleted: false } });
+        if (count >= limitFranchiseAdmins) {
+          throw new ApiError(403, `License limit reached. Maximum ${limitFranchiseAdmins} Franchise Administrator allowed.`);
+        }
+      } else {
+        const count = await db.employee.count({ where: { franchiseId, isDeleted: false } });
+        if (count >= limitFranchiseUsers) {
+          throw new ApiError(403, `License limit reached. Maximum ${limitFranchiseUsers} users allowed per franchise.`);
         }
       }
     }
@@ -102,6 +137,24 @@ export class EmployeeService {
       normalizedUsername = data.name.replace(/\s+/g, "").toLowerCase();
     }
 
+    if (data.email) {
+      const existingEmail = await db.employee.findFirst({
+        where: { email: data.email, isDeleted: false }
+      });
+      if (existingEmail) {
+        throw new ApiError(400, "An employee with this email address already exists.");
+      }
+    }
+
+    if (data.phone) {
+      const existingPhone = await db.employee.findFirst({
+        where: { phone: data.phone, isDeleted: false }
+      });
+      if (existingPhone) {
+        throw new ApiError(400, "An employee with this mobile number already exists.");
+      }
+    }
+
     const empId = isTechnicianRoute ? generateUid("TECH") : `EMP${Date.now().toString().slice(-6)}`;
     
     const newEmployee = await this.repository.create(empId, { ...data, franchiseId }, hashedPassword, normalizedUsername);
@@ -113,7 +166,24 @@ export class EmployeeService {
     };
   }
 
-  async updateEmployee(id: string, data: UpdateEmployeeDTO) {
+  async updateEmployee(id: string, data: UpdateEmployeeDTO, userRole = "UNKNOWN", userFranchiseId?: string) {
+    const existing = await db.employee.findUnique({ where: { id } });
+    if (!existing) {
+      throw new NotFoundError("Employee not found");
+    }
+    if (existing.role === "SUPER_ADMIN") {
+      if (data.role && data.role !== "SUPER_ADMIN") {
+        throw new ApiError(400, "Super Administrator role cannot be modified.");
+      }
+      if (data.status && data.status !== "Active") {
+        throw new ApiError(400, "Super Administrator cannot be deactivated.");
+      }
+    }
+
+    if (userRole !== "SUPER_ADMIN" && userRole !== "HQ_USER" && existing.franchiseId !== userFranchiseId) {
+      throw new ApiError(403, "You do not have permission to modify employees outside your franchise.");
+    }
+
     const updateData: any = { ...data };
     delete updateData.permissions;
 
@@ -141,7 +211,19 @@ export class EmployeeService {
     };
   }
 
-  async deleteEmployee(id: string) {
+  async deleteEmployee(id: string, userRole = "UNKNOWN", userFranchiseId?: string) {
+    const existing = await db.employee.findUnique({ where: { id } });
+    if (!existing) {
+      throw new NotFoundError("Employee not found");
+    }
+    if (existing.role === "SUPER_ADMIN") {
+      throw new ApiError(400, "Super Administrator account cannot be deleted.");
+    }
+
+    if (userRole !== "SUPER_ADMIN" && userRole !== "HQ_USER") {
+      throw new ApiError(403, "Only Headquarters can soft-delete employee profiles.");
+    }
+
     return this.repository.softDelete(id);
   }
 }

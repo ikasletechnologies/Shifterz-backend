@@ -44,6 +44,12 @@ export class EmployeeRepository {
         password: hashedPassword,
         role: data.role || "TECHNICIAN",
         franchiseId: data.franchiseId,
+        gender: data.gender || null,
+        dob: data.dob ? new Date(data.dob) : null,
+        doj: data.doj ? new Date(data.doj) : null,
+        department: data.department || null,
+        designation: data.designation || null,
+        reportingManager: data.reportingManager || null,
         permission: {
           create: {
             modules: data.permissions || [],

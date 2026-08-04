@@ -10,7 +10,13 @@ export const createEmployeeSchema = z.object({
     password: z.string().optional(),
     role: z.string().optional(),
     franchiseId: z.string().nullable().optional(),
-    permissions: z.array(z.string()).optional()
+    permissions: z.array(z.string()).optional(),
+    gender: z.string().optional(),
+    dob: z.string().optional(),
+    doj: z.string().optional(),
+    department: z.string().optional(),
+    designation: z.string().optional(),
+    reportingManager: z.string().optional()
   })
 });
 
@@ -24,7 +30,13 @@ export const updateEmployeeSchema = z.object({
     password: z.string().optional(),
     role: z.string().optional(),
     franchiseId: z.string().nullable().optional(),
-    permissions: z.array(z.string()).optional()
+    permissions: z.array(z.string()).optional(),
+    gender: z.string().optional(),
+    dob: z.string().optional(),
+    doj: z.string().optional(),
+    department: z.string().optional(),
+    designation: z.string().optional(),
+    reportingManager: z.string().optional()
   })
 });
 

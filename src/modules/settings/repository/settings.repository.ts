@@ -21,7 +21,48 @@ export class SettingsRepository {
         currency: "INR",
         agents: [],
         categories: [],
-        securityGuards: []
+        securityGuards: [],
+        leadSources: [
+          "Website",
+          "Walk-In",
+          "Phone Call",
+          "WhatsApp",
+          "Google Business Profile",
+          "Facebook",
+          "Instagram",
+          "Justdial",
+          "Referral",
+          "Existing Customer",
+          "Corporate",
+          "Exhibition / Event",
+          "Manual Entry",
+          "Other"
+        ],
+        leadStatuses: [
+          "New",
+          "Assigned",
+          "Contacted",
+          "Follow-up Required",
+          "Quotation Sent",
+          "Negotiation",
+          "Converted",
+          "Lost",
+          "Closed"
+        ],
+        lostReasons: [
+          "Price",
+          "Competitor Chosen",
+          "No Response",
+          "Postponed",
+          "Budget Constraints",
+          "Duplicate Enquiry",
+          "Other"
+        ],
+        referralProgram: {},
+        loyaltyProgram: {},
+        workingHours: {},
+        notificationTemplates: {},
+        numberingSeries: {}
       }
     });
   }

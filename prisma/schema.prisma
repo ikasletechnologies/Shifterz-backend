@@ -7,23 +7,88 @@ datasource db {
 }
 
 model Lead {
-  id          String     @id
-  name        String
-  phone       String
-  email       String
-  source      String
-  service     String
-  vehicle     String
-  assignedTo  String
-  status      String
-  notes       String
-  budget      String
-  date        DateTime
-  franchiseId String?
-  isDeleted   Boolean    @default(false)
-  deletedAt   DateTime?
-  franchise   Franchise? @relation(fields: [franchiseId], references: [id])
+  id                  String                  @id
+  name                String
+  phone               String
+  alternateNumber     String?
+  email               String
+  city                String?
+  source              String
+  service             String
+  vehicle             String
+  vehicleMake         String?
+  vehicleModel        String?
+  assignedTo          String
+  assignedToId        String?
+  assignedBy          String?
+  assignedAt          DateTime?
+  status              String
+  notes               String
+  budget              String
+  priority            String?                 @default("Medium")
+  date                DateTime
+  franchiseId         String?
+  originalFranchiseId String?                 // Preserved original franchise on transfer
+  customerId          String?                 // Set once the lead is converted → Customer
+  convertedAt         DateTime?               // Timestamp of conversion
+  lostReason          String?                 // Reason when marked as Lost
+  isDeleted           Boolean                 @default(false)
+  deletedAt           DateTime?
+  franchise           Franchise?              @relation(fields: [franchiseId], references: [id])
+  assignmentHistory   LeadAssignmentHistory[]
+  transferHistory     LeadTransferHistory[]
+  followUps           LeadFollowUp[]
 }
+
+model LeadAssignmentHistory {
+  id           String   @id @default(cuid())
+  leadId       String
+  assignedTo   String
+  assignedToId String?
+  assignedBy   String
+  assignedAt   DateTime @default(now())
+  reason       String?
+  lead         Lead     @relation(fields: [leadId], references: [id])
+}
+
+model LeadTransferHistory {
+  id                String   @id @default(cuid())
+  leadId            String
+  fromFranchiseId   String?
+  fromFranchiseName String?
+  toFranchiseId     String?
+  toFranchiseName   String?
+  transferredBy     String
+  transferredAt     DateTime @default(now())
+  reason            String?
+  lead              Lead     @relation(fields: [leadId], references: [id])
+}
+
+model LeadFollowUp {
+  id               String   @id @default(cuid())
+  leadId           String
+  // When the follow-up happened
+  followUpDate     DateTime
+  // Who performed it
+  performedById    String?
+  performedBy      String
+  // Communication mode
+  mode             String   // "Phone Call", "WhatsApp", "SMS", "Email", "Meeting", "Walk-In", "Other"
+  // What was discussed
+  notes            String
+  // Outcome / result of this interaction
+  outcome          String?  // "Interested", "Not Interested", "Callback Requested", "No Response", "Deal Closed"
+  // What to do next
+  nextAction       String?
+  // Optional: schedule the next follow-up
+  nextFollowUpDate DateTime?
+  // Lead status at the time of this follow-up (or updated by this follow-up)
+  leadStatusUpdate String?
+  franchiseId      String?  // franchise at the time of follow-up
+  createdAt        DateTime @default(now())
+  lead             Lead     @relation(fields: [leadId], references: [id])
+}
+
 
 model Invoice {
   id                  String     @id
@@ -46,6 +111,12 @@ model Invoice {
   deliveryTerms       String?
   authorizedSignatory String?
   franchiseId         String?
+  jobId               String?    // Optional link to the Job this invoice bills (10.11 revenue attribution)
+  warranty            String?
+  cancelReason        String?
+  discountReason      String?
+  numberPrefix        String?    // e.g. "STZ-25-26-" — captured at creation so delete/cancel never re-parse the id
+  sequenceNumber      Int?       // the numeric suffix allocated from InvoiceSequence at creation
   isDeleted           Boolean    @default(false)
   deletedAt           DateTime?
   createdAt           DateTime   @default(now())
@@ -55,7 +126,17 @@ model Invoice {
   cancelledBy         String?
   approvedBy          String?
   franchise           Franchise? @relation(fields: [franchiseId], references: [id])
+  job                 Job?       @relation(fields: [jobId], references: [id])
 }
+
+// Race-safe invoice numbering (13.12): counter is the highest sequence number ever
+// issued for a given prefix (e.g. "STZ-25-26-"). Allocated via atomic upsert on create;
+// stepped back on delete only if the deleted invoice was the most recent one issued.
+model InvoiceSequence {
+  prefix  String @id
+  counter Int    @default(0)
+}
+
 
 model Payment {
   id          String     @id
@@ -121,6 +202,7 @@ model Franchise {
   state             String?
   pinCode           String?
   licenseStatus     String?            @default("Active")
+  canTransferLeads  Boolean            @default(false) // HQ grants Franchise Manager transfer permission
   isDeleted         Boolean            @default(false)
   deletedAt         DateTime?
   appointments      Appointment[]
@@ -135,73 +217,194 @@ model Franchise {
   leads             Lead[]
   outPasses         OutPass[]
   payments          Payment[]
+  leaveRequests     LeaveRequest[]
+  estimates         Estimate[]
+  workflowStages    WorkflowStage[]
+  qcChecklistTemplates QCChecklistTemplate[]
 }
 
 model Customer {
-  id          String     @id
-  name        String
-  phone       String
-  email       String
-  vehicle     String
-  model       String
-  visits      Int
-  totalSpend  Float
-  lastVisit   DateTime
-  franchiseId String?
-  isDeleted   Boolean    @default(false)
-  deletedAt   DateTime?
-  franchise   Franchise? @relation(fields: [franchiseId], references: [id])
+  id               String            @id
+  name             String
+  phone            String
+  email            String
+  vehicle          String
+  model            String
+  visits           Int
+  totalSpend       Float
+  lastVisit        DateTime
+  city             String?           // preserved from lead
+  vehicleMake      String?
+  vehicleModel     String?
+  alternateNumber  String?
+  convertedLeadId  String?           @unique // the lead that generated this customer
+  convertedAt      DateTime?                 // when conversion happened
+  rewardPoints     Int               @default(0)
+  franchiseId      String?
+  dob              DateTime?
+  anniversary      DateTime?
+  gstNumber        String?
+  address          String?
+  state            String?
+  pinCode          String?
+  status           String            @default("Active") // "Active", "Inactive"
+  isDeleted        Boolean           @default(false)
+  deletedAt        DateTime?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @default(now()) @updatedAt
+  franchise        Franchise?        @relation(fields: [franchiseId], references: [id])
+  vehicles         CustomerVehicle[]
+  warranties       Warranty[]
+  reminders        ServiceReminder[]
+  estimates        Estimate[]
+  complaints       CustomerComplaint[]
 }
 
 model CarIn {
-  id           String     @id
-  vehicle      String
-  model        String
-  customer     String
-  phone        String
-  service      String
-  inTime       DateTime
-  outTime      DateTime?
-  status       String
-  odometer     String
-  notes        String
-  jobCardId    String
-  franchiseId  String?
-  isDeleted    Boolean    @default(false)
-  deletedAt    DateTime?
-  franchise    Franchise? @relation(fields: [franchiseId], references: [id])
+  id                  String     @id
+  vehicle             String
+  model               String
+  customer            String
+  phone               String
+  service             String
+  inTime              DateTime
+  outTime             DateTime?
+  status              String
+  odometer            String
+  notes               String
+  jobCardId           String
+  franchiseId         String?
+  receivedById        String?
+  receivedByName      String?
+  fuelLevel           String?
+  keyCount            Int?       @default(1)
+  expectedDelivery    DateTime?
+  scratches           String?
+  dents               String?
+  brokenParts         String?
+  glassDamage         String?
+  wheelDamage         String?
+  interiorCondition   String?
+  accessoriesReceived String?
+  remarks             String?
+  // Vehicle Photographs
+  photoFront          String?
+  photoRear           String?
+  photoLeft           String?
+  photoRight          String?
+  photoDashboard      String?
+  photoOdometer       String?
+  photoDamages        String[]   @default([])
+  // Accessories Checklist
+  hasSpareWheel       Boolean    @default(false)
+  hasJack             Boolean    @default(false)
+  hasToolkit          Boolean    @default(false)
+  hasFloorMats        Boolean    @default(false)
+  hasFastag           Boolean    @default(false)
+  hasDashCam          Boolean    @default(false)
+  hasUsbCharger       Boolean    @default(false)
+  otherAccessories         String?
+  // Check-Out / Delivery fields
+  checkOutAt               DateTime?
+  checkOutById             String?
+  checkOutByName           String?
+  customerAcknowledgement  String?
+  isDeleted                Boolean    @default(false)
+  deletedAt                DateTime?
+  createdAt                DateTime   @default(now())
+  updatedAt                DateTime   @default(now()) @updatedAt
+  franchise                Franchise? @relation(fields: [franchiseId], references: [id])
 }
 
 model Job {
-  id               String     @id
-  vehicle          String
-  customer         String
-  service          String
-  technician       String
-  status           String
-  priority         String
-  startDate        DateTime
-  estCompletion    DateTime
-  actualCompletion DateTime?
-  notes            String
-  photos           String[]
-  technicianId     String?
-  serviceAdvisorId String?
-  serviceAdvisor   String?
-  qcNotes          String?
-  passedAt         DateTime?
-  failedAt         DateTime?
-  checklist        Json?
-  qcPhotos         String[]   @default([])
-  qcById           String?
-  qcBy             String?
-  isRework         Boolean    @default(false)
-  reworkCount      Int        @default(0)
-  franchiseId      String?
-  createdAt        DateTime   @default(now())
-  isDeleted        Boolean    @default(false)
-  deletedAt        DateTime?
-  franchise        Franchise? @relation(fields: [franchiseId], references: [id])
+  id                     String          @id
+  vehicle                String
+  customer               String
+  service                String
+  services               Json?           // Array of service line items [{name, price, qty}]
+  technician             String
+  status                 String
+  priority               String
+  startDate              DateTime
+  estCompletion          DateTime
+  actualCompletion       DateTime?
+  notes                  String
+  remarks                String?         // Additional remarks on the job
+  carInId                String?         // Reference to CarIn check-in
+  customerSignature      String?
+  companyAcknowledgement String?
+  photos                 String[]
+    inspectionDetails      Json?        // Vehicle inspection information
+    checkInPhotos          String[] @default([])  // Check‑in photographs
+    workProgressPhotos     String[] @default([])  // Photographs during work
+    completionPhotos       String[] @default([])  // Final delivery photographs
+    technicianInstructions String?   // Instructions for technicians, visible only on workshop copy
+    internalRemarks        String?   // Private staff notes, not exposed to customers
+
+  technicianId           String?
+  serviceAdvisorId       String?
+  serviceAdvisor         String?
+  qcNotes                String?
+  passedAt               DateTime?
+  failedAt               DateTime?
+  checklist              Json?
+  qcPhotos               String[]        @default([])
+  qcById                 String?
+  qcBy                   String?
+  isRework               Boolean         @default(false)
+  reworkCount            Int             @default(0)
+  qcAttemptCount         Int             @default(0)
+  franchiseId            String?
+  assignmentLocked       Boolean         @default(false)
+  assignedBy             String?
+  assignedByRole         String?
+  supportingTechnicianIds String[]       @default([]) // Optional supporting employees (10.3)
+  createdAt              DateTime        @default(now())
+  updatedAt              DateTime        @default(now()) @updatedAt
+  isDeleted              Boolean         @default(false)
+  deletedAt              DateTime?
+  franchise              Franchise?      @relation(fields: [franchiseId], references: [id])
+  additionalWorks        AdditionalWork[]
+  jobPhotos              JobPhoto[]
+  workNotes              WorkNote[]
+  materialConsumptions   MaterialConsumption[]
+  invoicesList           Invoice[]
+  complaints             CustomerComplaint[]
+  jobHistories           JobHistory[]
+  qcInspections          QCInspection[]
+}
+
+
+model JobHistory {
+  id        String   @id @default(uuid())
+  jobId     String
+  event     String   // e.g., "CREATED", "STATUS_CHANGED", "SERVICE_ADDED", "SERVICE_REMOVED", "PRICE_UPDATED", "WARRANTY_UPDATED", "ADDITIONAL_WORK_APPROVED", "QC_COMPLETED", "BILLING_COMPLETED", "VEHICLE_DELIVERED"
+  performedBy String   // employee ID or system
+  payload   Json?    // optional details of the change
+  createdAt DateTime @default(now())
+  job       Job      @relation(fields: [jobId], references: [id])
+}
+
+model AdditionalWork {
+  id             String    @id
+  jobId          String
+  description    String
+  estimatedCost  Float
+  status         String    @default("Pending") // Pending | Approved | Rejected
+  requestedById  String?
+  requestedBy    String?
+  approvedById   String?
+  approvedBy     String?
+  approvedAt     DateTime?
+  rejectedAt     DateTime?
+  rejectionNote  String?
+  customerApproved Boolean @default(false) // Customer approval obtained before work begins (10.14.4)
+  franchiseId    String?
+  isDeleted      Boolean   @default(false)
+  deletedAt      DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @default(now()) @updatedAt
+  job            Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
 }
 
 model OutPass {
@@ -218,25 +421,45 @@ model OutPass {
   issued         Boolean
   carInId        String
   franchiseId    String?
+  status         String     @default("Pending") // "Pending", "Approved", "Rejected"
+  approvedBy     String?
+  approvedAt     DateTime?
   isDeleted      Boolean    @default(false)
   deletedAt      DateTime?
   franchise      Franchise? @relation(fields: [franchiseId], references: [id])
 }
 
 model Setting {
-  id             String    @id @default("default")
-  companyName    String
-  address        String
-  phone          String
-  email          String
-  gstin          String
-  gstPct         Float
-  currency       String
-  agents         String[]
-  categories     String[]
-  securityGuards String[]
-  isDeleted      Boolean   @default(false)
-  deletedAt      DateTime?
+  id                String    @id @default("default")
+  companyName       String
+  companyLogo       String?
+  gstin             String
+  panNumber         String?
+  registeredAddress String?
+  branchAddress     String?
+  city              String?
+  state             String?
+  country           String?
+  pinCode           String?
+  address           String
+  phone             String
+  email             String
+  website           String?
+  gstPct            Float
+  currency          String
+  agents            String[]
+  categories        String[]
+  leadSources       String[]
+  leadStatuses      String[]
+  lostReasons       String[]
+  securityGuards    String[]
+  referralProgram   Json?
+  loyaltyProgram    Json?
+  workingHours      Json?
+  notificationTemplates Json?
+  numberingSeries   Json?
+  isDeleted         Boolean   @default(false)
+  deletedAt         DateTime?
 }
 
 model Employee {
@@ -255,28 +478,42 @@ model Employee {
   attendances  Attendance[]
   franchise    Franchise?      @relation(fields: [franchiseId], references: [id])
   permission   UserPermission?
+  leaveRequests LeaveRequest[]
+  gender        String?
+  dob           DateTime?
+  doj           DateTime?
+  department    String?
+  designation   String?
+  reportingManager String?
 }
 
 model Attendance {
-  id          String     @id @default(cuid())
-  employeeId  String
-  date        DateTime
-  status      String
-  clockIn     DateTime?
-  clockOut    DateTime?
-  franchiseId String?
-  isDeleted   Boolean    @default(false)
-  deletedAt   DateTime?
-  employee    Employee   @relation(fields: [employeeId], references: [id])
-  franchise   Franchise? @relation(fields: [franchiseId], references: [id])
+  id             String     @id @default(cuid())
+  employeeId     String
+  date           DateTime
+  status         String
+  clockIn        DateTime?
+  clockOut       DateTime?
+  workingHours   Float?
+  lateArrival    Boolean?   @default(false)
+  earlyDeparture Boolean?   @default(false)
+  franchiseId    String?
+  isDeleted      Boolean    @default(false)
+  deletedAt      DateTime?
+  employee       Employee   @relation(fields: [employeeId], references: [id])
+  franchise      Franchise? @relation(fields: [franchiseId], references: [id])
 }
 
 model InventoryRequest {
   id                String     @id @default(cuid())
   itemId            String
   quantityRequested Int
+  quantityApproved  Int?
   status            String
   date              DateTime
+  requiredDate      DateTime?
+  priority          String?    @default("Medium")
+  remarks           String?
   franchiseId       String?
   isDeleted         Boolean    @default(false)
   deletedAt         DateTime?
@@ -284,17 +521,21 @@ model InventoryRequest {
 }
 
 model Appointment {
-  id            String     @id @default(cuid())
-  customerId    String?
-  customerName  String
-  vehicle       String
-  scheduledDate DateTime
-  service       String
-  status        String
-  franchiseId   String?
-  isDeleted     Boolean    @default(false)
-  deletedAt     DateTime?
-  franchise     Franchise? @relation(fields: [franchiseId], references: [id])
+  id              String     @id
+  customerId      String?
+  customerName    String
+  vehicle         String
+  scheduledDate   DateTime
+  service         String
+  status          String     // "Scheduled", "Confirmed", "Rescheduled", "Cancelled", "Completed", "No Show"
+  assignedStaff   String?
+  assignedStaffId String?
+  franchiseId     String?
+  isDeleted       Boolean    @default(false)
+  deletedAt       DateTime?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @default(now()) @updatedAt
+  franchise       Franchise? @relation(fields: [franchiseId], references: [id])
 }
 
 model UserPermission {
@@ -330,3 +571,365 @@ model MemberTransferRequest {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 }
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  module    String   // "LEAD", "INVOICE", "CUSTOMER", "JOB", "INVENTORY", "LICENSE", "TRANSFER"
+  recordId  String
+  action    String   // "CREATE", "UPDATE", "DELETE", "RESTORE", "APPROVE", "REJECT", "TRANSFER"
+  userId    String
+  branchId  String?
+  oldValue  Json?
+  newValue  Json?
+  ipAddress String?
+  device    String?
+  createdAt DateTime @default(now())
+}
+
+model InventoryMovement {
+  id          String   @id @default(cuid())
+  itemId      String
+  type        String   // "ADD", "REQUEST", "DISPATCH", "RECEIVE", "CONSUME", "ADJUST"
+  reference   String   // e.g. "INV-001", "REQ-002"
+  quantity    Int
+  balance     Int
+  performedBy String
+  performedAt DateTime @default(now())
+}
+
+model License {
+  id                 String    @id @default(cuid())
+  organizationId     String
+  licenseKey         String    @unique
+  status             String    @default("Active") // "Active", "Suspended", "Expired"
+  maxSuperAdmins     Int       @default(1)
+  maxHQUsers         Int       @default(6)
+  maxFranchiseAdmins Int       @default(1)
+  maxFranchiseUsers  Int       @default(6)
+  activatedBy        String?
+  activatedAt        DateTime?
+  expiryDate         DateTime
+  features           String[]
+}
+
+model ServiceMaster {
+  id             String   @id @default(cuid())
+  code           String   @unique
+  name           String
+  category       String
+  standardPrice  Float
+  estimatedTime  String
+  warranty       String
+  status         String   @default("Active")
+  allowPriceEdit Boolean  @default(false)
+}
+
+model PriceMaster {
+  id          String   @id @default(cuid())
+  itemType    String   // "LABOR", "PARTS", "OIL", "ACCESSORIES"
+  code        String   @unique
+  name        String
+  price       Float
+  franchiseId String?
+  status      String   @default("Active")
+}
+
+model TaxMaster {
+  id          String   @id @default(cuid())
+  name        String
+  percentage  Float
+  franchiseId String?
+  status      String   @default("Active")
+}
+
+model DiscountMaster {
+  id          String   @id @default(cuid())
+  name        String
+  percentage  Float
+  maxDiscount Float
+  franchiseId String?
+  status      String   @default("Active")
+}
+
+model Approval {
+  id            String   @id @default(cuid())
+  module        String   // "INVENTORY", "TRANSFER", "CREDIT", "LEAVE", "DISCOUNT", "PURCHASE"
+  targetId      String
+  requesterId   String
+  requesterName String
+  approverId    String?
+  approverName  String?
+  status        String   @default("Pending") // "Pending", "Approved", "Rejected", "Cancelled"
+  payload       Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  message   String
+  read      Boolean  @default(false)
+  type      String?  // e.g. JOB_ASSIGNED, PRIORITY_CHANGE, ADDITIONAL_WORK_APPROVAL, UPCOMING_DELIVERY
+  link      String?  // optional deep-link for the frontend
+  createdAt DateTime @default(now())
+}
+
+model LeaveRequest {
+  id           String     @id @default(cuid())
+  employeeId   String
+  startDate    DateTime
+  endDate      DateTime
+  reason       String
+  status       String     @default("Pending") // "Pending", "Approved", "Rejected"
+  franchiseId  String?
+  isDeleted    Boolean    @default(false)
+  deletedAt    DateTime?
+  createdAt    DateTime   @default(now())
+  employee     Employee   @relation(fields: [employeeId], references: [id])
+  franchise    Franchise? @relation(fields: [franchiseId], references: [id])
+}
+
+model Callback {
+  id               String    @id @default(cuid())
+  leadId           String?              // optional — callbacks can be standalone
+  leadName         String?
+  customerId       String?
+  customerName     String?
+  scheduledAt      DateTime             // exact date & time
+  reminderNotes    String
+  assignedToId     String               // employee responsible
+  assignedTo       String               // employee name
+  status           String  @default("Pending") // "Pending", "Completed", "Rescheduled", "Overdue"
+  rescheduledTo    DateTime?
+  completedAt      DateTime?
+  completedBy      String?
+  completedNotes   String?
+  franchiseId      String?
+  isDeleted        Boolean @default(false)
+  deletedAt        DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @default(now()) @updatedAt
+  createdBy        String?
+}
+
+model CalendarEvent {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  start       DateTime
+  end         DateTime
+  type        String   // "MEETING", "HOLIDAY", "MAINTENANCE", "OTHER"
+  franchiseId String?
+  isDeleted   Boolean  @default(false)
+  deletedAt   DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Referral {
+  id                 String    @id @default(cuid())
+  referringCustomerId String
+  referringCustomer  String
+  referredLeadId     String?   @unique
+  referredCustomerId String?   @unique
+  referredName       String
+  referredPhone      String
+  referralDate       DateTime  @default(now())
+  status             String    @default("Pending") // "Pending", "Converted", "Lost"
+  rewardPointsApplied Int      @default(0)
+  franchiseId        String?
+  isDeleted          Boolean   @default(false)
+  deletedAt          DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+}
+
+model CustomerVehicle {
+  id          String    @id @default(cuid())
+  customerId  String
+  vehicleNo   String    @unique
+  make        String
+  model       String
+  variant     String?
+  year        Int?
+  fuelType    String?
+  color       String?
+  chassisNo   String?
+  engineNo    String?
+  odometer    Int?
+  vin         String?
+  isDeleted   Boolean   @default(false)
+  deletedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  customer    Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+}
+
+model Warranty {
+  id            String    @id @default(cuid())
+  customerId    String
+  vehicleNo     String
+  jobId         String?
+  invoiceId     String?
+  itemName      String
+  durationDays  Int
+  startDate     DateTime  @default(now())
+  expiryDate    DateTime
+  status        String    @default("Active") // "Active", "Expired", "Claimed"
+  notes         String?
+  isDeleted     Boolean   @default(false)
+  deletedAt     DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  customer      Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+}
+
+model ServiceReminder {
+  id            String    @id @default(cuid())
+  customerId    String
+  vehicleNo     String
+  reminderType  String    // e.g. "Periodic Maintenance", "Oil Change", "Insurance Renewal", "Wheel Alignment"
+  scheduledDate DateTime
+  status        String    @default("Pending") // "Pending", "Sent", "Completed", "Cancelled"
+  notes         String?
+  isDeleted     Boolean   @default(false)
+  deletedAt     DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  customer      Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+}
+
+model Estimate {
+  id          String     @id
+  customerId  String?
+  customerName String
+  phone       String
+  vehicle     String
+  model       String
+  amount      Float
+  status      String     @default("Pending") // "Pending", "Approved", "Rejected"
+  date        DateTime   @default(now())
+  items             Json?
+  estimatedDelivery DateTime?
+  warranty          String?
+  franchiseId       String?
+  isDeleted         Boolean    @default(false)
+  deletedAt         DateTime?
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @default(now()) @updatedAt
+  franchise         Franchise? @relation(fields: [franchiseId], references: [id])
+  customer          Customer?  @relation(fields: [customerId], references: [id])
+}
+
+model CustomerComplaint {
+  id          String     @id @default(cuid())
+  customerId  String
+  title       String
+  description String
+  status      String     @default("Open") // "Open", "InProgress", "Resolved", "Closed"
+  severity    String     @default("Medium") // "Low", "Medium", "High"
+  jobId       String?    // Optional link to the Job this complaint relates to (10.11 per-employee complaint count)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  customer    Customer   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  job         Job?       @relation(fields: [jobId], references: [id])
+}
+
+// ─── Workshop Operations (PRD §10) ─────────────────────────────────────────────
+
+model WorkflowStage {
+  id          String     @id @default(cuid())
+  name        String
+  order       Int
+  isDefault   Boolean    @default(false)
+  franchiseId String?    // null = global stage, visible to all franchises
+  isDeleted   Boolean    @default(false)
+  createdAt   DateTime   @default(now())
+  franchise   Franchise? @relation(fields: [franchiseId], references: [id])
+}
+
+model JobPhoto {
+  id             String        @id @default(cuid())
+  jobId          String
+  url            String
+  category       String   // BEFORE_SERVICE | DURING_SERVICE | AFTER_SERVICE | SPECIAL_WORK | ADDITIONAL_DAMAGE | (QC categories: FRONT_VIEW | REAR_VIEW | LEFT_SIDE | RIGHT_SIDE | INTERIOR | COMPLETED_SERVICE | SPECIAL_WORK)
+  caption        String?
+  uploadedById   String?
+  uploadedBy     String?
+  franchiseId    String?
+  qcInspectionId String?       // set only for QC inspection photos (12.5); null = work photo
+  createdAt      DateTime      @default(now())
+  job            Job           @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  qcInspection   QCInspection? @relation(fields: [qcInspectionId], references: [id])
+}
+
+model WorkNote {
+  id          String   @id @default(cuid())
+  jobId       String
+  note        String
+  createdById String?
+  createdBy   String?
+  franchiseId String?
+  createdAt   DateTime @default(now())
+  job         Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+}
+
+model MaterialConsumption {
+  id            String    @id @default(cuid())
+  jobId         String
+  itemId        String
+  itemName      String
+  quantity      Float
+  unit          String?
+  status        String    @default("Pending") // Pending | Approved | Rejected
+  recordedById  String?
+  recordedBy    String?
+  approvedById  String?
+  approvedBy    String?
+  approvedAt    DateTime?
+  rejectionNote String?
+  franchiseId   String?
+  isDeleted     Boolean   @default(false)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @default(now()) @updatedAt
+  job           Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+}
+
+// ─── Quality Control (PRD §12) ─────────────────────────────────────────────────
+
+model QCChecklistTemplate {
+  id          String     @id @default(cuid())
+  category    String     // Exterior | Interior | Accessories | Final Inspection
+  label       String
+  order       Int
+  isDefault   Boolean    @default(false)
+  franchiseId String?    // null = global
+  isDeleted   Boolean    @default(false)
+  createdAt   DateTime   @default(now())
+  franchise   Franchise? @relation(fields: [franchiseId], references: [id])
+}
+
+model QCInspection {
+  id             String    @id @default(cuid())
+  jobId          String
+  attemptNumber  Int
+  inspectorId    String?
+  inspectorName  String?
+  scheduledAt    DateTime?   // Inspection Date & Time (12.3)
+  priority       String?
+  assignRemarks  String?
+  checklist      Json?       // snapshot of {id, label, passed, remark}[] for this attempt
+  result         String    @default("Pending") // Pending | Passed | Failed
+  reason         String?     // failure reason (12.6)
+  remarks        String?     // decision remarks (12.6)
+  reworkRequired Boolean   @default(false)
+  decidedAt      DateTime?
+  franchiseId    String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @default(now()) @updatedAt
+  job            Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  photos         JobPhoto[]
+}
+

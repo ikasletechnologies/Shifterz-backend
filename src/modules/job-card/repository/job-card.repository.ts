@@ -110,6 +110,7 @@ export class JobCardRepository {
         vehicle: data.vehicle,
         customer: data.customer || "",
         service: data.service || "",
+        services: data.services || null,
         technician: data.technician || "",
         technicianId: techId,
         serviceAdvisor: data.serviceAdvisor || "",
@@ -119,7 +120,11 @@ export class JobCardRepository {
         startDate,
         estCompletion,
         notes: data.notes || "",
+        remarks: data.remarks || null,
+        carInId: data.carInId || null,
         photos: data.photos || [],
+        customerSignature: data.customerSignature || null,
+        companyAcknowledgement: data.companyAcknowledgement || null,
       },
     });
   }
@@ -146,7 +151,12 @@ export class JobCardRepository {
       if (data.status !== undefined) updateData.status = data.status;
       if (data.priority !== undefined) updateData.priority = data.priority;
       if (data.notes !== undefined) updateData.notes = data.notes;
+      if (data.remarks !== undefined) updateData.remarks = data.remarks;
+      if (data.carInId !== undefined) updateData.carInId = data.carInId;
       if (data.photos !== undefined) updateData.photos = data.photos;
+      if (data.services !== undefined) updateData.services = data.services;
+      if (data.customerSignature !== undefined) updateData.customerSignature = data.customerSignature;
+      if (data.companyAcknowledgement !== undefined) updateData.companyAcknowledgement = data.companyAcknowledgement;
       if (data.qcNotes !== undefined) updateData.qcNotes = data.qcNotes;
       if (data.qcById !== undefined) updateData.qcById = data.qcById;
       if (data.qcBy !== undefined) updateData.qcBy = data.qcBy;
@@ -246,5 +256,204 @@ export class JobCardRepository {
       }
       throw err;
     }
+  }
+
+  // ─── Job History ──────────────────────────────────────────────────────────
+
+  async getHistory(jobId: string) {
+    const auditLogs = await db.auditLog.findMany({
+      where: {
+        recordId: jobId,
+        module: {
+          in: [
+            'JOB', 'ADDITIONAL_WORK', 'JOB_STAGE', 'JOB_PHOTO',
+            'WORK_NOTE', 'MATERIAL_CONSUMPTION', 'JOB_COMPLETION', 'QC',
+          ],
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const jobHistories = await db.jobHistory.findMany({
+      where: { jobId },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // Merge and sort
+    const merged = [
+      ...auditLogs.map(log => ({
+        id: log.id,
+        type: 'AUDIT',
+        event: log.action,
+        performedBy: log.userId,
+        createdAt: log.createdAt,
+        payload: { module: log.module, newValue: log.newValue, oldValue: log.oldValue },
+      })),
+      ...jobHistories.map(h => ({
+        id: h.id,
+        type: 'HISTORY',
+        event: h.event,
+        performedBy: h.performedBy,
+        createdAt: h.createdAt,
+        payload: h.payload,
+      }))
+    ];
+
+    return merged.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+  }
+
+  async getWithDetails(id: string) {
+    return db.job.findFirst({
+      where: { id, isDeleted: false },
+      include: {
+        additionalWorks: { where: { isDeleted: false }, orderBy: { createdAt: 'desc' } },
+        jobPhotos: { orderBy: { createdAt: 'desc' } },
+        workNotes: { orderBy: { createdAt: 'desc' } },
+        materialConsumptions: { where: { isDeleted: false }, orderBy: { createdAt: 'desc' } },
+      },
+    });
+  }
+
+  // ─── Work Stage (10.5) ────────────────────────────────────────────────────
+
+  async findWorkflowStage(name: string, franchiseId: string | null) {
+    return db.workflowStage.findFirst({
+      where: {
+        name: { equals: name, mode: 'insensitive' },
+        isDeleted: false,
+        OR: [{ franchiseId: null }, { franchiseId: franchiseId || undefined }],
+      },
+    });
+  }
+
+  // ─── Work Photos (10.6) ───────────────────────────────────────────────────
+
+  async createJobPhotos(jobId: string, category: string, urls: string[], user?: { id?: string; name?: string; franchiseId?: string | null }) {
+    await db.jobPhoto.createMany({
+      data: urls.map((url) => ({
+        jobId,
+        url,
+        category,
+        uploadedById: user?.id || null,
+        uploadedBy: user?.name || null,
+        franchiseId: user?.franchiseId || null,
+      })),
+    });
+    return this.listJobPhotos(jobId);
+  }
+
+  async listJobPhotos(jobId: string) {
+    return db.jobPhoto.findMany({ where: { jobId }, orderBy: { createdAt: 'desc' } });
+  }
+
+  // ─── Work Notes (10.9) ────────────────────────────────────────────────────
+
+  async createWorkNote(jobId: string, note: string, user?: { id?: string; name?: string; franchiseId?: string | null }) {
+    return db.workNote.create({
+      data: {
+        jobId,
+        note,
+        createdById: user?.id || null,
+        createdBy: user?.name || null,
+        franchiseId: user?.franchiseId || null,
+      },
+    });
+  }
+
+  async listWorkNotes(jobId: string) {
+    return db.workNote.findMany({ where: { jobId }, orderBy: { createdAt: 'desc' } });
+  }
+
+  // ─── Material Consumption (10.8) ──────────────────────────────────────────
+
+  async createMaterialConsumption(jobId: string, data: {
+    itemId: string; itemName: string; quantity: number; unit?: string | null;
+    recordedById?: string | null; recordedBy?: string | null; franchiseId?: string | null;
+  }) {
+    return db.materialConsumption.create({
+      data: {
+        jobId,
+        itemId: data.itemId,
+        itemName: data.itemName,
+        quantity: data.quantity,
+        unit: data.unit || null,
+        status: 'Pending',
+        recordedById: data.recordedById || null,
+        recordedBy: data.recordedBy || null,
+        franchiseId: data.franchiseId || null,
+      },
+    });
+  }
+
+  async listMaterialConsumptions(jobId: string) {
+    return db.materialConsumption.findMany({ where: { jobId, isDeleted: false }, orderBy: { createdAt: 'desc' } });
+  }
+
+  async findMaterialConsumptionById(id: string) {
+    return db.materialConsumption.findFirst({ where: { id, isDeleted: false } });
+  }
+
+  async updateMaterialConsumption(id: string, data: {
+    status: 'Approved' | 'Rejected'; approvedById?: string | null; approvedBy?: string | null; rejectionNote?: string | null;
+  }) {
+    return db.materialConsumption.update({
+      where: { id },
+      data: {
+        status: data.status,
+        approvedById: data.approvedById || null,
+        approvedBy: data.approvedBy || null,
+        approvedAt: data.status === 'Approved' ? new Date() : null,
+        rejectionNote: data.rejectionNote || null,
+      },
+    });
+  }
+
+  // ─── Additional Work ──────────────────────────────────────────────────────
+
+  async createAdditionalWork(id: string, jobId: string, data: {
+    description: string;
+    estimatedCost: number;
+    requestedById?: string | null;
+    requestedBy?: string | null;
+    franchiseId?: string | null;
+  }) {
+    return db.additionalWork.create({
+      data: {
+        id,
+        jobId,
+        description: data.description,
+        estimatedCost: data.estimatedCost,
+        status: 'Pending',
+        requestedById: data.requestedById || null,
+        requestedBy: data.requestedBy || null,
+        franchiseId: data.franchiseId || null,
+      },
+    });
+  }
+
+  async approveAdditionalWork(id: string, data: {
+    status: 'Approved' | 'Rejected';
+    approvedById?: string | null;
+    approvedBy?: string | null;
+    rejectionNote?: string | null;
+  }) {
+    return db.additionalWork.update({
+      where: { id },
+      data: {
+        status: data.status,
+        approvedById: data.approvedById || null,
+        approvedBy: data.approvedBy || null,
+        approvedAt: data.status === 'Approved' ? new Date() : null,
+        rejectedAt: data.status === 'Rejected' ? new Date() : null,
+        rejectionNote: data.rejectionNote || null,
+      },
+    });
+  }
+
+  async listAdditionalWorks(jobId: string) {
+    return db.additionalWork.findMany({
+      where: { jobId, isDeleted: false },
+      orderBy: { createdAt: 'asc' },
+    });
   }
 }

@@ -32,6 +32,8 @@ async function main() {
   await prisma.franchise.deleteMany();
   await prisma.setting.deleteMany();
   await prisma.rolePermission.deleteMany();
+  await prisma.workflowStage.deleteMany();
+  await prisma.qCChecklistTemplate.deleteMany();
 
   // Role Permissions Seed Matrix
   const DEFAULT_MATRIX = {
@@ -114,6 +116,44 @@ async function main() {
       { id: "ITM006", name: "Isopropyl Alcohol 1L", unit: "Litre", category: "Chemical", stock: 15, reorder: 10, cost: 180, supplier: "Local", location: "Rack C2" },
       { id: "ITM007", name: "Clay Bar Kit", unit: "Kit", category: "Consumable", stock: 22, reorder: 10, cost: 650, supplier: "Menzerna", location: "Rack C3" },
       { id: "ITM008", name: "Graphene Coating 50ml", unit: "Bottle", category: "Coating", stock: 4, reorder: 5, cost: 7500, supplier: "CarPro", location: "Rack B4" },
+    ],
+  });
+
+  // Default Workshop Stages (PRD 10.5)
+  await prisma.workflowStage.createMany({
+    data: [
+      { name: "Assigned", order: 1, isDefault: true },
+      { name: "Work Started", order: 2, isDefault: true },
+      { name: "Surface Preparation", order: 3, isDefault: true },
+      { name: "Service In Progress", order: 4, isDefault: true },
+      { name: "Waiting for Customer Approval", order: 5, isDefault: true },
+      { name: "Waiting for Material", order: 6, isDefault: true },
+      { name: "Work Completed", order: 7, isDefault: true },
+      { name: "Sent for Quality Check", order: 8, isDefault: true },
+    ],
+  });
+
+  // Default QC Checklist Template (PRD 12.4)
+  await prisma.qCChecklistTemplate.createMany({
+    data: [
+      { category: "Exterior", label: "Paint Finish Verified", order: 1, isDefault: true },
+      { category: "Exterior", label: "Wax / Coating Completed", order: 2, isDefault: true },
+      { category: "Exterior", label: "Water Spots Removed", order: 3, isDefault: true },
+      { category: "Exterior", label: "Tyres Cleaned", order: 4, isDefault: true },
+      { category: "Exterior", label: "Glass Cleaned", order: 5, isDefault: true },
+      { category: "Interior", label: "Dashboard Cleaned", order: 1, isDefault: true },
+      { category: "Interior", label: "Seats Cleaned", order: 2, isDefault: true },
+      { category: "Interior", label: "Floor Mats Cleaned", order: 3, isDefault: true },
+      { category: "Interior", label: "Vacuum Completed", order: 4, isDefault: true },
+      { category: "Interior", label: "Interior Odour Checked", order: 5, isDefault: true },
+      { category: "Accessories", label: "Accessories Returned", order: 1, isDefault: true },
+      { category: "Accessories", label: "Spare Wheel Available", order: 2, isDefault: true },
+      { category: "Accessories", label: "Toolkit Available", order: 3, isDefault: true },
+      { category: "Accessories", label: "Documents Available", order: 4, isDefault: true },
+      { category: "Final Inspection", label: "Vehicle Cleanliness", order: 1, isDefault: true },
+      { category: "Final Inspection", label: "Customer Requested Services Completed", order: 2, isDefault: true },
+      { category: "Final Inspection", label: "No New Damage", order: 3, isDefault: true },
+      { category: "Final Inspection", label: "Vehicle Ready for Delivery", order: 4, isDefault: true },
     ],
   });
 

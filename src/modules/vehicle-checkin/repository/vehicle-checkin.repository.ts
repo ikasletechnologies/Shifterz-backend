@@ -55,6 +55,34 @@ export class VehicleCheckinRepository {
         notes: data.notes || "",
         jobCardId,
         franchiseId,
+        receivedById: data.receivedById || null,
+        receivedByName: data.receivedByName || null,
+        fuelLevel: data.fuelLevel || null,
+        keyCount: data.keyCount || 1,
+        expectedDelivery: data.expectedDelivery || null,
+        scratches: data.scratches || null,
+        dents: data.dents || null,
+        brokenParts: data.brokenParts || null,
+        glassDamage: data.glassDamage || null,
+        wheelDamage: data.wheelDamage || null,
+        interiorCondition: data.interiorCondition || null,
+        accessoriesReceived: data.accessoriesReceived || null,
+        remarks: data.remarks || null,
+        photoFront: data.photoFront || null,
+        photoRear: data.photoRear || null,
+        photoLeft: data.photoLeft || null,
+        photoRight: data.photoRight || null,
+        photoDashboard: data.photoDashboard || null,
+        photoOdometer: data.photoOdometer || null,
+        photoDamages: data.photoDamages || [],
+        hasSpareWheel: data.hasSpareWheel || false,
+        hasJack: data.hasJack || false,
+        hasToolkit: data.hasToolkit || false,
+        hasFloorMats: data.hasFloorMats || false,
+        hasFastag: data.hasFastag || false,
+        hasDashCam: data.hasDashCam || false,
+        hasUsbCharger: data.hasUsbCharger || false,
+        otherAccessories: data.otherAccessories || null
       },
     });
   }
@@ -70,14 +98,53 @@ export class VehicleCheckinRepository {
         service: data.service,
         odometer: data.odometer ? String(data.odometer) : undefined,
         notes: data.notes,
+        receivedById: data.receivedById,
+        receivedByName: data.receivedByName,
+        fuelLevel: data.fuelLevel,
+        keyCount: data.keyCount,
+        expectedDelivery: data.expectedDelivery,
+        scratches: data.scratches,
+        dents: data.dents,
+        brokenParts: data.brokenParts,
+        glassDamage: data.glassDamage,
+        wheelDamage: data.wheelDamage,
+        interiorCondition: data.interiorCondition,
+        accessoriesReceived: data.accessoriesReceived,
+        remarks: data.remarks,
+        photoFront: data.photoFront,
+        photoRear: data.photoRear,
+        photoLeft: data.photoLeft,
+        photoRight: data.photoRight,
+        photoDashboard: data.photoDashboard,
+        photoOdometer: data.photoOdometer,
+        photoDamages: data.photoDamages,
+        hasSpareWheel: data.hasSpareWheel,
+        hasJack: data.hasJack,
+        hasToolkit: data.hasToolkit,
+        hasFloorMats: data.hasFloorMats,
+        hasFastag: data.hasFastag,
+        hasDashCam: data.hasDashCam,
+        hasUsbCharger: data.hasUsbCharger,
+        otherAccessories: data.otherAccessories
       },
     });
   }
 
-  async checkout(id: string, outTime: string) {
+  async checkout(id: string, outTime: string, checkoutData?: {
+    deliveredById?: string | null;
+    deliveredByName?: string | null;
+    customerAcknowledgement?: string | null;
+  }) {
     return db.carIn.update({
       where: { id },
-      data: { outTime, status: "Delivered" },
+      data: {
+        outTime,
+        status: "Delivered",
+        checkOutAt: new Date(outTime),
+        checkOutById: checkoutData?.deliveredById || null,
+        checkOutByName: checkoutData?.deliveredByName || null,
+        customerAcknowledgement: checkoutData?.customerAcknowledgement || null,
+      },
     });
   }
 

@@ -12,3 +12,5 @@ outpassRouter.use(authenticate);
 outpassRouter.get('/', controller.getAllOutpasses);
 outpassRouter.post('/', validate(createOutpassSchema), controller.createOutpass);
 outpassRouter.put('/:id', validate(updateOutpassSchema), controller.updateOutpass);
+outpassRouter.post('/:id/approve', controller.approveOutpass);
+outpassRouter.post('/:id/reject', controller.rejectOutpass);

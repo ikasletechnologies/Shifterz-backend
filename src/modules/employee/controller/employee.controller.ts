@@ -1,6 +1,8 @@
 import type { Response, NextFunction } from 'express';
 import { EmployeeService } from '../service/employee.service.js';
 import type { AuthRequest } from '../../../middleware/auth.middleware.js';
+import { db } from '../../../lib/db.js';
+import { logAudit } from '../../../shared/services/audit.service.js';
 
 export class EmployeeController {
   constructor(private readonly service: EmployeeService = new EmployeeService()) {}
@@ -50,6 +52,17 @@ export class EmployeeController {
       const userRole = req.user?.role || "UNKNOWN";
       const userFranchiseId = req.user?.franchiseId || undefined;
       const result = await this.service.createEmployee(req.body, userRole, userFranchiseId, false);
+      await logAudit({
+        module: "EMPLOYEE",
+        recordId: result.id,
+        action: "CREATE",
+        userId: req.user?.id || "unknown",
+        branchId: userFranchiseId,
+        oldValue: null,
+        newValue: result,
+        ipAddress: req.ip,
+        device: req.headers['user-agent'],
+      });
       res.json(result);
     } catch (error) {
       next(error);
@@ -61,6 +74,17 @@ export class EmployeeController {
       const userRole = req.user?.role || "UNKNOWN";
       const userFranchiseId = req.user?.franchiseId || undefined;
       const result = await this.service.createEmployee(req.body, userRole, userFranchiseId, true);
+      await logAudit({
+        module: "EMPLOYEE",
+        recordId: result.id,
+        action: "CREATE_TECHNICIAN",
+        userId: req.user?.id || "unknown",
+        branchId: userFranchiseId,
+        oldValue: null,
+        newValue: result,
+        ipAddress: req.ip,
+        device: req.headers['user-agent'],
+      });
       res.json(result);
     } catch (error) {
       next(error);
@@ -70,7 +94,21 @@ export class EmployeeController {
   updateEmployee = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const id = String(req.params.id);
-      const result = await this.service.updateEmployee(id, req.body);
+      const userRole = req.user?.role || "UNKNOWN";
+      const userFranchiseId = req.user?.franchiseId || undefined;
+      const oldValue = await db.employee.findUnique({ where: { id }, include: { permission: true } });
+      const result = await this.service.updateEmployee(id, req.body, userRole, userFranchiseId);
+      await logAudit({
+        module: "EMPLOYEE",
+        recordId: id,
+        action: "UPDATE",
+        userId: req.user?.id || "unknown",
+        branchId: req.user?.franchiseId || null,
+        oldValue,
+        newValue: result,
+        ipAddress: req.ip,
+        device: req.headers['user-agent'],
+      });
       res.json(result);
     } catch (error) {
       next(error);
@@ -80,10 +118,25 @@ export class EmployeeController {
   deleteEmployee = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const id = String(req.params.id);
-      await this.service.deleteEmployee(id);
+      const userRole = req.user?.role || "UNKNOWN";
+      const userFranchiseId = req.user?.franchiseId || undefined;
+      const oldValue = await db.employee.findUnique({ where: { id } });
+      await this.service.deleteEmployee(id, userRole, userFranchiseId);
+      await logAudit({
+        module: "EMPLOYEE",
+        recordId: id,
+        action: "DELETE",
+        userId: req.user?.id || "unknown",
+        branchId: req.user?.franchiseId || null,
+        oldValue,
+        newValue: null,
+        ipAddress: req.ip,
+        device: req.headers['user-agent'],
+      });
       res.json({ success: true });
     } catch (error) {
       next(error);
     }
   };
 }
+

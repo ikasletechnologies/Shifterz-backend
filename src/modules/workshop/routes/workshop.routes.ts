@@ -8,3 +8,5 @@ const controller = new WorkshopController();
 workshopRouter.use(authenticate);
 
 workshopRouter.get('/dashboard', controller.getDashboard);
+workshopRouter.get('/franchise-dashboard', controller.getFranchiseDashboard);
+workshopRouter.post('/dispatch-reminders', controller.dispatchReminders);
