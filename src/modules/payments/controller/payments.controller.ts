@@ -22,6 +22,31 @@ export class PaymentsController {
     }
   };
 
+  getPaymentsByCustomer = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const customerId = String(req.params.customerId);
+      const list = await this.service.getPaymentsByCustomer(customerId);
+      res.json(list);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  createRefund = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { originalPaymentId, amount, reason, approvedBy } = req.body;
+      const result = await this.service.createRefund({
+        originalPaymentId,
+        amount: Number(amount),
+        reason,
+        approvedBy,
+      });
+      res.json(result);
+    } catch (error) {
+      next(error);
+    }
+  };
+
   deletePayment = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const id = String(req.params.id);

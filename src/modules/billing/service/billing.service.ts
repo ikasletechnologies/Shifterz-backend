@@ -4,6 +4,7 @@ import { db } from '../../../lib/db.js';
 import { ValidationError } from '../../../shared/errors/ValidationError.js';
 import { logAudit } from '../../../shared/services/audit.service.js';
 import { notifyCustomer, notifyManagers } from '../../../shared/services/notification.service.js';
+import { WarrantyService } from '../../warranty/service/warranty.service.js';
 
 // 13.14: HQ is notified when an overall discount looks abnormal.
 const ABNORMAL_DISCOUNT_THRESHOLD_PERCENT = 20;
@@ -84,6 +85,15 @@ export class BillingService {
       );
     }
 
+    if (data.type === "Invoice") {
+      try {
+        const warrantyService = new WarrantyService();
+        await warrantyService.generateFromInvoice(invoice.id);
+      } catch (err) {
+        // ignore if invoice has no warranty items
+      }
+    }
+
     return invoice;
   }
 
@@ -128,6 +138,15 @@ export class BillingService {
       oldValue: existing,
       newValue: updated,
     });
+
+    if (updated.type === "Invoice" && (updated.status === "Completed" || updated.status === "Paid")) {
+      try {
+        const warrantyService = new WarrantyService();
+        await warrantyService.generateFromInvoice(updated.id);
+      } catch (err) {
+        // ignore if invoice has no warranty items
+      }
+    }
 
     return updated;
   }

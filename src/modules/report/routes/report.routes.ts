@@ -53,3 +53,42 @@ reportRouter.get('/qc/employee-rework',   controller.getEmployeeReworkReport);
 reportRouter.get('/qc/branch',            controller.getBranchQcReport);
 // GET /api/reports/qc/export?type=register&from=2026-01-01&to=2026-12-31
 reportRouter.get('/qc/export',            controller.exportQcCsv);
+
+// ─── HQ Summary (§16.3 & §16.4) ────────────────────────────────────────────────
+reportRouter.get('/hq-summary',             controller.getHQSummary);
+
+// ─── CRM Reports (§16.6) ───────────────────────────────────────────────────────
+reportRouter.get('/crm/register',           controller.getLeadRegisterReport);
+reportRouter.get('/crm/sources',            controller.getLeadSourceAnalysisReport);
+reportRouter.get('/crm/conversion',         controller.getLeadConversionReport);
+reportRouter.get('/crm/lost',               controller.getLostLeadReport);
+reportRouter.get('/crm/followup-performance', controller.getLeadFollowUpPerformanceReport);
+reportRouter.get('/crm/export',             controller.exportCrmCsv);
+
+// ─── Customer Reports (§16.7) ──────────────────────────────────────────────────
+reportRouter.get('/customer/register',      controller.getCustomerRegisterReport);
+reportRouter.get('/customer/visits',        controller.getCustomerVisitReport);
+reportRouter.get('/customer/revenue',       controller.getCustomerRevenueReport);
+reportRouter.get('/customer/history',       controller.getCustomerServiceHistoryReport);
+reportRouter.get('/customer/export',        controller.exportCustomerCsv);
+
+// ─── Employee Reports (§16.8) ──────────────────────────────────────────────────
+reportRouter.get('/employee/attendance',    controller.getAttendanceReport);
+reportRouter.get('/employee/productivity',  controller.getTechnicianProductivityReport);
+reportRouter.get('/employee/contribution',  controller.getRevenueContributionReport);
+reportRouter.get('/employee/export',        controller.exportEmployeeCsv);
+
+// ─── Financial Reports (§16.9) ─────────────────────────────────────────────────
+reportRouter.get('/financial/payment-register', controller.getPaymentRegisterReport);
+reportRouter.get('/financial/outstanding',      controller.getOutstandingReport);
+reportRouter.get('/financial/collection',       controller.getCollectionReport);
+reportRouter.get('/financial/payment-modes',    controller.getPaymentModeSummaryReport);
+reportRouter.get('/financial/export',           controller.exportFinancialCsv);
+
+// ─── Inventory Reports (§16.10) ────────────────────────────────────────────────
+reportRouter.get('/inventory/register',     controller.getProductRegisterReport);
+reportRouter.get('/inventory/summary',      controller.getStockSummaryReport);
+reportRouter.get('/inventory/low-stock',    controller.getLowStockReport);
+reportRouter.get('/inventory/valuation',    controller.getInventoryValuationReport);
+reportRouter.get('/inventory/ledger',       controller.getStockLedgerReport);
+reportRouter.get('/inventory/export',       controller.exportInventoryCsv);

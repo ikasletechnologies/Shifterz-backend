@@ -272,6 +272,22 @@ export class VehicleCheckinService {
       actualCompletion: now,
     });
 
+    // ── Job Card Timeline: VEHICLE_DELIVERED ──────────────────────────────
+    await db.jobHistory.create({
+      data: {
+        jobId: car.jobCardId,
+        event: "VEHICLE_DELIVERED",
+        performedBy: data.deliveredById || "SYSTEM",
+        payload: {
+          checkOutAt: now,
+          deliveredByName: data.deliveredByName || null,
+          customerAcknowledgement: data.customerAcknowledgement || null,
+          vehicle: car.vehicle,
+          customer: car.customer,
+        },
+      },
+    }).catch(() => null);
+
     // ── Notification: Vehicle Ready / Delivered ────────────────────────────
     const customer = car.phone
       ? await db.customer.findFirst({ where: { phone: car.phone, isDeleted: false }, select: { name: true, phone: true, email: true } }).catch(() => null)

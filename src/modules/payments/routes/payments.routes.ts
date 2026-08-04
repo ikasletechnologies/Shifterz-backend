@@ -10,5 +10,7 @@ const controller = new PaymentsController();
 paymentsRouter.use(authenticate);
 
 paymentsRouter.get('/', controller.getAllPayments);
+paymentsRouter.get('/customer/:customerId', controller.getPaymentsByCustomer);
 paymentsRouter.post('/', validate(createPaymentSchema), controller.createPayment);
+paymentsRouter.post('/refund', controller.createRefund);
 paymentsRouter.delete('/:id', controller.deletePayment);

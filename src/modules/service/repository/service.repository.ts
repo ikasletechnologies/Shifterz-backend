@@ -4,7 +4,8 @@ import type { CreateServiceDTO, UpdateServiceDTO } from '../validation/service.v
 export class ServiceRepository {
   async findAll() {
     return db.service.findMany({
-      where: { isDeleted: false }
+      where: { isDeleted: false },
+      orderBy: { name: 'asc' }
     });
   }
 
@@ -15,15 +16,20 @@ export class ServiceRepository {
   }
 
   async create(id: string, data: CreateServiceDTO) {
+    const serviceCode = data.code || id;
     return db.service.create({
       data: {
         id,
+        code: serviceCode,
         name: data.name,
         category: data.category,
         price: data.price,
+        minPrice: data.minPrice ?? 0,
+        gst: data.gst ?? 18,
         duration: data.duration,
-        warranty: data.warranty || "",
-        desc: data.desc || ""
+        warranty: data.warranty || "1 Year",
+        desc: data.desc || "",
+        status: data.status || "Active",
       }
     });
   }
@@ -38,7 +44,8 @@ export class ServiceRepository {
   async softDelete(id: string) {
     return db.service.update({
       where: { id },
-      data: { isDeleted: true, deletedAt: new Date().toISOString() }
+      data: { isDeleted: true, status: "Inactive", deletedAt: new Date().toISOString() }
     });
   }
 }
+

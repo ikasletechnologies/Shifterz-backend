@@ -24,6 +24,10 @@ export class OutpassRepository {
         approvedBy: data.approvedBy || null,
         approvedAt: data.approvedAt || null,
         carInId: data.carInId || "",
+        jobCardId: data.jobCardId || null,
+        invoiceId: data.invoiceId || null,
+        paymentStatus: data.paymentStatus || null,
+        createdBy: data.createdBy || null,
         franchiseId: data.franchiseId || null,
       },
     });

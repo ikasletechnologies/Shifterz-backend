@@ -21,7 +21,7 @@ export class OutpassController {
   createOutpass = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const franchiseId = req.user?.franchiseId || null;
-      const result = await this.service.createOutpass(req.body, franchiseId);
+      const result = await this.service.createOutpass(req.body, franchiseId, req.user?.id, req.user?.name);
       await logAudit({
         module: "OUTPASS",
         recordId: result.id,

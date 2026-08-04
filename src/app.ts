@@ -48,6 +48,7 @@ import { referralRouter } from "./modules/lead/routes/referral.routes.js";
 import { appointmentRouter } from "./modules/appointments/appointments.routes.js";
 import { workflowStageRouter } from "./modules/workflow-stage/routes/workflow-stage.routes.js";
 import { qcRouter } from "./modules/qc/qc.routes.js";
+import { warrantyRouter } from "./modules/warranty/routes/warranty.routes.js";
 import { errorMiddleware } from "./middleware/error.middleware.js";
 
 // Routes
@@ -81,6 +82,7 @@ app.use("/api/hq", hqRouter);
 app.use("/api/dashboard", dashboardRouter);
 app.use("/api/workflow-stages", workflowStageRouter);
 app.use("/api/qc", qcRouter);
+app.use("/api/warranties", warrantyRouter);
 
 app.use(errorMiddleware);
 

@@ -901,6 +901,41 @@ hqRouter.post("/notifications/:id/read", async (req: Request, res: Response): Pr
   }
 });
 
+hqRouter.post("/notifications/read-all", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = (req as any).user?.id || "HQ";
+    const updated = await db.notification.updateMany({
+      where: {
+        OR: [{ userId }, { userId: "HQ" }],
+        read: false
+      },
+      data: { read: true }
+    });
+    res.json(updated);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+hqRouter.post("/notifications/broadcast", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { title, message, type, link } = req.body;
+    const notification = await db.notification.create({
+      data: {
+        userId: "HQ",
+        title: title || "System Announcement",
+        message: message || "",
+        type: type || "SYSTEM_ANNOUNCEMENT",
+        link: link || "/dashboard",
+        read: false
+      }
+    });
+    res.json(notification);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Consolidated and Franchise-Wise Master Reports Overview
 hqRouter.get("/reports/overview", async (req: Request, res: Response): Promise<void> => {
   try {
@@ -999,6 +1034,598 @@ hqRouter.get("/reports/overview", async (req: Request, res: Response): Promise<v
     res.status(500).json({ error: error.message });
   }
 });
+
+// ═══════════════════════════════════════════════════════════════
+// VENDOR MASTER & PURCHASE MANAGEMENT (§Vendor & Purchase Management)
+// ═══════════════════════════════════════════════════════════════
+
+// GET /api/hq/vendors - List all active vendors
+hqRouter.get("/vendors", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const vendors = await db.vendor.findMany({
+      where: { isDeleted: false },
+      orderBy: { name: "asc" }
+    });
+    res.json(vendors);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/hq/vendors - Create a new vendor (HQ only)
+hqRouter.post("/vendors", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { code, name, gstNumber, contact, phone, email, address, status } = req.body;
+    if (!code || !name) {
+      res.status(400).json({ error: "Vendor code and name are required." });
+      return;
+    }
+    const existing = await db.vendor.findUnique({ where: { code } });
+    if (existing && !existing.isDeleted) {
+      res.status(400).json({ error: "Vendor with this code already exists." });
+      return;
+    }
+    const vendor = await db.vendor.create({
+      data: {
+        code,
+        name,
+        gstNumber: gstNumber || "",
+        contact: contact || "",
+        phone: phone || "",
+        email: email || "",
+        address: address || "",
+        status: status || "Active",
+      }
+    });
+    res.status(201).json(vendor);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// PUT /api/hq/vendors/:id - Update an existing vendor (HQ only)
+hqRouter.put("/vendors/:id", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const data = req.body;
+    const updated = await db.vendor.update({
+      where: { id },
+      data
+    });
+    res.json(updated);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// DELETE /api/hq/vendors/:id - Soft-delete a vendor (PRD rule: Purchase records shall not be permanently deleted)
+hqRouter.delete("/vendors/:id", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const deleted = await db.vendor.update({
+      where: { id },
+      data: { isDeleted: true, status: "Inactive", deletedAt: new Date().toISOString() }
+    });
+    res.json(deleted);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── Purchase Orders ──────────────────────────────────────────────────────────
+
+// GET /api/hq/purchases - List purchase orders (with vendor info)
+hqRouter.get("/purchases", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const status = req.query.status as string | undefined;
+    const where: any = { isDeleted: false };
+    if (status && typeof status === "string") {
+      where.stage = status;
+    }
+    const orders = await db.purchaseOrder.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      include: { vendor: true }
+    });
+    const formatted = orders.map((o: any) => ({
+      ...o,
+      vendorName: o.vendor ? o.vendor.name : "Unknown Vendor",
+      vendorCode: o.vendor ? o.vendor.code : ""
+    }));
+    res.json(formatted);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/hq/purchases - Create a new Purchase Order (PRD rule: Only HQ shall create Purchase Orders)
+hqRouter.post("/purchases", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { orderNumber, vendorId, items, totalAmount, notes, createdBy } = req.body;
+    if (!orderNumber || !vendorId) {
+      res.status(400).json({ error: "orderNumber and vendorId are required." });
+      return;
+    }
+    const vendor = await db.vendor.findUnique({ where: { id: vendorId } });
+    if (!vendor) {
+      res.status(404).json({ error: "Vendor not found." });
+      return;
+    }
+    const itemsString = typeof items === "string" ? items : JSON.stringify(items || []);
+    const order = await db.purchaseOrder.create({
+      data: {
+        orderNumber,
+        vendorId,
+        vendorName: vendor.name,
+        items: itemsString,
+        totalAmount: Number(totalAmount) || 0,
+        paidAmount: 0,
+        stage: "ORDERED",
+        notes: notes || "",
+        createdBy: createdBy || "HQ User",
+      }
+    });
+    res.status(201).json(order);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/hq/purchases/:id/receive - Goods Receipt & auto-update HQ inventory (PRD rule: Purchase shall automatically update HQ inventory)
+hqRouter.post("/purchases/:id/receive", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const order = await db.purchaseOrder.findUnique({ where: { id } });
+    if (!order || order.isDeleted) {
+      res.status(404).json({ error: "Purchase Order not found." });
+      return;
+    }
+    if (order.stage === "RECEIVED" || order.stage === "INVOICED" || order.stage === "PAID") {
+      res.status(400).json({ error: "Goods receipt has already been processed for this purchase order." });
+      return;
+    }
+
+    let parsedItems: Array<{ name: string; sku?: string; qty: number; unitPrice?: number }> = [];
+    try {
+      parsedItems = JSON.parse(order.items);
+    } catch {
+      parsedItems = [];
+    }
+
+    // Automatically update HQ inventory for each purchased item
+    for (const item of parsedItems) {
+      const qty = Number(item.qty) || 0;
+      if (qty <= 0) continue;
+
+      const existingItem = await db.inventory.findFirst({
+        where: {
+          name: item.name,
+          isDeleted: false,
+          franchiseId: null // HQ inventory
+        }
+      });
+
+      let inventoryId = "";
+      let newStock = qty;
+      if (existingItem) {
+        inventoryId = existingItem.id;
+        newStock = existingItem.stock + qty;
+        await db.inventory.update({
+          where: { id: existingItem.id },
+          data: {
+            stock: newStock,
+            cost: item.unitPrice ? Number(item.unitPrice) : existingItem.cost
+          }
+        });
+      } else {
+        inventoryId = `INV-${Date.now()}-${Math.floor(Math.random() * 900 + 100)}`;
+        newStock = qty;
+        await db.inventory.create({
+          data: {
+            id: inventoryId,
+            name: item.name,
+            category: "Purchase Goods",
+            stock: qty,
+            unit: "Pcs",
+            reorder: 5,
+            cost: item.unitPrice ? Number(item.unitPrice) : 0,
+            supplier: "HQ Supplier",
+            location: "HQ Warehouse",
+            franchiseId: null
+          }
+        });
+      }
+
+      await db.inventoryMovement.create({
+        data: {
+          itemId: inventoryId,
+          type: "PURCHASE_RECEIPT",
+          quantity: qty,
+          balance: newStock,
+          reference: order.orderNumber,
+          performedBy: "HQ Procurement"
+        }
+      });
+    }
+
+    const updated = await db.purchaseOrder.update({
+      where: { id },
+      data: {
+        stage: "RECEIVED",
+        receivedAt: new Date().toISOString()
+      }
+    });
+
+    res.json(updated);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// PUT /api/hq/purchases/:id/invoice - Attach purchase invoice
+hqRouter.put("/purchases/:id/invoice", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const { invoiceNumber } = req.body;
+    if (!invoiceNumber) {
+      res.status(400).json({ error: "invoiceNumber is required." });
+      return;
+    }
+    const updated = await db.purchaseOrder.update({
+      where: { id },
+      data: {
+        invoiceNumber,
+        stage: "INVOICED"
+      }
+    });
+    res.json(updated);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/hq/purchases/:id/pay - Record Supplier Payment
+hqRouter.post("/purchases/:id/pay", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const { paidAmount } = req.body;
+    const updated = await db.purchaseOrder.update({
+      where: { id },
+      data: {
+        paidAmount: Number(paidAmount) || 0,
+        stage: "PAID",
+        paidAt: new Date().toISOString()
+      }
+    });
+    res.json(updated);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// DELETE /api/hq/purchases/:id - Soft-delete purchase order (PRD rule: Purchase records shall not be permanently deleted)
+hqRouter.delete("/purchases/:id", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const deleted = await db.purchaseOrder.update({
+      where: { id },
+      data: {
+        isDeleted: true,
+        deletedAt: new Date().toISOString()
+      }
+    });
+    res.json(deleted);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// MASTERS & CONFIGURATION (HQ Only) — §Masters
+// Supports all category types via a single MasterData model.
+// ═══════════════════════════════════════════════════════════════
+
+const VALID_MASTER_CATEGORIES = [
+  // Customer Masters
+  "CUSTOMER_TYPE", "LEAD_SOURCE", "REFERRAL_TYPE",
+  // Vehicle Masters
+  "VEHICLE_BRAND", "VEHICLE_MODEL", "FUEL_TYPE", "COLOUR",
+  // Employee Masters
+  "DEPARTMENT", "DESIGNATION", "ROLE",
+  // Inventory Masters
+  "PRODUCT_CATEGORY", "UNIT_OF_MEASURE", "BRAND",
+  // Finance Masters
+  "GST_RATE", "PAYMENT_MODE", "DISCOUNT_TYPE",
+  // System Masters
+  "NOTIFICATION_TEMPLATE", "NUMBER_SERIES", "BUSINESS_HOURS", "HOLIDAY_CALENDAR",
+];
+
+// GET /api/hq/masters?category=VEHICLE_BRAND  — list all entries for a category
+hqRouter.get("/masters", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { category, parentId, status } = req.query;
+
+    const where: any = { isDeleted: false };
+    if (category) where.category = String(category).toUpperCase();
+    if (parentId) where.parentId = String(parentId);
+    if (status) where.status = String(status);
+
+    const list = await db.masterData.findMany({
+      where,
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+    });
+    res.json(list);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/hq/masters/categories  — list all distinct categories
+hqRouter.get("/masters/categories", async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const rows = await db.masterData.groupBy({
+      by: ["category"],
+      where: { isDeleted: false },
+      orderBy: { category: "asc" },
+    });
+    const categories = rows.map((r) => r.category);
+    // Also include the full valid list so the UI can show empty categories
+    const merged = Array.from(new Set([...VALID_MASTER_CATEGORIES, ...categories])).sort();
+    res.json(merged);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/hq/masters/:id  — get single entry
+hqRouter.get("/masters/:id", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const record = await db.masterData.findFirst({ where: { id, isDeleted: false } });
+    if (!record) { res.status(404).json({ error: "Master record not found" }); return; }
+    res.json(record);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/hq/masters  — create a new master entry
+hqRouter.post("/masters", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { category, code, name, value, parentId, sortOrder, status } = req.body;
+    const actor = (req as AuthRequest).user;
+
+    if (!category || !name) {
+      res.status(400).json({ error: "category and name are required." });
+      return;
+    }
+
+    const cat = String(category).toUpperCase();
+    if (!VALID_MASTER_CATEGORIES.includes(cat)) {
+      res.status(400).json({ error: `Invalid category '${cat}'. Allowed: ${VALID_MASTER_CATEGORIES.join(", ")}` });
+      return;
+    }
+
+    // Prevent duplicate name within same category
+    const duplicate = await db.masterData.findFirst({
+      where: { category: cat, name: String(name).trim(), isDeleted: false },
+    });
+    if (duplicate) {
+      res.status(409).json({ error: `A '${cat}' entry with this name already exists.` });
+      return;
+    }
+
+    const record = await db.masterData.create({
+      data: {
+        category: cat,
+        code: code ? String(code).trim().toUpperCase() : null,
+        name: String(name).trim(),
+        value: value ? String(value).trim() : null,
+        parentId: parentId ? String(parentId) : null,
+        sortOrder: sortOrder !== undefined ? Number(sortOrder) : 0,
+        status: status || "Active",
+        createdBy: actor?.id || "system",
+      },
+    });
+
+    await logAudit({
+      module: "masters",
+      recordId: record.id,
+      action: "create",
+      userId: actor?.id || "system",
+      branchId: null,
+      newValue: record,
+    });
+
+    res.status(201).json(record);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// PUT /api/hq/masters/:id  — update a master entry
+hqRouter.put("/masters/:id", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const actor = (req as AuthRequest).user;
+    const { code, name, value, parentId, sortOrder, status } = req.body;
+
+    const existing = await db.masterData.findFirst({ where: { id, isDeleted: false } });
+    if (!existing) { res.status(404).json({ error: "Master record not found" }); return; }
+
+    const updateData: any = {};
+    if (name !== undefined) updateData.name = String(name).trim();
+    if (code !== undefined) updateData.code = code ? String(code).trim().toUpperCase() : null;
+    if (value !== undefined) updateData.value = value ? String(value).trim() : null;
+    if (parentId !== undefined) updateData.parentId = parentId ? String(parentId) : null;
+    if (sortOrder !== undefined) updateData.sortOrder = Number(sortOrder);
+    if (status !== undefined) updateData.status = status;
+
+    const updated = await db.masterData.update({ where: { id }, data: updateData });
+
+    await logAudit({
+      module: "masters",
+      recordId: id,
+      action: "update",
+      userId: actor?.id || "system",
+      branchId: null,
+      oldValue: existing,
+      newValue: updated,
+    });
+
+    res.json(updated);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// DELETE /api/hq/masters/:id  — soft-delete a master entry
+// PRD Rule: Historical transactions are not affected by master data changes.
+hqRouter.delete("/masters/:id", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const actor = (req as AuthRequest).user;
+
+    const existing = await db.masterData.findFirst({ where: { id, isDeleted: false } });
+    if (!existing) { res.status(404).json({ error: "Master record not found" }); return; }
+
+    // Soft-delete — historical transactions retain the name/value at time of creation.
+    const deleted = await db.masterData.update({
+      where: { id },
+      data: { isDeleted: true, deletedAt: new Date(), status: "Inactive" },
+    });
+
+    await logAudit({
+      module: "masters",
+      recordId: id,
+      action: "delete",
+      userId: actor?.id || "system",
+      branchId: null,
+      oldValue: existing,
+    });
+
+    res.json({ success: true, id: deleted.id });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/hq/masters/seed  — seed default master data for a fresh installation
+hqRouter.post("/masters/seed", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const actor = (req as AuthRequest).user;
+
+    const defaults: Array<{ category: string; name: string; value?: string; sortOrder?: number }> = [
+      // Customer Masters
+      { category: "CUSTOMER_TYPE", name: "Individual", sortOrder: 1 },
+      { category: "CUSTOMER_TYPE", name: "Corporate", sortOrder: 2 },
+      { category: "CUSTOMER_TYPE", name: "Fleet", sortOrder: 3 },
+      { category: "LEAD_SOURCE", name: "Walk-In", sortOrder: 1 },
+      { category: "LEAD_SOURCE", name: "WhatsApp", sortOrder: 2 },
+      { category: "LEAD_SOURCE", name: "Social Media", sortOrder: 3 },
+      { category: "LEAD_SOURCE", name: "Referral", sortOrder: 4 },
+      { category: "LEAD_SOURCE", name: "Website", sortOrder: 5 },
+      { category: "REFERRAL_TYPE", name: "Customer Referral", sortOrder: 1 },
+      { category: "REFERRAL_TYPE", name: "Employee Referral", sortOrder: 2 },
+      { category: "REFERRAL_TYPE", name: "Partner Referral", sortOrder: 3 },
+      // Vehicle Masters
+      { category: "VEHICLE_BRAND", name: "Maruti Suzuki", sortOrder: 1 },
+      { category: "VEHICLE_BRAND", name: "Hyundai", sortOrder: 2 },
+      { category: "VEHICLE_BRAND", name: "Tata", sortOrder: 3 },
+      { category: "VEHICLE_BRAND", name: "Mahindra", sortOrder: 4 },
+      { category: "VEHICLE_BRAND", name: "Honda", sortOrder: 5 },
+      { category: "VEHICLE_BRAND", name: "Toyota", sortOrder: 6 },
+      { category: "VEHICLE_BRAND", name: "Ford", sortOrder: 7 },
+      { category: "VEHICLE_BRAND", name: "Kia", sortOrder: 8 },
+      { category: "VEHICLE_BRAND", name: "MG", sortOrder: 9 },
+      { category: "FUEL_TYPE", name: "Petrol", sortOrder: 1 },
+      { category: "FUEL_TYPE", name: "Diesel", sortOrder: 2 },
+      { category: "FUEL_TYPE", name: "CNG", sortOrder: 3 },
+      { category: "FUEL_TYPE", name: "Electric (EV)", sortOrder: 4 },
+      { category: "FUEL_TYPE", name: "Hybrid", sortOrder: 5 },
+      { category: "COLOUR", name: "White", sortOrder: 1 },
+      { category: "COLOUR", name: "Black", sortOrder: 2 },
+      { category: "COLOUR", name: "Silver", sortOrder: 3 },
+      { category: "COLOUR", name: "Red", sortOrder: 4 },
+      { category: "COLOUR", name: "Blue", sortOrder: 5 },
+      { category: "COLOUR", name: "Grey", sortOrder: 6 },
+      { category: "COLOUR", name: "Brown", sortOrder: 7 },
+      // Employee Masters
+      { category: "DEPARTMENT", name: "Workshop", sortOrder: 1 },
+      { category: "DEPARTMENT", name: "Sales & CRM", sortOrder: 2 },
+      { category: "DEPARTMENT", name: "Finance", sortOrder: 3 },
+      { category: "DEPARTMENT", name: "Human Resources", sortOrder: 4 },
+      { category: "DEPARTMENT", name: "Inventory & Procurement", sortOrder: 5 },
+      { category: "DEPARTMENT", name: "Management", sortOrder: 6 },
+      { category: "DESIGNATION", name: "Technician", sortOrder: 1 },
+      { category: "DESIGNATION", name: "Senior Technician", sortOrder: 2 },
+      { category: "DESIGNATION", name: "Service Advisor", sortOrder: 3 },
+      { category: "DESIGNATION", name: "Workshop Manager", sortOrder: 4 },
+      { category: "DESIGNATION", name: "Store Manager", sortOrder: 5 },
+      { category: "DESIGNATION", name: "Accountant", sortOrder: 6 },
+      { category: "DESIGNATION", name: "Franchise Admin", sortOrder: 7 },
+      { category: "DESIGNATION", name: "HQ Manager", sortOrder: 8 },
+      // Inventory Masters
+      { category: "PRODUCT_CATEGORY", name: "Lubricants & Oils", sortOrder: 1 },
+      { category: "PRODUCT_CATEGORY", name: "Tyres & Batteries", sortOrder: 2 },
+      { category: "PRODUCT_CATEGORY", name: "Spare Parts", sortOrder: 3 },
+      { category: "PRODUCT_CATEGORY", name: "Accessories", sortOrder: 4 },
+      { category: "PRODUCT_CATEGORY", name: "Consumables", sortOrder: 5 },
+      { category: "UNIT_OF_MEASURE", name: "Litre (L)", sortOrder: 1 },
+      { category: "UNIT_OF_MEASURE", name: "Millilitre (mL)", sortOrder: 2 },
+      { category: "UNIT_OF_MEASURE", name: "Kilogram (kg)", sortOrder: 3 },
+      { category: "UNIT_OF_MEASURE", name: "Gram (g)", sortOrder: 4 },
+      { category: "UNIT_OF_MEASURE", name: "Piece (Pcs)", sortOrder: 5 },
+      { category: "UNIT_OF_MEASURE", name: "Set", sortOrder: 6 },
+      { category: "UNIT_OF_MEASURE", name: "Pair", sortOrder: 7 },
+      // Finance Masters
+      { category: "GST_RATE", name: "0% GST", value: "0", sortOrder: 1 },
+      { category: "GST_RATE", name: "5% GST", value: "5", sortOrder: 2 },
+      { category: "GST_RATE", name: "12% GST", value: "12", sortOrder: 3 },
+      { category: "GST_RATE", name: "18% GST", value: "18", sortOrder: 4 },
+      { category: "GST_RATE", name: "28% GST", value: "28", sortOrder: 5 },
+      { category: "PAYMENT_MODE", name: "Cash", sortOrder: 1 },
+      { category: "PAYMENT_MODE", name: "UPI", sortOrder: 2 },
+      { category: "PAYMENT_MODE", name: "Debit Card", sortOrder: 3 },
+      { category: "PAYMENT_MODE", name: "Credit Card", sortOrder: 4 },
+      { category: "PAYMENT_MODE", name: "Bank Transfer (NEFT/RTGS)", sortOrder: 5 },
+      { category: "PAYMENT_MODE", name: "Cheque", sortOrder: 6 },
+      { category: "DISCOUNT_TYPE", name: "Percentage Discount", sortOrder: 1 },
+      { category: "DISCOUNT_TYPE", name: "Flat Amount Discount", sortOrder: 2 },
+      { category: "DISCOUNT_TYPE", name: "Loyalty Discount", sortOrder: 3 },
+      { category: "DISCOUNT_TYPE", name: "Seasonal Offer", sortOrder: 4 },
+      // System Masters
+      { category: "BUSINESS_HOURS", name: "Monday–Saturday: 09:00–20:00", value: '{"Mon":{"open":"09:00","close":"20:00"},"Tue":{"open":"09:00","close":"20:00"},"Wed":{"open":"09:00","close":"20:00"},"Thu":{"open":"09:00","close":"20:00"},"Fri":{"open":"09:00","close":"20:00"},"Sat":{"open":"09:00","close":"20:00"},"Sun":null}', sortOrder: 1 },
+    ];
+
+    let created = 0;
+    let skipped = 0;
+
+    for (const item of defaults) {
+      const existing = await db.masterData.findFirst({
+        where: { category: item.category, name: item.name, isDeleted: false },
+      });
+      if (!existing) {
+        await db.masterData.create({
+          data: {
+            ...item,
+            status: "Active",
+            createdBy: actor?.id || "system",
+          },
+        });
+        created++;
+      } else {
+        skipped++;
+      }
+    }
+
+    res.json({ success: true, created, skipped, total: defaults.length });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
 
 
 

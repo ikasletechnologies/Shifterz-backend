@@ -12,6 +12,9 @@ export const createOutpassSchema = z.object({
     technicianName: z.string().optional(),
     remarks: z.string().optional(),
     carInId: z.string().optional(),
+    jobCardId: z.string().optional(),
+    invoiceId: z.string().optional(),
+    customerConfirmation: z.boolean().optional(),
   })
 });
 

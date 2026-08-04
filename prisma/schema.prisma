@@ -137,23 +137,38 @@ model InvoiceSequence {
   counter Int    @default(0)
 }
 
+// Race-safe receipt numbering: counter is the highest sequence number ever
+// issued for a given prefix (e.g. "RCPT-25-26-").
+model ReceiptSequence {
+  prefix  String @id
+  counter Int    @default(0)
+}
 
 model Payment {
-  id          String     @id
-  invoiceId   String
-  client      String
-  amount      Float
-  mode        String
-  date        DateTime
-  ref         String
-  notes       String
-  franchiseId String?
-  isDeleted   Boolean    @default(false)
-  deletedAt   DateTime?
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @default(now()) @updatedAt
-  createdBy   String?
-  franchise   Franchise? @relation(fields: [franchiseId], references: [id])
+  id                 String     @id
+  invoiceId          String?
+  jobId              String?
+  customerId         String?
+  client             String
+  amount             Float
+  outstandingBalance Float?
+  mode               String
+  multipleModes      Json?      // e.g. [{mode: 'Cash', amount: 5000}, {mode: 'UPI', amount: 10000}]
+  type               String     @default("Full Payment") // "Advance Payment", "Full Payment", "Partial Payment", "Refund", "Credit Sale"
+  receiptNumber      String?    @unique
+  date               DateTime
+  ref                String?
+  notes              String?
+  refundReason       String?
+  originalReceiptRef String?
+  approvedBy         String?
+  franchiseId        String?
+  isDeleted          Boolean    @default(false)
+  deletedAt          DateTime?
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @default(now()) @updatedAt
+  createdBy          String?
+  franchise          Franchise? @relation(fields: [franchiseId], references: [id])
 }
 
 model Inventory {
@@ -174,12 +189,16 @@ model Inventory {
 
 model Service {
   id        String    @id
+  code      String?   @unique
   name      String
   category  String
   price     Float
+  minPrice  Float     @default(0)
+  gst       Float     @default(18)
   duration  String
   warranty  String
   desc      String
+  status    String    @default("Active")
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
 }
@@ -420,6 +439,10 @@ model OutPass {
   remarks        String
   issued         Boolean
   carInId        String
+  jobCardId      String?
+  invoiceId      String?
+  paymentStatus  String?
+  createdBy      String?
   franchiseId    String?
   status         String     @default("Pending") // "Pending", "Approved", "Rejected"
   approvedBy     String?
@@ -769,6 +792,7 @@ model CustomerVehicle {
 
 model Warranty {
   id            String    @id @default(cuid())
+  warrantyNo    String?   @unique // e.g. WR-2026-0001
   customerId    String
   vehicleNo     String
   jobId         String?
@@ -777,8 +801,9 @@ model Warranty {
   durationDays  Int
   startDate     DateTime  @default(now())
   expiryDate    DateTime
-  status        String    @default("Active") // "Active", "Expired", "Claimed"
+  status        String    @default("Active") // "Active", "Expired", "Claimed", "Void"
   notes         String?
+  claims        String?   // JSON string: array of claim history records
   isDeleted     Boolean   @default(false)
   deletedAt     DateTime?
   createdAt     DateTime  @default(now())
@@ -932,4 +957,79 @@ model QCInspection {
   job            Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
   photos         JobPhoto[]
 }
+
+// ═══════════════════════════════════════════════════════════════
+// VENDOR & PURCHASE MANAGEMENT (§Vendor & Purchase Management)
+// ═══════════════════════════════════════════════════════════════
+
+model Vendor {
+  id         String          @id @default(cuid())
+  code       String          @unique
+  name       String
+  gstNumber  String?
+  contact    String?
+  phone      String?
+  email      String?
+  address    String?
+  status     String          @default("Active")
+  isDeleted  Boolean         @default(false)
+  deletedAt  DateTime?
+  createdAt  DateTime        @default(now())
+  purchases  PurchaseOrder[]
+}
+
+model PurchaseOrder {
+  id             String    @id @default(cuid())
+  orderNumber    String    @unique // e.g. PO-2026-0001
+  vendorId       String
+  vendor         Vendor    @relation(fields: [vendorId], references: [id])
+  vendorName     String
+  stage          String    @default("REQUESTED") // REQUESTED -> ORDERED -> RECEIVED -> INVOICED -> PAID
+  items          String    // JSON string: [{ name, sku, qty, unitPrice, total }]
+  totalAmount    Float
+  paidAmount     Float     @default(0)
+  invoiceNumber  String?   // Purchase Invoice Number
+  receivedAt     DateTime? // Goods Receipt Timestamp
+  paidAt         DateTime? // Supplier Payment Timestamp
+  notes          String?
+  createdBy      String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @default(now()) @updatedAt
+  isDeleted      Boolean   @default(false)
+  deletedAt      DateTime?
+}
+
+// ──────────────────────────────────────────────────────────────
+// MASTERS & CONFIGURATION (§Masters) — HQ Only
+// A single flexible model powers all master data categories.
+// category field values:
+//   Customer Masters : CUSTOMER_TYPE, LEAD_SOURCE, REFERRAL_TYPE
+//   Vehicle Masters  : VEHICLE_BRAND, VEHICLE_MODEL, FUEL_TYPE, COLOUR
+//   Employee Masters : DEPARTMENT, DESIGNATION, ROLE
+//   Inventory Masters: PRODUCT_CATEGORY, UNIT_OF_MEASURE, BRAND
+//   Finance Masters  : GST_RATE, PAYMENT_MODE, DISCOUNT_TYPE
+//   System Masters   : NOTIFICATION_TEMPLATE, NUMBER_SERIES,
+//                      BUSINESS_HOURS, HOLIDAY_CALENDAR
+// ──────────────────────────────────────────────────────────────
+model MasterData {
+  id          String    @id @default(cuid())
+  category    String    // e.g. "VEHICLE_BRAND", "FUEL_TYPE", "GST_RATE"
+  code        String?   // optional short code / slug
+  name        String    // display name
+  value       String?   // optional additional value (e.g. tax %, hours JSON)
+  parentId    String?   // for hierarchical masters (e.g. Model → Brand)
+  sortOrder   Int       @default(0)
+  status      String    @default("Active") // "Active" | "Inactive"
+  createdBy   String?
+  isDeleted   Boolean   @default(false)
+  deletedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([category])
+  @@index([parentId])
+}
+
+
+
 

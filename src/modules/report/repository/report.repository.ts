@@ -165,4 +165,75 @@ export class ReportRepository {
     if (franchiseId) where.franchiseId = franchiseId;
     return db.employee.findMany({ where });
   }
+
+  // ─── Financial, CRM, Customer, Employee Reports Helpers ─────────────────────
+
+  async getPaymentsInRange(franchiseId?: string, from?: Date, to?: Date) {
+    const where: any = { isDeleted: false };
+    if (franchiseId) where.franchiseId = franchiseId;
+    if (from || to) {
+      where.date = {};
+      if (from) where.date.gte = from;
+      if (to) where.date.lte = to;
+    }
+    return db.payment.findMany({ where, orderBy: { date: 'desc' } });
+  }
+
+  async getLeadsInRange(franchiseId?: string, from?: Date, to?: Date) {
+    const where: any = { isDeleted: false };
+    if (franchiseId) where.franchiseId = franchiseId;
+    if (from || to) {
+      where.date = {};
+      if (from) where.date.gte = from;
+      if (to) where.date.lte = to;
+    }
+    return db.lead.findMany({ where, orderBy: { date: 'desc' } });
+  }
+
+  async getCustomers(franchiseId?: string) {
+    const where: any = { isDeleted: false };
+    if (franchiseId) where.franchiseId = franchiseId;
+    return db.customer.findMany({ where, orderBy: { lastVisit: 'desc' } });
+  }
+
+  async getEmployees(franchiseId?: string) {
+    const where: any = { isDeleted: false };
+    if (franchiseId) where.franchiseId = franchiseId;
+    return db.employee.findMany({ where });
+  }
+
+  async getInventoryMovements(franchiseId?: string) {
+    // If franchiseId is specified, we filter movements. But since InventoryMovement
+    // doesn't have a franchiseId column in the schema, we link through items.
+    if (franchiseId) {
+      return db.inventoryMovement.findMany({
+        where: {
+          itemId: {
+            in: (await db.inventory.findMany({
+              where: { franchiseId, isDeleted: false },
+              select: { id: true }
+            })).map(i => i.id)
+          }
+        },
+        orderBy: { performedAt: 'desc' }
+      });
+    }
+    return db.inventoryMovement.findMany({
+      orderBy: { performedAt: 'desc' }
+    });
+  }
+
+  async getLeadFollowUpsInRange(franchiseId?: string, from?: Date, to?: Date) {
+    const where: any = {};
+    if (franchiseId) where.franchiseId = franchiseId;
+    if (from || to) {
+      where.followUpDate = {};
+      if (from) where.followUpDate.gte = from;
+      if (to) where.followUpDate.lte = to;
+    }
+    return db.leadFollowUp.findMany({
+      where,
+      orderBy: { followUpDate: 'desc' }
+    });
+  }
 }
