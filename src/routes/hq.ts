@@ -18,7 +18,7 @@ hqRouter.use(requireRole("SUPER_ADMIN", "HQ_USER"));
 hqRouter.post("/franchises", async (req: Request, res: Response): Promise<void> => {
   try {
     const { 
-      name, city, owner, phone, since, royaltyPct, status, adminUsername, adminPassword,
+      name, city, owner, phone, since, startDate, royaltyPct, royalty, status, adminUsername, adminPassword,
       businessName, gstNumber, email, address, state, pinCode, licenseStatus 
     } = req.body;
     
@@ -37,6 +37,7 @@ hqRouter.post("/franchises", async (req: Request, res: Response): Promise<void> 
     const id = `FRA${String(count + 1).padStart(3, "0")}`;
 
     const newFranchise = await db.$transaction(async (tx) => {
+      const dateVal = since || startDate;
       const franchise = await tx.franchise.create({
         data: {
           id,
@@ -44,10 +45,10 @@ hqRouter.post("/franchises", async (req: Request, res: Response): Promise<void> 
           city,
           owner,
           phone,
-          since: since || new Date().toISOString().split('T')[0],
+          since: dateVal ? new Date(dateVal) : new Date(),
           revenue: 0,
           jobs: 0,
-          royaltyPct: Number(royaltyPct) || 10.0,
+          royaltyPct: Number(royaltyPct !== undefined ? royaltyPct : royalty) || 10.0,
           status: status || "Active",
           businessName,
           gstNumber,
@@ -77,7 +78,12 @@ hqRouter.post("/franchises", async (req: Request, res: Response): Promise<void> 
       return franchise;
     });
 
-    res.json(newFranchise);
+    res.json({
+      ...newFranchise,
+      startDate: newFranchise.since ? new Date(newFranchise.since).toISOString().split('T')[0] : "",
+      royalty: newFranchise.royaltyPct,
+      totalEmployees: (adminUsername && adminPassword) ? 1 : 0
+    });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
@@ -89,7 +95,63 @@ hqRouter.get("/franchises", async (req: Request, res: Response): Promise<void> =
     const franchises = await db.franchise.findMany({
       where: { isDeleted: false }
     });
-    res.json(franchises);
+    const mapped = await Promise.all(franchises.map(async (f) => {
+      const totalEmployees = await db.employee.count({
+        where: { franchiseId: f.id, isDeleted: false }
+      });
+      return {
+        ...f,
+        startDate: f.since ? new Date(f.since).toISOString().split('T')[0] : "",
+        royalty: f.royaltyPct,
+        totalEmployees
+      };
+    }));
+    res.json(mapped);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update a franchise
+hqRouter.put("/franchises/:id", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const { 
+      name, city, owner, phone, since, startDate, royaltyPct, royalty, status,
+      businessName, gstNumber, email, address, state, pinCode, licenseStatus 
+    } = req.body;
+
+    const dateVal = since || startDate;
+    const updated = await db.franchise.update({
+      where: { id },
+      data: {
+        name,
+        city,
+        owner,
+        phone,
+        since: dateVal ? new Date(dateVal) : undefined,
+        royaltyPct: (royaltyPct !== undefined || royalty !== undefined) ? Number(royaltyPct !== undefined ? royaltyPct : royalty) : undefined,
+        status,
+        businessName,
+        gstNumber,
+        email,
+        address,
+        state,
+        pinCode,
+        licenseStatus
+      }
+    });
+
+    const totalEmployees = await db.employee.count({
+      where: { franchiseId: id, isDeleted: false }
+    });
+
+    res.json({
+      ...updated,
+      startDate: updated.since ? new Date(updated.since).toISOString().split('T')[0] : "",
+      royalty: updated.royaltyPct,
+      totalEmployees
+    });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
