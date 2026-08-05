@@ -8,6 +8,7 @@ export default defineConfig({
     },
     datasource: {
         url: process.env["DATABASE_URL"],
+        shadowDatabaseUrl: process.env["SHADOW_DATABASE_URL"] || "postgresql://shifterz:shifterz@localhost:5432/shifterz_shadow?schema=public",
     },
 });
 //# sourceMappingURL=prisma.config.js.map

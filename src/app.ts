@@ -6,6 +6,7 @@ import { fileURLToPath } from "url";
 
 import { hqRouter } from "./routes/hq.js";
 import { dashboardRouter } from "./routes/dashboard.js";
+import { notificationsRouter } from "./routes/notifications.js";
 import { logger } from "./shared/logger/logger.js";
 
 
@@ -78,6 +79,7 @@ app.use("/api/upload", uploadRouter);
 app.use("/api/vehicle", vehicleRouter);
 app.use("/api/service-advisors", serviceAdvisorRouter);
 app.use("/api/appointments", appointmentRouter);
+app.use("/api/hq/notifications", notificationsRouter);
 app.use("/api/hq", hqRouter);
 app.use("/api/dashboard", dashboardRouter);
 app.use("/api/workflow-stages", workflowStageRouter);
