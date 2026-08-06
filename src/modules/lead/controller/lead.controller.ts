@@ -19,7 +19,7 @@ export class LeadController {
           tenantFilter = { franchiseId: req.user.franchiseId };
         }
       }
-      
+
       const leads = await this.service.getLeads(tenantFilter);
       res.json(leads);
     } catch (error) {

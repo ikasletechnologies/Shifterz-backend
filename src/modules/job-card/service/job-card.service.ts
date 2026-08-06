@@ -101,9 +101,9 @@ export class JobCardService {
     const isHq = userRole === "SUPER_ADMIN" || userRole === "HQ_USER";
 
     const isAssigneeChange = (data.technicianId !== undefined && data.technicianId !== job.technicianId) ||
-                             (data.technician !== undefined && data.technician !== job.technician) ||
-                             (data.serviceAdvisorId !== undefined && data.serviceAdvisorId !== job.serviceAdvisorId) ||
-                             (data.serviceAdvisor !== undefined && data.serviceAdvisor !== job.serviceAdvisor);
+      (data.technician !== undefined && data.technician !== job.technician) ||
+      (data.serviceAdvisorId !== undefined && data.serviceAdvisorId !== job.serviceAdvisorId) ||
+      (data.serviceAdvisor !== undefined && data.serviceAdvisor !== job.serviceAdvisor);
 
     if (job.assignmentLocked && isAssigneeChange && !isHq) {
       throw new ForbiddenError("This job assignment is locked by HQ and cannot be modified by the franchise.");
@@ -200,8 +200,8 @@ export class JobCardService {
     if (data.status && data.status !== job.status) {
       historiesToCreate.push({
         jobId: id,
-        event: data.status === 'QC Passed' ? 'QC_COMPLETED' : 
-               data.status === 'Delivered' ? 'VEHICLE_DELIVERED' : 'STATUS_CHANGED',
+        event: data.status === 'QC Passed' ? 'QC_COMPLETED' :
+          data.status === 'Delivered' ? 'VEHICLE_DELIVERED' : 'STATUS_CHANGED',
         performedBy,
         payload: { oldStatus: job.status, newStatus: data.status },
       });

@@ -1083,10 +1083,10 @@ hqRouter.post("/vendors", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: Req
 hqRouter.put("/vendors/:id", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: Request, res: Response): Promise<void> => {
   try {
     const id = req.params.id as string;
-    const data = req.body;
+    const { modifiedBy, createdBy, id: bodyId, createdAt, updatedAt, purchases, ...updateData } = req.body;
     const updated = await db.vendor.update({
       where: { id },
-      data
+      data: updateData
     });
     res.json(updated);
   } catch (error: any) {

@@ -20,6 +20,9 @@ export class LeadService {
 
   async createLead(data: any, franchiseId: string | null, createdBy?: string) {
     const leadId = await generateSequentialId("L");
+    const leadDate = data.date ? new Date(data.date) : new Date();
+    const validDate = isNaN(leadDate.getTime()) ? new Date() : leadDate;
+
     const newLead = await this.repository.create({
       id: leadId,
       name: data.name,
@@ -40,22 +43,26 @@ export class LeadService {
       notes: data.notes || "",
       budget: String(data.budget || "0"),
       priority: data.priority || "Medium",
-      date: data.date || new Date().toISOString().slice(0, 10),
+      date: validDate,
       franchiseId: franchiseId,
       lostReason: data.status === "Lost" ? data.lostReason : null,
     });
 
     // Write initial assignment history row
-    if (newLead.assignedTo) {
-      await db.leadAssignmentHistory.create({
-        data: {
-          leadId: newLead.id,
-          assignedTo: newLead.assignedTo,
-          assignedToId: newLead.assignedToId,
-          assignedBy: createdBy || "System",
-          reason: "Initial assignment"
-        }
-      });
+    if (newLead.assignedTo && newLead.assignedTo.trim() !== "") {
+      try {
+        await db.leadAssignmentHistory.create({
+          data: {
+            leadId: newLead.id,
+            assignedTo: newLead.assignedTo,
+            assignedToId: newLead.assignedToId,
+            assignedBy: createdBy || "System",
+            reason: "Initial assignment"
+          }
+        });
+      } catch (err) {
+        console.error("Assignment history error:", err);
+      }
     }
 
     if (newLead.status === "Converted" && newLead.phone) {
