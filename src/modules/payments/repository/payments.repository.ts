@@ -38,26 +38,32 @@ export class PaymentsRepository {
     receiptNumber: string,
     outstandingBalance?: number
   ) {
+    const parseDate = (d?: string | null) => {
+      if (!d) return new Date();
+      const parsed = new Date(d);
+      return isNaN(parsed.getTime()) ? new Date() : parsed;
+    };
+
     return db.payment.create({
       data: {
         id,
         invoiceId: data.invoiceId || null,
         jobId: data.jobId || null,
         customerId: data.customerId || null,
-        client: clientName,
+        client: clientName || data.client || "Walk-in Customer",
         amount: Number(data.amount || 0),
         outstandingBalance: outstandingBalance ?? null,
         mode: data.mode || "UPI",
         multipleModes: data.multipleModes ? (data.multipleModes as any) : null,
         type: data.type || "Full Payment",
         receiptNumber,
-        date: data.date || new Date().toISOString().slice(0, 10),
+        date: parseDate(data.date),
         ref: data.ref || "",
         notes: data.notes || "",
         refundReason: data.refundReason || null,
         originalReceiptRef: data.originalReceiptRef || null,
         approvedBy: data.approvedBy || null,
-        createdBy: data.createdBy || null,
+        createdBy: data.createdBy || data.receivedBy || null,
       },
     });
   }

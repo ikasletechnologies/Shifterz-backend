@@ -2,23 +2,29 @@ import { z } from 'zod';
 
 export const createPaymentSchema = z.object({
   body: z.object({
-    invoiceId: z.string().optional(),
-    jobId: z.string().optional(),
-    customerId: z.string().optional(),
-    type: z.string().optional(), // e.g. "Full Payment", "Advance Payment", "Refund"
+    invoiceId: z.string().optional().nullable(),
+    jobId: z.string().optional().nullable(),
+    customerId: z.string().optional().nullable(),
+    client: z.string().optional().nullable(),
+    phone: z.string().optional().nullable(),
+    vehicle: z.string().optional().nullable(),
+    model: z.string().optional().nullable(),
+    type: z.string().optional().nullable(),
     amount: z.union([z.string(), z.number()]).optional(),
-    mode: z.string().optional(),
+    mode: z.string().optional().nullable(),
     multipleModes: z.array(z.object({
       mode: z.string(),
       amount: z.number()
-    })).optional(),
-    date: z.string().optional(),
-    ref: z.string().optional(),
-    notes: z.string().optional(),
-    refundReason: z.string().optional(),
-    originalReceiptRef: z.string().optional(),
-    approvedBy: z.string().optional(),
-    createdBy: z.string().nullable().optional(),
+    })).optional().nullable(),
+    date: z.string().optional().nullable(),
+    time: z.string().optional().nullable(),
+    ref: z.string().optional().nullable(),
+    receivedBy: z.string().optional().nullable(),
+    notes: z.string().optional().nullable(),
+    refundReason: z.string().optional().nullable(),
+    originalReceiptRef: z.string().optional().nullable(),
+    approvedBy: z.string().optional().nullable(),
+    createdBy: z.string().optional().nullable(),
   })
 });
 

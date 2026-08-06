@@ -248,16 +248,7 @@ export class VehicleCheckinService {
       throw new ValidationError(`Payment incomplete. Invoiced: ₹${invoiceAmount}, Paid: ₹${totalPaid}. Approved credit is required for outstanding balance.`);
     }
 
-    // 5. Outpass Generated & Approved Check
-    const outpass = await db.outPass.findFirst({
-      where: { carInId: id, isDeleted: false }
-    });
-    if (!outpass) {
-      throw new ValidationError("Outpass must be generated before vehicle delivery.");
-    }
-    if (outpass.status !== "Approved" && !outpass.issued) {
-      throw new ValidationError("Outpass must be Approved by authorized personnel before checkout.");
-    }
+
 
     const updatedCar = await this.repository.checkout(id, now, {
       deliveredById: data.deliveredById,

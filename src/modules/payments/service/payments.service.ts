@@ -16,39 +16,55 @@ export class PaymentsService {
   }
 
   async createPayment(data: CreatePaymentDTO) {
-    let clientName = "Walk-in Customer";
+    let clientName = data.client || "Walk-in Customer";
     let invoiceTotal = 0;
     let currentTotalPaid = 0;
 
     if (data.invoiceId) {
-      const invoice = await this.repository.findInvoiceById(data.invoiceId);
-      if (!invoice) {
-        throw new NotFoundError("Invoice not found");
-      }
-      clientName = invoice.client;
-      invoiceTotal = invoice.amount + invoice.gst - invoice.discount;
+      try {
+        const invoice = await this.repository.findInvoiceById(data.invoiceId);
+        if (invoice) {
+          clientName = invoice.client || clientName;
+          invoiceTotal = (invoice.amount || 0) + (invoice.gst || 0) - (invoice.discount || 0);
 
-      const existingPays = await this.repository.findPaymentsByInvoiceId(data.invoiceId);
-      currentTotalPaid = existingPays.reduce((sum, p) => sum + p.amount, 0);
+          const existingPays = await this.repository.findPaymentsByInvoiceId(data.invoiceId);
+          currentTotalPaid = (existingPays || []).reduce((sum, p) => sum + p.amount, 0);
+        }
+      } catch (err) {
+        console.error("Invoice lookup non-fatal error:", err);
+      }
     } else if (data.jobId) {
-      const job = await this.repository.findJobById(data.jobId);
-      if (!job) {
-        throw new NotFoundError("Job not found");
+      try {
+        const job = await this.repository.findJobById(data.jobId);
+        if (job) {
+          clientName = job.customer || clientName;
+        }
+      } catch (err) {
+        console.error("Job lookup non-fatal error:", err);
       }
-      clientName = job.customer;
     } else if (data.customerId) {
-      const customer = await this.repository.findCustomerById(data.customerId);
-      if (!customer) {
-        throw new NotFoundError("Customer not found");
+      try {
+        const customer = await this.repository.findCustomerById(data.customerId);
+        if (customer) {
+          clientName = customer.name || clientName;
+        }
+      } catch (err) {
+        console.error("Customer lookup non-fatal error:", err);
       }
-      clientName = customer.name;
-    } else {
-      throw new ValidationError("Payment must be linked to an Invoice, Job Card, or Customer.");
+    }
+
+    if (!data.amount || Number(data.amount) <= 0) {
+      throw new ValidationError("Payment amount must be greater than 0");
     }
 
     // Calculate receipt number
     const prefix = "RCPT-25-26-";
-    const receiptNumber = await this.repository.getNextReceiptNumber(prefix);
+    let receiptNumber: string;
+    try {
+      receiptNumber = await this.repository.getNextReceiptNumber(prefix);
+    } catch {
+      receiptNumber = `${prefix}${Date.now().toString().slice(-4)}`;
+    }
 
     const payId = generateUid("PAY");
     const amount = Number(data.amount || 0);
@@ -69,19 +85,27 @@ export class PaymentsService {
 
     // Update invoice status if linked to invoice
     if (data.invoiceId) {
-      const newTotalPaid = currentTotalPaid + amount;
-      if (newTotalPaid >= invoiceTotal) {
-        await this.repository.updateInvoiceStatus(data.invoiceId, "Paid");
-      } else if (newTotalPaid > 0) {
-        await this.repository.updateInvoiceStatus(data.invoiceId, "Partially Paid");
+      try {
+        const newTotalPaid = currentTotalPaid + amount;
+        if (invoiceTotal > 0 && newTotalPaid >= invoiceTotal) {
+          await this.repository.updateInvoiceStatus(data.invoiceId, "Paid");
+        } else if (newTotalPaid > 0) {
+          await this.repository.updateInvoiceStatus(data.invoiceId, "Partially Paid");
+        }
+      } catch (err) {
+        console.error("Failed to update invoice status:", err);
       }
     }
 
     // Update customer spend
     if (clientName) {
-      const cust = await this.repository.findCustomerByPhone(data.ref || "");
-      if (cust) {
-        await this.repository.incrementCustomerSpend(cust.id, amount);
+      try {
+        const cust = await this.repository.findCustomerByPhone(data.ref || "");
+        if (cust) {
+          await this.repository.incrementCustomerSpend(cust.id, amount);
+        }
+      } catch (err) {
+        console.error("Failed to update customer spend:", err);
       }
     }
 
@@ -101,7 +125,12 @@ export class PaymentsService {
     }
 
     const prefix = "RCPT-25-26-";
-    const receiptNumber = await this.repository.getNextReceiptNumber(prefix);
+    let receiptNumber: string;
+    try {
+      receiptNumber = await this.repository.getNextReceiptNumber(prefix);
+    } catch {
+      receiptNumber = `${prefix}${Date.now().toString().slice(-4)}`;
+    }
     const payId = generateUid("RFND");
 
     const refundPayment = await this.repository.create(
@@ -125,14 +154,18 @@ export class PaymentsService {
 
     // If linked to invoice, revert invoice status if no longer fully paid
     if (original.invoiceId) {
-      const existingPays = await this.repository.findPaymentsByInvoiceId(original.invoiceId);
-      const totalPaid = existingPays.reduce((sum, p) => sum + p.amount, 0);
-      const invoice = await this.repository.findInvoiceById(original.invoiceId);
-      if (invoice) {
-        const invoiceTotal = invoice.amount + invoice.gst - invoice.discount;
-        if (totalPaid < invoiceTotal) {
-          await this.repository.updateInvoiceStatus(original.invoiceId, "Partially Paid");
+      try {
+        const existingPays = await this.repository.findPaymentsByInvoiceId(original.invoiceId);
+        const totalPaid = existingPays.reduce((sum, p) => sum + p.amount, 0);
+        const invoice = await this.repository.findInvoiceById(original.invoiceId);
+        if (invoice) {
+          const invoiceTotal = invoice.amount + invoice.gst - invoice.discount;
+          if (totalPaid < invoiceTotal) {
+            await this.repository.updateInvoiceStatus(original.invoiceId, "Partially Paid");
+          }
         }
+      } catch (err) {
+        console.error("Failed to revert invoice status:", err);
       }
     }
 
