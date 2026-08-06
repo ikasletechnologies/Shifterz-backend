@@ -22,9 +22,18 @@ export async function computeStaffPerformance(params: StaffPerformanceParams) {
     page = 1, pageSize = 8,
   } = params;
 
-  const employeeWhere: any = { ...tenantFilter, role, isDeleted: false };
+  const employeeWhere: any = { ...tenantFilter, isDeleted: false };
+  if (role) {
+    if (role === "SERVICE_ADVISOR") {
+      employeeWhere.role = { in: ["SERVICE_ADVISOR", "SERVICE ADVISOR", "Service Advisor"] };
+    } else if (role === "TECHNICIAN") {
+      employeeWhere.role = { in: ["TECHNICIAN", "TECHNICIAN", "Technician"] };
+    } else {
+      employeeWhere.role = role;
+    }
+  }
   if (franchiseId !== undefined) {
-    employeeWhere.franchiseId = franchiseId === "HQ" ? null : franchiseId;
+    employeeWhere.franchiseId = (franchiseId === "HQ" || franchiseId === "") ? null : franchiseId;
   }
   if (status) employeeWhere.status = status;
   if (search) {
@@ -37,7 +46,10 @@ export async function computeStaffPerformance(params: StaffPerformanceParams) {
 
   const employees = await db.employee.findMany({
     where: employeeWhere,
-    include: { franchise: { select: { id: true, name: true } } },
+    include: {
+      franchise: { select: { id: true, name: true } },
+      permission: true,
+    },
     orderBy: { id: "asc" },
   });
 
@@ -122,9 +134,13 @@ export async function computeStaffPerformance(params: StaffPerformanceParams) {
       id: emp.id,
       name: emp.name,
       phone: emp.phone,
+      email: emp.email,
+      username: emp.username,
+      role: emp.role,
       status: emp.status,
       branch: emp.franchise?.name || "Headquarters",
       franchiseId: emp.franchiseId,
+      permissions: emp.permission?.modules || [],
       assignedJobs,
       inProgress,
       waitingParts,

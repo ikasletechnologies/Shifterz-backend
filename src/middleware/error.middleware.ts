@@ -13,8 +13,8 @@ export const errorMiddleware = (err: any, req: Request, res: Response, next: Nex
     return;
   }
 
-  if (err instanceof ApiError) {
-    res.status(err.statusCode).json({
+  if (err instanceof ApiError || (err.statusCode && err.message)) {
+    res.status(err.statusCode || 400).json({
       success: false,
       error: err.message
     });
@@ -40,8 +40,8 @@ export const errorMiddleware = (err: any, req: Request, res: Response, next: Nex
 
   logger.error(err);
 
-  res.status(500).json({
+  res.status(err.status || 500).json({
     success: false,
-    error: 'Internal Server Error'
+    error: err.message || 'Internal Server Error'
   });
 };

@@ -116,23 +116,38 @@ export class WarrantyService {
   }
 
   async generateFromInvoice(invoiceId: string) {
-    const invoice = await db.invoice.findFirst({
-      where: { id: invoiceId, isDeleted: false },
+    const trimmedId = invoiceId.trim();
+    let invoice = await db.invoice.findFirst({
+      where: { id: { equals: trimmedId, mode: "insensitive" }, isDeleted: false },
     });
-    if (!invoice) throw new NotFoundError("Invoice not found.");
-    if (invoice.type !== "Invoice") {
-      throw new ValidationError("Warranties can only be generated from completed Invoices.");
+
+    if (!invoice) {
+      invoice = await db.invoice.findFirst({
+        where: { jobId: { equals: trimmedId, mode: "insensitive" }, isDeleted: false },
+      });
     }
 
-    // Check if warranties already generated for this invoice
-    const existingWarranties = await this.repository.findByInvoiceId(invoiceId);
+    if (!invoice) throw new NotFoundError("Invoice or billing document not found.");
+
+    let targetInvoice = invoice;
+    if (invoice.type !== "Invoice" && invoice.jobId) {
+      const converted = await db.invoice.findFirst({
+        where: { jobId: invoice.jobId, type: "Invoice", isDeleted: false },
+      });
+      if (converted) {
+        targetInvoice = converted;
+      }
+    }
+
+    // Check if warranties already generated for this invoice/document
+    const existingWarranties = await this.repository.findByInvoiceId(targetInvoice.id);
     if (existingWarranties.length > 0) {
       return this.syncExpiryStatuses(existingWarranties);
     }
 
     let items: Array<{ desc?: string; qty?: number; price?: number; warranty?: string }> = [];
     try {
-      items = invoice.items ? (typeof invoice.items === "string" ? JSON.parse(invoice.items) : (Array.isArray(invoice.items) ? invoice.items : [])) : [];
+      items = targetInvoice.items ? (typeof targetInvoice.items === "string" ? JSON.parse(targetInvoice.items) : (Array.isArray(targetInvoice.items) ? targetInvoice.items : [])) : [];
     } catch {
       items = [];
     }
@@ -141,40 +156,43 @@ export class WarrantyService {
 
     // Check line items for warranty
     for (const item of items) {
-      const warrantyStr = item.warranty || invoice.warranty;
+      const warrantyStr = item.warranty || targetInvoice.warranty;
       if (warrantyStr && warrantyStr.trim() !== "" && warrantyStr.toLowerCase() !== "no warranty" && warrantyStr.toLowerCase() !== "none") {
         const durationDays = this.parseDurationDays(warrantyStr);
         const warrantyNo = await this.repository.allocateWarrantyNo();
-        const customerId = invoice.client;
+        const customerId = targetInvoice.client;
         const created = await this.repository.create({
           warrantyNo,
           customerId,
-          vehicleNo: invoice.vehicle,
-          jobId: invoice.jobId || undefined,
-          invoiceId: invoice.id,
-          itemName: item.desc || invoice.service,
+          vehicleNo: targetInvoice.vehicle,
+          jobId: targetInvoice.jobId || undefined,
+          invoiceId: targetInvoice.id,
+          itemName: item.desc || targetInvoice.service,
           durationDays,
           status: "Active",
-          notes: `Generated from Invoice #${invoice.id} (${warrantyStr})`,
+          notes: `Generated from Document #${targetInvoice.id} (${warrantyStr})`,
         });
         createdList.push(created);
       }
     }
 
-    // If no specific item warranty was found but invoice has an overall warranty, generate one
-    if (createdList.length === 0 && invoice.warranty && invoice.warranty.trim() !== "" && invoice.warranty.toLowerCase() !== "no warranty") {
-      const durationDays = this.parseDurationDays(invoice.warranty);
+    // If no specific item warranty was found, generate one using overall document warranty or default
+    if (createdList.length === 0) {
+      const warrantyText = targetInvoice.warranty && targetInvoice.warranty.trim() !== "" && targetInvoice.warranty.toLowerCase() !== "no warranty" && targetInvoice.warranty.toLowerCase() !== "none"
+        ? targetInvoice.warranty
+        : "3 Months / 5,000 KM";
+      const durationDays = this.parseDurationDays(warrantyText);
       const warrantyNo = await this.repository.allocateWarrantyNo();
       const created = await this.repository.create({
         warrantyNo,
-        customerId: invoice.client,
-        vehicleNo: invoice.vehicle,
-        jobId: invoice.jobId || undefined,
-        invoiceId: invoice.id,
-        itemName: invoice.service || "General Workshop Service",
+        customerId: targetInvoice.client,
+        vehicleNo: targetInvoice.vehicle,
+        jobId: targetInvoice.jobId || undefined,
+        invoiceId: targetInvoice.id,
+        itemName: targetInvoice.service || "General Workshop Service",
         durationDays,
         status: "Active",
-        notes: `Generated from Invoice #${invoice.id} (${invoice.warranty})`,
+        notes: `Generated from Document #${targetInvoice.id} (${warrantyText})`,
       });
       createdList.push(created);
     }

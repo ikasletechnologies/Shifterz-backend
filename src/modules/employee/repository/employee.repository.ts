@@ -33,6 +33,7 @@ export class EmployeeRepository {
   }
 
   async create(id: string, data: any, hashedPassword: string | null, normalizedUsername: string | null) {
+    const franchiseId = (data.franchiseId && data.franchiseId !== "HQ") ? data.franchiseId : null;
     return db.employee.create({
       data: {
         id,
@@ -43,7 +44,7 @@ export class EmployeeRepository {
         username: normalizedUsername,
         password: hashedPassword,
         role: data.role || "TECHNICIAN",
-        franchiseId: data.franchiseId,
+        franchiseId,
         gender: data.gender || null,
         dob: data.dob ? new Date(data.dob) : null,
         doj: data.doj ? new Date(data.doj) : null,

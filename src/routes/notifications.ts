@@ -57,6 +57,21 @@ notificationsRouter.post("/read-all", async (req: Request, res: Response): Promi
   }
 });
 
+// Clear all notifications
+notificationsRouter.delete("/clear-all", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = (req as any).user?.id || "HQ";
+    const deleted = await db.notification.deleteMany({
+      where: {
+        OR: [{ userId }, { userId: "HQ" }]
+      }
+    });
+    res.json(deleted);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Broadcast system announcement (HQ only)
 notificationsRouter.post("/broadcast", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: Request, res: Response): Promise<void> => {
   try {

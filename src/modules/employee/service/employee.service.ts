@@ -20,14 +20,14 @@ export interface StaffManagementQuery {
 }
 
 export class EmployeeService {
-  constructor(private readonly repository: EmployeeRepository = new EmployeeRepository()) {}
+  constructor(private readonly repository: EmployeeRepository = new EmployeeRepository()) { }
 
   async getAllEmployees(userRole: string, userFranchiseId?: string) {
     let tenantFilter: any = { isDeleted: false };
     if (userRole !== "SUPER_ADMIN" && userRole !== "HQ_USER" && userFranchiseId) {
       tenantFilter.franchiseId = userFranchiseId;
     }
-    
+
     const list = await this.repository.findAllEmployees(tenantFilter);
     return list.map(emp => {
       const { password, ...rest } = emp;
@@ -129,37 +129,56 @@ export class EmployeeService {
 
     const rawPassword = data.password || (isTechnicianRoute ? "tech123" : null);
     const hashedPassword = rawPassword ? await bcrypt.hash(rawPassword, 10) : null;
-    
+
     let normalizedUsername = null;
     if (data.username) {
       normalizedUsername = String(data.username).trim().toLowerCase();
+      if (normalizedUsername) {
+        const existingUsername = await db.employee.findFirst({
+          where: { username: normalizedUsername, isDeleted: false }
+        });
+        if (existingUsername) {
+          throw new ApiError(400, `Username '${normalizedUsername}' is already taken by another account.`);
+        }
+      }
     } else if (isTechnicianRoute && data.name) {
       normalizedUsername = data.name.replace(/\s+/g, "").toLowerCase();
     }
 
     if (data.email) {
-      const existingEmail = await db.employee.findFirst({
-        where: { email: data.email, isDeleted: false }
-      });
-      if (existingEmail) {
-        throw new ApiError(400, "An employee with this email address already exists.");
+      const trimmedEmail = String(data.email).trim().toLowerCase();
+      if (trimmedEmail) {
+        const existingEmail = await db.employee.findFirst({
+          where: { email: { equals: trimmedEmail, mode: "insensitive" }, isDeleted: false }
+        });
+        if (existingEmail) {
+          throw new ApiError(400, "An employee with this email address already exists.");
+        }
       }
     }
 
     if (data.phone) {
-      const existingPhone = await db.employee.findFirst({
-        where: { phone: data.phone, isDeleted: false }
-      });
-      if (existingPhone) {
-        throw new ApiError(400, "An employee with this mobile number already exists.");
+      const trimmedPhone = String(data.phone).trim();
+      if (trimmedPhone) {
+        const existingPhone = await db.employee.findFirst({
+          where: { phone: trimmedPhone, isDeleted: false }
+        });
+        if (existingPhone) {
+          throw new ApiError(400, "An employee with this mobile number already exists.");
+        }
       }
     }
 
-    const empId = isTechnicianRoute ? generateUid("TECH") : `EMP${Date.now().toString().slice(-6)}`;
-    
-    const newEmployee = await this.repository.create(empId, { ...data, franchiseId }, hashedPassword, normalizedUsername);
+    const empId = data.role === "SERVICE_ADVISOR"
+      ? generateUid("SA-")
+      : isTechnicianRoute
+        ? generateUid("TECH")
+        : `EMP${Date.now().toString().slice(-6)}`;
+
+    const targetFranchiseId = (franchiseId && franchiseId !== "HQ") ? franchiseId : null;
+    const newEmployee = await this.repository.create(empId, { ...data, franchiseId: targetFranchiseId }, hashedPassword, normalizedUsername);
     const { password, ...rest } = newEmployee;
-    
+
     return {
       ...rest,
       permissions: newEmployee.permission?.modules || []
@@ -184,26 +203,79 @@ export class EmployeeService {
       throw new ApiError(403, "You do not have permission to modify employees outside your franchise.");
     }
 
-    const updateData: any = { ...data };
-    delete updateData.permissions;
+    const updateData: any = {};
 
-    if (updateData.username !== undefined) {
-      const trimmed = updateData.username ? String(updateData.username).trim().toLowerCase() : "";
-      updateData.username = trimmed || null;
+    if (data.name !== undefined) updateData.name = data.name;
+
+    if (data.phone !== undefined) {
+      const trimmedPhone = data.phone ? String(data.phone).trim() : "";
+      if (trimmedPhone && trimmedPhone !== (existing.phone || "").trim()) {
+        const existingPhone = await db.employee.findFirst({
+          where: { phone: trimmedPhone, id: { not: id }, isDeleted: false }
+        });
+        if (existingPhone) {
+          throw new ApiError(400, "An employee with this mobile number already exists.");
+        }
+      }
+      updateData.phone = trimmedPhone || null;
     }
 
-    if (updateData.password) {
-      updateData.password = await bcrypt.hash(updateData.password, 10);
-    } else {
-      delete updateData.password;
+    if (data.email !== undefined) {
+      const trimmedEmail = data.email ? String(data.email).trim().toLowerCase() : "";
+      if (trimmedEmail && trimmedEmail !== (existing.email || "").trim().toLowerCase()) {
+        const existingEmail = await db.employee.findFirst({
+          where: { email: { equals: trimmedEmail, mode: "insensitive" }, id: { not: id }, isDeleted: false }
+        });
+        if (existingEmail) {
+          throw new ApiError(400, "An employee with this email address already exists.");
+        }
+      }
+      updateData.email = trimmedEmail || null;
+    }
+
+    if (data.status !== undefined) updateData.status = data.status;
+    if (data.role !== undefined) updateData.role = data.role;
+    if (data.gender !== undefined) updateData.gender = data.gender || null;
+    if (data.department !== undefined) updateData.department = data.department || null;
+    if (data.designation !== undefined) updateData.designation = data.designation || null;
+    if (data.reportingManager !== undefined) updateData.reportingManager = data.reportingManager || null;
+
+    if (data.franchiseId !== undefined) {
+      updateData.franchiseId = (data.franchiseId && data.franchiseId !== "HQ") ? data.franchiseId : null;
+    }
+
+    if (data.dob !== undefined) {
+      updateData.dob = data.dob ? new Date(data.dob) : null;
+    }
+
+    if (data.doj !== undefined) {
+      updateData.doj = data.doj ? new Date(data.doj) : null;
+    }
+
+    if (data.username !== undefined) {
+      const trimmed = data.username ? String(data.username).trim().toLowerCase() : "";
+      const normalized = trimmed || null;
+      if (normalized && normalized !== (existing.username || "").trim().toLowerCase()) {
+        const existingUsername = await db.employee.findFirst({
+          where: { username: normalized, id: { not: id }, isDeleted: false },
+        });
+        if (existingUsername) {
+          throw new ApiError(400, `Username '${normalized}' is already taken by another account.`);
+        }
+      }
+      updateData.username = normalized;
+    }
+
+    if (data.password) {
+      updateData.password = await bcrypt.hash(data.password, 10);
     }
 
     const updated = await this.repository.update(id, updateData);
-    
+
     if (data.permissions) {
       await this.repository.updatePermissions(id, data.permissions);
     }
-    
+
     const { password, ...rest } = updated;
     return {
       ...rest,
