@@ -44,6 +44,17 @@ export class BillingController {
     }
   };
 
+  convertInvoice = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const id = String(req.params.id);
+      const { type, amount, gst, discount } = req.body;
+      const result = await this.service.convertInvoice(id, type, { amount, gst, discount }, req.user);
+      res.json(result);
+    } catch (error) {
+      next(error);
+    }
+  };
+
   cancelInvoice = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const id = String(req.params.id);

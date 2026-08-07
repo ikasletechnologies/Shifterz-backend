@@ -109,7 +109,8 @@ export class BillingService {
       ...auditData,
       status: data.status !== undefined ? data.status : undefined,
       notes: data.notes !== undefined ? data.notes : undefined,
-      dueDate: data.dueDate !== undefined ? data.dueDate : undefined,
+      date: data.date ? new Date(data.date) : undefined,
+      dueDate: data.dueDate ? new Date(data.dueDate) : undefined,
       amount: data.amount !== undefined ? Number(data.amount) : undefined,
       gst: data.gst !== undefined ? Number(data.gst) : undefined,
       discount: data.discount !== undefined ? Number(data.discount) : undefined,
@@ -149,6 +150,74 @@ export class BillingService {
     }
 
     return updated;
+  }
+
+  async convertInvoice(oldId: string, newType: string, updates: { amount?: number, gst?: number, discount?: number }, actor?: BillingActor) {
+    const existing = await this.repository.findById(oldId);
+    if (!existing) throw new ValidationError("Invoice not found");
+
+    const date = new Date();
+    const year = date.getFullYear();
+    const month = date.getMonth();
+    const startYear = month >= 3 ? year : year - 1;
+    const endYear = startYear + 1;
+    const fy = `${startYear.toString().slice(2)}-${endYear.toString().slice(2)}`;
+
+    const docTypePrefix = {
+      Invoice: `STZ-${fy}-`,
+      Quotation: `STZ-QT-${fy}-`,
+      Estimate: `STZ-EST-${fy}-`,
+    }[newType] || `STZ-DOC-${fy}-`;
+
+    const sequenceNumber = await this.repository.allocateSequence(docTypePrefix);
+    const newId = `${docTypePrefix}${sequenceNumber}`;
+
+    // Ensure we release the old sequence number if applicable
+    if (existing.numberPrefix && existing.sequenceNumber != null) {
+      await this.repository.releaseSequenceIfLast(existing.numberPrefix, existing.sequenceNumber);
+    }
+
+    const updateData: any = {
+      id: newId,
+      type: newType,
+      numberPrefix: docTypePrefix,
+      sequenceNumber: sequenceNumber,
+      date: date,
+      status: "Pending", // Or whatever the initial status should be
+    };
+    if (updates.amount !== undefined) updateData.amount = Number(updates.amount);
+    if (updates.gst !== undefined) updateData.gst = Number(updates.gst);
+    if (updates.discount !== undefined) updateData.discount = Number(updates.discount);
+
+    // Swap the ID in a transaction to ensure related payments also update
+    await db.$transaction([
+      db.invoice.update({
+        where: { id: oldId },
+        data: updateData,
+      }),
+      db.payment.updateMany({
+        where: { invoiceId: oldId },
+        data: { invoiceId: newId },
+      })
+    ]);
+
+    const converted = await this.repository.findById(newId);
+
+    await logAudit({
+      module: "billing",
+      recordId: newId,
+      action: "convert",
+      userId: actor?.id || "system",
+      branchId: converted?.franchiseId,
+      oldValue: existing,
+      newValue: converted,
+    });
+
+    if (newType === "Invoice" && converted?.phone) {
+      await notifyCustomer(converted.phone, null, "Invoice Generated", `Your invoice ${newId} for ${converted.vehicle} has been generated.`);
+    }
+
+    return converted;
   }
 
   async cancelInvoice(id: string, reason: string, actor?: BillingActor) {
