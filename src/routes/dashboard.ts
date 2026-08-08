@@ -10,15 +10,23 @@ dashboardRouter.use(tenantScope);
 
 dashboardRouter.get("/", async (req: Request, res: Response) => {
   try {
-    const tenantFilter = (req as any).tenantFilter || {};
+    const user = (req as any).user;
+    let tenantFilter: any = (req as any).tenantFilter || {};
 
-    const today = new Date();
-    // Since dates in DB are seeded as YYYY-MM-DD
-    const todayStr = today.toISOString().split("T")[0] as string;
-    const monthStr = todayStr.substring(0, 7); // YYYY-MM
+    if (user && user.role !== "SUPER_ADMIN" && user.role !== "HQ_USER") {
+      if (user.franchiseId) tenantFilter.franchiseId = user.franchiseId;
+    }
+
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date();
+    todayEnd.setHours(23, 59, 59, 999);
+
+    const monthStart = new Date(todayStart.getFullYear(), todayStart.getMonth(), 1);
+    const todayStr = todayStart.toISOString().split("T")[0]; // For string date fields like Attendance
 
     // 1. CRM Metrics
-    const leadsToday = await db.lead.count({ where: { ...tenantFilter, date: { startsWith: todayStr } } });
+    const leadsToday = await db.lead.count({ where: { ...tenantFilter, date: { gte: todayStart, lte: todayEnd } } });
 
     const customers = await db.customer.findMany({
       where: {
@@ -34,12 +42,26 @@ dashboardRouter.get("/", async (req: Request, res: Response) => {
     const newCustomersList = sortedCustomers.filter(c => c.visits <= 1).slice(0, 5);
 
     const appointmentsToday = await db.appointment.count({
-      where: { ...tenantFilter, scheduledDate: { startsWith: todayStr } }
+      where: { ...tenantFilter, scheduledDate: { gte: todayStart, lte: todayEnd } }
     });
+
+    const estimatesPending = await db.estimate.count({
+      where: { ...tenantFilter, status: "Pending", isDeleted: false }
+    });
+
+    let followupsFilter: any = { ...tenantFilter, followUpDate: { gte: todayStart, lte: todayEnd } };
+    if (user && user.role === "SERVICE_ADVISOR") {
+      followupsFilter.performedById = user.id;
+    }
+    const followupsToday = await db.leadFollowUp.count({ where: followupsFilter });
 
     // 2. Workshop Metrics
     const carsReceivedToday = await db.carIn.count({
-      where: { ...tenantFilter, inTime: { startsWith: todayStr } }
+      where: { ...tenantFilter, inTime: { gte: todayStart, lte: todayEnd } }
+    });
+
+    const jobCardsCreated = await db.job.count({
+      where: { ...tenantFilter, createdAt: { gte: todayStart, lte: todayEnd } }
     });
 
     const jobs = await db.job.findMany({ where: tenantFilter });
@@ -51,11 +73,11 @@ dashboardRouter.get("/", async (req: Request, res: Response) => {
     const invoices = await db.invoice.findMany({ where: tenantFilter });
 
     const revenueToday = invoices
-      .filter(i => i.status === "Paid" && i.date.toISOString().startsWith(todayStr))
+      .filter(i => i.status === "Paid" && new Date(i.date) >= todayStart && new Date(i.date) <= todayEnd)
       .reduce((sum, i) => sum + (i.amount + i.gst - i.discount), 0);
 
     const revenueThisMonth = invoices
-      .filter(i => i.status === "Paid" && i.date.toISOString().startsWith(monthStr))
+      .filter(i => i.status === "Paid" && new Date(i.date) >= monthStart)
       .reduce((sum, i) => sum + (i.amount + i.gst - i.discount), 0);
 
     const outstandingPayments = invoices
@@ -66,13 +88,19 @@ dashboardRouter.get("/", async (req: Request, res: Response) => {
 
     // 4. HR Metrics
     const attendanceToday = await db.attendance.findMany({
-      where: { ...tenantFilter, date: todayStr }
+      where: { ...tenantFilter, date: { gte: todayStart, lte: todayEnd } }
     });
     const presentToday = attendanceToday.filter(a => a.status === "Present").length;
     const absentToday = attendanceToday.filter(a => a.status === "Absent").length;
 
-    const jobsAssigned = jobs.length;
-    const jobsCompleted = vehiclesReady;
+    let jobsAssigned = jobs.length;
+    let jobsCompleted = vehiclesReady;
+    if (user && user.role === "SERVICE_ADVISOR") {
+      const saJobs = jobs.filter(j => j.serviceAdvisorId === user.id);
+      jobsAssigned = saJobs.length;
+      jobsCompleted = saJobs.filter(j => j.status === "Completed" || j.status === "Delivered" || j.status === "Out").length;
+    }
+
     const productivity = jobsAssigned > 0 ? Math.round((jobsCompleted / jobsAssigned) * 100) : 0;
 
     // 5. Inventory Metrics
@@ -90,13 +118,16 @@ dashboardRouter.get("/", async (req: Request, res: Response) => {
         leadsToday,
         newCustomers,
         returningCustomers,
-        newCustomersList
+        newCustomersList,
+        estimatesPending,
+        followupsToday
       },
       workshop: {
         carsReceivedToday,
         vehiclesInProgress,
         vehiclesReady,
-        pendingQC
+        pendingQC,
+        jobCardsCreated
       },
       financial: {
         revenueToday,
@@ -133,10 +164,10 @@ dashboardRouter.get("/employee{/:id}", async (req: Request, res: Response): Prom
     // Managers or HQ can view dashboards of their reporting employees.
     if (targetEmployeeId !== reqUser.id) {
       const targetEmp = await db.employee.findUnique({ where: { id: targetEmployeeId } });
-      const isManager = targetEmp?.reportingManager === reqUser.name || 
-                        reqUser.role === "SUPER_ADMIN" || 
-                        reqUser.role === "HQ_USER" || 
-                        reqUser.role === "FRANCHISE_ADMIN";
+      const isManager = targetEmp?.reportingManager === reqUser.name ||
+        reqUser.role === "SUPER_ADMIN" ||
+        reqUser.role === "HQ_USER" ||
+        reqUser.role === "FRANCHISE_ADMIN";
       if (!isManager) {
         res.status(403).json({ error: "Access denied. Only reporting managers or administrators can access this employee's dashboard." });
         return;

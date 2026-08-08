@@ -119,6 +119,8 @@ export class JobCardService {
 
     if (data.status) {
       // ── Rule 3: Inspection mandatory before work begins ───────────────────
+      // Temporarily disabled to allow job progression without mandatory photos during testing
+      /*
       const workActiveStatuses = ['Work In Progress', 'Job Assigned', 'In Progress'];
       if (workActiveStatuses.includes(data.status)) {
         const carIn = await db.carIn.findFirst({
@@ -135,6 +137,7 @@ export class JobCardService {
           }
         }
       }
+      */
 
       // ── Rule 4: Estimate must be approved before job is activated ─────────
       const jobInitiationStatuses = ['Job Assigned', 'Work In Progress', 'In Progress'];

@@ -148,6 +148,8 @@ export class VehicleCheckinService {
           name: data.customer || "Walk-in",
           phone: data.phone || "",
           email: "",
+          vehicle: data.vehicle || "Unknown",
+          model: data.model || "Unknown",
           visits: 1,
           totalSpend: 0,
           lastVisit: new Date().toISOString(),
