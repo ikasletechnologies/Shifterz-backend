@@ -89,6 +89,27 @@ export class PaymentsService {
         const newTotalPaid = currentTotalPaid + amount;
         if (invoiceTotal > 0 && newTotalPaid >= invoiceTotal) {
           await this.repository.updateInvoiceStatus(data.invoiceId, "Paid");
+          
+          try {
+            const invoice = await this.repository.findInvoiceById(data.invoiceId);
+            if (invoice && invoice.vehicle) {
+              const { OutpassService } = await import('../../outpass/service/outpass.service.js');
+              const outpassService = new OutpassService();
+              
+              await outpassService.createOutpass({
+                vehicle: invoice.vehicle,
+                customer: invoice.client || "",
+                phone: invoice.phone || "",
+                service: invoice.service || "",
+                jobCardId: invoice.jobId || undefined,
+                invoiceId: invoice.id,
+                customerConfirmation: true,
+                outTime: new Date().toISOString()
+              }, null, data.createdBy || undefined);
+            }
+          } catch (outpassErr) {
+            console.error("Failed to auto-generate outpass:", outpassErr);
+          }
         } else if (newTotalPaid > 0) {
           await this.repository.updateInvoiceStatus(data.invoiceId, "Partially Paid");
         }
