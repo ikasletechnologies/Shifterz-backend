@@ -231,23 +231,28 @@ export class VehicleCheckinService {
     }
 
     // 3. Invoice Generated Check
-    const invoice = await db.invoice.findFirst({
+    let invoice = await db.invoice.findFirst({
       where: { vehicle: car.vehicle, isDeleted: false, status: { not: "Cancelled" } },
       orderBy: { createdAt: "desc" }
     });
-    if (!invoice) {
-      throw new ValidationError("No active invoice has been generated for this vehicle.");
+    if (!invoice && car.jobCardId) {
+      invoice = await db.invoice.findFirst({
+        where: { jobId: car.jobCardId, isDeleted: false, status: { not: "Cancelled" } },
+        orderBy: { createdAt: "desc" }
+      });
     }
 
     // 4. Payment Completed or Approved Credit Check
-    const payments = await db.payment.findMany({
-      where: { invoiceId: invoice.id, isDeleted: false }
-    });
-    const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
-    const invoiceAmount = invoice.amount + invoice.gst - invoice.discount;
-    const isCreditApproved = invoice.status === "Approved Credit" || invoice.status === "Paid";
-    if (totalPaid < invoiceAmount && !isCreditApproved) {
-      throw new ValidationError(`Payment incomplete. Invoiced: ₹${invoiceAmount}, Paid: ₹${totalPaid}. Approved credit is required for outstanding balance.`);
+    if (invoice) {
+      const payments = await db.payment.findMany({
+        where: { invoiceId: invoice.id, isDeleted: false }
+      });
+      const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
+      const invoiceAmount = invoice.amount + invoice.gst - invoice.discount;
+      const isCreditApproved = invoice.status === "Approved Credit" || invoice.status === "Paid";
+      if (totalPaid < invoiceAmount && !isCreditApproved) {
+        throw new ValidationError(`Payment incomplete. Invoiced: ₹${invoiceAmount}, Paid: ₹${totalPaid}. Approved credit is required for outstanding balance.`);
+      }
     }
 
 

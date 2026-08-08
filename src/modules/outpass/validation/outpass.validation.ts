@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 export const createOutpassSchema = z.object({
   body: z.object({
-    vehicle: z.string().min(1, "Vehicle is required"),
+    vehicle: z.string().optional(),
     model: z.string().optional(),
     customer: z.string().optional(),
     phone: z.string().optional(),
