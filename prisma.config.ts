@@ -8,6 +8,9 @@ export default defineConfig({
     seed: "npx tsx prisma/seed.ts",
   },
   datasource: {
-    url: process.env["DATABASE_URL"],
+    // Migrations/CLI use the direct (unpooled) connection — Supabase's
+    // transaction-mode pooler doesn't support the DDL prisma migrate needs.
+    // The running app still connects via DATABASE_URL (pooled) in src/lib/db.ts.
+    url: process.env["DIRECT_URL"],
   },
 });

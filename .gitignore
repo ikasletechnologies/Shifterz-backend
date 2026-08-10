@@ -41,6 +41,12 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# compiled prisma.config.ts (excluded from the src build; must not shadow the .ts source)
+/prisma.config.js
+/prisma.config.js.map
+/prisma.config.d.ts
+/prisma.config.d.ts.map
+
 # logs
 logs/
 *.log
