@@ -112,19 +112,9 @@ async function main() {
   });
 
 
-  // Inventory
-  await prisma.inventory.createMany({
-    data: [
-      { id: "ITM001", name: "XPEL PPF Film", unit: "Meter", category: "PPF", stock: 42, reorder: 10, cost: 850, supplier: "XPEL India", location: "Rack A1" },
-      { id: "ITM002", name: "C3 Pro Coating Kit", unit: "Kit", category: "Coating", stock: 8, reorder: 5, cost: 4500, supplier: "CarPro", location: "Rack B2" },
-      { id: "ITM003", name: "Gyeon Quartz Coat", unit: "Bottle", category: "Coating", stock: 3, reorder: 5, cost: 6200, supplier: "Gyeon", location: "Rack B3" },
-      { id: "ITM004", name: "Ceramic Pro 9H", unit: "Bottle", category: "Coating", stock: 12, reorder: 5, cost: 5800, supplier: "Ceramic Pro", location: "Rack B1" },
-      { id: "ITM005", name: "Microfibre Towels", unit: "Piece", category: "Consumable", stock: 85, reorder: 20, cost: 120, supplier: "Local", location: "Rack C1" },
-      { id: "ITM006", name: "Isopropyl Alcohol 1L", unit: "Litre", category: "Chemical", stock: 15, reorder: 10, cost: 180, supplier: "Local", location: "Rack C2" },
-      { id: "ITM007", name: "Clay Bar Kit", unit: "Kit", category: "Consumable", stock: 22, reorder: 10, cost: 650, supplier: "Menzerna", location: "Rack C3" },
-      { id: "ITM008", name: "Graphene Coating 50ml", unit: "Bottle", category: "Coating", stock: 4, reorder: 5, cost: 7500, supplier: "CarPro", location: "Rack B4" },
-    ],
-  });
+  // Note: Inventory is intentionally left empty. Items are franchise-scoped
+  // (see Inventory.franchiseId) and should be added per-franchise via the
+  // Inventory module, not seeded globally as demo data.
 
   // Default Workshop Stages (PRD 10.5)
   await prisma.workflowStage.createMany({

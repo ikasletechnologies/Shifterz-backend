@@ -9,13 +9,18 @@ import { sendNotification } from '../../../shared/services/notification.service.
 export class InventoryService {
   constructor(private readonly repository: InventoryRepository = new InventoryRepository()) {}
 
-  async getAllItems() {
-    return this.repository.findAll();
+  async getAllItems(userRole: string, userFranchiseId?: string | null) {
+    const tenantFilter: any = { isDeleted: false };
+    if (userRole !== "SUPER_ADMIN" && userRole !== "HQ_USER" && userFranchiseId) {
+      tenantFilter.franchiseId = userFranchiseId;
+    }
+    return this.repository.findAll(tenantFilter);
   }
 
-  async createItem(data: CreateInventoryDTO, userId: string = "system") {
+  async createItem(data: CreateInventoryDTO, userId: string = "system", userRole: string = "UNKNOWN", userFranchiseId?: string | null) {
     const itmId = generateUid("ITM");
-    const item = await this.repository.create(itmId, data);
+    const franchiseId = (userRole === "SUPER_ADMIN" || userRole === "HQ_USER") ? null : (userFranchiseId || null);
+    const item = await this.repository.create(itmId, data, franchiseId);
     
     // Log movement
     await db.inventoryMovement.create({

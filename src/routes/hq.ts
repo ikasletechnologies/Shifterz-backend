@@ -17,11 +17,12 @@ hqRouter.use(requireRole("SUPER_ADMIN", "HQ_USER"));
 // Create a new franchise
 hqRouter.post("/franchises", async (req: Request, res: Response): Promise<void> => {
   try {
-    const { 
-      name, city, owner, phone, since, startDate, royaltyPct, royalty, status, adminUsername, adminPassword,
-      businessName, gstNumber, email, address, state, pinCode, licenseStatus 
+    const {
+      name, city, owner, phone, since, startDate, royaltyPct, royalty, status, adminPassword,
+      businessName, gstNumber, email, address, state, pinCode, licenseStatus
     } = req.body;
-    
+    const adminUsername: string | undefined = req.body.adminUsername ? String(req.body.adminUsername).trim().toLowerCase() : undefined;
+
     if (adminUsername) {
       const existing = await db.employee.findFirst({
         where: { username: adminUsername }
@@ -99,11 +100,16 @@ hqRouter.get("/franchises", async (req: Request, res: Response): Promise<void> =
       const totalEmployees = await db.employee.count({
         where: { franchiseId: f.id, isDeleted: false }
       });
+      const admin = await db.employee.findFirst({
+        where: { franchiseId: f.id, role: "FRANCHISE_ADMIN", isDeleted: false },
+        select: { username: true }
+      });
       return {
         ...f,
         startDate: f.since ? new Date(f.since).toISOString().split('T')[0] : "",
         royalty: f.royaltyPct,
-        totalEmployees
+        totalEmployees,
+        adminUsername: admin?.username || null
       };
     }));
     res.json(mapped);
@@ -116,41 +122,88 @@ hqRouter.get("/franchises", async (req: Request, res: Response): Promise<void> =
 hqRouter.put("/franchises/:id", async (req: Request, res: Response): Promise<void> => {
   try {
     const id = req.params.id as string;
-    const { 
+    const {
       name, city, owner, phone, since, startDate, royaltyPct, royalty, status,
-      businessName, gstNumber, email, address, state, pinCode, licenseStatus 
+      businessName, gstNumber, email, address, state, pinCode, licenseStatus,
+      adminPassword
     } = req.body;
+    const adminUsername: string | undefined = req.body.adminUsername ? String(req.body.adminUsername).trim().toLowerCase() : undefined;
+
+    if (adminUsername) {
+      const existingUsername = await db.employee.findFirst({
+        where: { username: adminUsername, franchiseId: { not: id } }
+      });
+      if (existingUsername) {
+        res.status(400).json({ error: "Username is already taken by another employee/admin" });
+        return;
+      }
+    }
 
     const dateVal = since || startDate;
-    const updated = await db.franchise.update({
-      where: { id },
-      data: {
-        name,
-        city,
-        owner,
-        phone,
-        since: dateVal ? new Date(dateVal) : undefined,
-        royaltyPct: (royaltyPct !== undefined || royalty !== undefined) ? Number(royaltyPct !== undefined ? royaltyPct : royalty) : undefined,
-        status,
-        businessName,
-        gstNumber,
-        email,
-        address,
-        state,
-        pinCode,
-        licenseStatus
+    const updated = await db.$transaction(async (tx) => {
+      const franchise = await tx.franchise.update({
+        where: { id },
+        data: {
+          name,
+          city,
+          owner,
+          phone,
+          since: dateVal ? new Date(dateVal) : undefined,
+          royaltyPct: (royaltyPct !== undefined || royalty !== undefined) ? Number(royaltyPct !== undefined ? royaltyPct : royalty) : undefined,
+          status,
+          businessName,
+          gstNumber,
+          email,
+          address,
+          state,
+          pinCode,
+          licenseStatus
+        }
+      });
+
+      if (adminUsername || adminPassword) {
+        const existingAdmin = await tx.employee.findFirst({
+          where: { franchiseId: id, role: "FRANCHISE_ADMIN", isDeleted: false }
+        });
+
+        if (existingAdmin) {
+          const adminUpdate: { username?: string; password?: string } = {};
+          if (adminUsername) adminUpdate.username = adminUsername;
+          if (adminPassword) adminUpdate.password = await bcrypt.hash(adminPassword, 10);
+          await tx.employee.update({ where: { id: existingAdmin.id }, data: adminUpdate });
+        } else if (adminUsername && adminPassword) {
+          const hashedPassword = await bcrypt.hash(adminPassword, 10);
+          const userId = `USR${Date.now().toString(36).toUpperCase()}`;
+          await tx.employee.create({
+            data: {
+              id: userId,
+              name: adminUsername,
+              username: adminUsername,
+              password: hashedPassword,
+              role: "FRANCHISE_ADMIN",
+              franchiseId: id
+            }
+          });
+        }
       }
+
+      return franchise;
     });
 
     const totalEmployees = await db.employee.count({
       where: { franchiseId: id, isDeleted: false }
+    });
+    const admin = await db.employee.findFirst({
+      where: { franchiseId: id, role: "FRANCHISE_ADMIN", isDeleted: false },
+      select: { username: true }
     });
 
     res.json({
       ...updated,
       startDate: updated.since ? new Date(updated.since).toISOString().split('T')[0] : "",
       royalty: updated.royaltyPct,
-      totalEmployees
+      totalEmployees,
+      adminUsername: admin?.username || null
     });
   } catch (error: any) {
     res.status(500).json({ error: error.message });

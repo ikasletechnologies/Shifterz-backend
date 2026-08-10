@@ -9,7 +9,9 @@ export class InventoryController {
 
   getAllItems = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const list = await this.service.getAllItems();
+      const userRole = req.user?.role || "UNKNOWN";
+      const userFranchiseId = req.user?.franchiseId || undefined;
+      const list = await this.service.getAllItems(userRole, userFranchiseId);
       res.json(list);
     } catch (error) {
       next(error);
@@ -19,7 +21,9 @@ export class InventoryController {
   createItem = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const userId = req.user?.id || "unknown";
-      const result = await this.service.createItem(req.body, userId);
+      const userRole = req.user?.role || "UNKNOWN";
+      const userFranchiseId = req.user?.franchiseId || undefined;
+      const result = await this.service.createItem(req.body, userId, userRole, userFranchiseId);
       await logAudit({
         module: "INVENTORY",
         recordId: result.id,

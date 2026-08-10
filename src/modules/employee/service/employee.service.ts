@@ -8,6 +8,15 @@ import { ApiError } from '../../../shared/errors/ApiError.js';
 import { NotFoundError } from '../../../shared/errors/NotFoundError.js';
 import { computeStaffPerformance } from '../../../shared/services/staffPerformance.service.js';
 
+const FRANCHISE_ASSIGNABLE_ROLES = [
+  "RECEPTION_EXECUTIVE",
+  "SERVICE_ADVISOR",
+  "TECHNICIAN",
+  "QUALITY_INSPECTOR",
+  "BILLING_EXECUTIVE",
+  "INVENTORY_EXECUTIVE",
+];
+
 export interface StaffManagementQuery {
   search?: string;
   dateFrom?: string;
@@ -75,11 +84,22 @@ export class EmployeeService {
     let franchiseId: string | null = data.franchiseId || null;
 
     if (!isTechnicianRoute) {
-      if (userRole !== "SUPER_ADMIN" && userRole !== "HQ_USER") {
-        throw new UnauthorizedError("Only HQ can create employees");
+      const isHq = userRole === "SUPER_ADMIN" || userRole === "HQ_USER";
+      const isFranchiseAdmin = userRole === "FRANCHISE_ADMIN";
+
+      if (!isHq && !isFranchiseAdmin) {
+        throw new UnauthorizedError("Only HQ or a Franchise Admin can create employees");
       }
-      if (userRole !== "SUPER_ADMIN" && userRole !== "HQ_USER" && userFranchiseId) {
+
+      if (isFranchiseAdmin) {
+        if (!userFranchiseId) {
+          throw new UnauthorizedError("Franchise admin account is not linked to a franchise");
+        }
         franchiseId = userFranchiseId;
+        const requestedRole = data.role || "TECHNICIAN";
+        if (!FRANCHISE_ASSIGNABLE_ROLES.includes(requestedRole)) {
+          throw new ApiError(403, "Franchise admins can only create Technician, Service Advisor, Reception, QC, Billing, or Inventory accounts.");
+        }
       }
     } else {
       franchiseId = userFranchiseId || null;
@@ -203,6 +223,18 @@ export class EmployeeService {
       throw new ApiError(403, "You do not have permission to modify employees outside your franchise.");
     }
 
+    if (userRole === "FRANCHISE_ADMIN") {
+      if (!FRANCHISE_ASSIGNABLE_ROLES.includes(existing.role)) {
+        throw new ApiError(403, "You do not have permission to modify this account.");
+      }
+      if (data.role !== undefined && !FRANCHISE_ASSIGNABLE_ROLES.includes(data.role)) {
+        throw new ApiError(403, "Franchise admins can only assign Technician, Service Advisor, Reception, QC, Billing, or Inventory roles.");
+      }
+      if (data.franchiseId !== undefined && data.franchiseId !== userFranchiseId) {
+        throw new ApiError(403, "You cannot move an employee to another franchise.");
+      }
+    }
+
     const updateData: any = {};
 
     if (data.name !== undefined) updateData.name = data.name;
@@ -292,8 +324,12 @@ export class EmployeeService {
       throw new ApiError(400, "Super Administrator account cannot be deleted.");
     }
 
-    if (userRole !== "SUPER_ADMIN" && userRole !== "HQ_USER") {
-      throw new ApiError(403, "Only Headquarters can soft-delete employee profiles.");
+    const isHq = userRole === "SUPER_ADMIN" || userRole === "HQ_USER";
+    if (!isHq) {
+      const isOwnFranchiseAdmin = userRole === "FRANCHISE_ADMIN" && existing.franchiseId === userFranchiseId;
+      if (!isOwnFranchiseAdmin || !FRANCHISE_ASSIGNABLE_ROLES.includes(existing.role)) {
+        throw new ApiError(403, "You do not have permission to remove this employee.");
+      }
     }
 
     return this.repository.softDelete(id);

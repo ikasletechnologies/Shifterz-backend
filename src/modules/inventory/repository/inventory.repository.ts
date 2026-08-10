@@ -2,15 +2,13 @@ import { db } from '../../../lib/db.js';
 import type { CreateInventoryDTO, UpdateInventoryDTO } from '../validation/inventory.validation.js';
 
 export class InventoryRepository {
-  async findAll() {
+  async findAll(tenantFilter: any) {
     return db.inventory.findMany({
-      where: {
-        isDeleted: false
-      }
+      where: tenantFilter,
     });
   }
 
-  async create(id: string, data: CreateInventoryDTO) {
+  async create(id: string, data: CreateInventoryDTO, franchiseId: string | null) {
     return db.inventory.create({
       data: {
         id,
@@ -22,6 +20,7 @@ export class InventoryRepository {
         cost: Number(data.cost || 0),
         supplier: data.supplier || "",
         location: data.location || "",
+        franchiseId,
       },
     });
   }
