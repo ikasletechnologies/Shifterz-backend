@@ -6,6 +6,16 @@ import { env } from "../../config/env.js";
 
 const JWT_SECRET = env.JWT_SECRET;
 
+// Identifies the employee's reporting branch: their own Franchise, or Head
+// Office when they have no franchise (either as an admin role or an
+// explicitly HQ-controlled employee).
+function resolveBranch(user: { franchiseId: string | null; franchise?: { id: string; name: string; city: string } | null }) {
+  if (user.franchiseId && user.franchise) {
+    return { id: user.franchise.id, type: "FRANCHISE" as const, name: user.franchise.name, city: user.franchise.city };
+  }
+  return { id: null, type: "HQ" as const, name: "Head Office", city: null };
+}
+
 export class AuthService {
   async login(username: string, password: string) {
     const normalizedUsername = username.trim().toLowerCase();
@@ -29,12 +39,13 @@ export class AuthService {
       role: user.role,
       permissions: resolvedPermissions,
       franchiseId: user.franchiseId,
+      hqControlled: user.hqControlled,
       ...(baseRole === "TECHNICIAN" || baseRole === "QUALITY_INSPECTOR" ? { technicianId: user.id } : {})
     };
 
     const token = jwt.sign(tokenPayload, JWT_SECRET as string, { expiresIn: "1d" });
 
-    return { token, user: tokenPayload };
+    return { token, user: { ...tokenPayload, branch: resolveBranch(user) } };
   }
 
   async getMe(userId: string) {
@@ -52,6 +63,8 @@ export class AuthService {
       role: user.role,
       permissions: resolvedPermissions,
       franchiseId: user.franchiseId,
+      hqControlled: user.hqControlled,
+      branch: resolveBranch(user),
       ...(baseRole === "TECHNICIAN" || baseRole === "QUALITY_INSPECTOR" ? { technicianId: user.id } : {})
     };
   }

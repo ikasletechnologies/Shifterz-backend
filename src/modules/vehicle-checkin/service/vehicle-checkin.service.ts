@@ -56,8 +56,12 @@ export class VehicleCheckinService {
     }
   }
 
-  async getAllCheckins(user?: { id?: string; name?: string; role?: string }) {
-    const checkins = await this.repository.findAll();
+  async getAllCheckins(user?: { id?: string; name?: string; role?: string; franchiseId?: string | null }) {
+    const userRole = user ? (user.role || "").toUpperCase().replace(/[\s_]+/g, "_") : "";
+    const isHQ = userRole === "SUPER_ADMIN" || userRole === "HQ_USER";
+    const scopeFranchiseId = user && !isHQ ? user.franchiseId : undefined;
+
+    const checkins = await this.repository.findAll(scopeFranchiseId);
     const jobCardIds = checkins.map((c) => c.jobCardId).filter(Boolean);
     const jobs = await db.job.findMany({
       where: { id: { in: jobCardIds } },
@@ -78,7 +82,6 @@ export class VehicleCheckinService {
     });
 
     if (user) {
-      const userRole = (user.role || "").toUpperCase().replace(/[\s_]+/g, "_");
       if (userRole === "TECHNICIAN") {
         const userId = user.id;
         const userName = user.name ? user.name.trim().toLowerCase() : "";

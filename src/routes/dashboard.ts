@@ -11,11 +11,9 @@ dashboardRouter.use(tenantScope);
 dashboardRouter.get("/", async (req: Request, res: Response) => {
   try {
     const user = (req as any).user;
-    let tenantFilter: any = (req as any).tenantFilter || {};
-
-    if (user && user.role !== "SUPER_ADMIN" && user.role !== "HQ_USER") {
-      if (user.franchiseId) tenantFilter.franchiseId = user.franchiseId;
-    }
+    // Resolved by the `tenant` middleware: {} for HQ admins (cross-franchise),
+    // or { franchiseId } for a specific franchise / HQ-controlled employee (franchiseId: null).
+    const tenantFilter: any = { ...((req as any).tenantFilter || {}) };
 
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);

@@ -181,10 +181,7 @@ export class OutpassService {
 
     const conditions: any = { isDeleted: false };
     if (userRole && userRole !== "SUPER_ADMIN" && userRole !== "HQ_USER" && franchiseId) {
-      conditions.OR = [
-        { franchiseId: franchiseId },
-        { franchiseId: null },
-      ];
+      conditions.franchiseId = franchiseId;
     }
     return db.outPass.findMany({
       where: conditions,

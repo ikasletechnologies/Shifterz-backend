@@ -8,14 +8,14 @@ export class AuthRepository {
   async findEmployeeByUsername(username: string) {
     return db.employee.findUnique({
       where: { username },
-      include: { permission: true },
+      include: { permission: true, franchise: true },
     });
   }
 
   async findEmployeeById(id: string) {
     return db.employee.findUnique({
       where: { id },
-      include: { permission: true },
+      include: { permission: true, franchise: true },
     });
   }
 

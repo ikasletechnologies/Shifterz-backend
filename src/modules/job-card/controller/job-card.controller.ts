@@ -25,6 +25,12 @@ export class JobCardController {
         } else if (userRole.includes("BILLING") || userRole.includes("ACCOUNTANT")) {
           filter = { status: { in: ["Ready For Billing", "QC Passed", "Delivered", "Out"] } };
         }
+
+        // Branch/franchise admins (and every other non-HQ role) must only see
+        // their own branch's job cards, never HQ's or another branch's.
+        if (userRole !== "SUPER_ADMIN" && userRole !== "HQ_USER" && req.user.franchiseId) {
+          filter.franchiseId = req.user.franchiseId;
+        }
       }
       const list = await this.service.getJobs(filter);
       logger.info(`[Jobs API] User Role: ${req.user?.role}, Filter: ${JSON.stringify(filter)}, Results: ${list.length}`);

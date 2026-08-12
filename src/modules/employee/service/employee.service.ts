@@ -274,6 +274,7 @@ export class EmployeeService {
 
     if (data.franchiseId !== undefined) {
       updateData.franchiseId = (data.franchiseId && data.franchiseId !== "HQ") ? data.franchiseId : null;
+      updateData.hqControlled = updateData.franchiseId === null;
     }
 
     if (data.dob !== undefined) {

@@ -43,7 +43,7 @@ export async function resolveUserPermissions(userId: string, role: string): Prom
     HQ_USER: ["dashboard", "carin", "jobs", "outpass", "leads", "customers", "billing", "payments", "inventory", "reports", "employees", "attendance", "settings"],
     FRANCHISE_ADMIN: ["dashboard", "carin", "jobs", "outpass", "leads", "customers", "billing", "payments", "inventory", "reports", "employees", "attendance"],
     BRANCH_MANAGER: ["dashboard", "carin", "jobs", "outpass", "leads", "customers", "billing", "payments", "inventory", "reports", "attendance"],
-    RECEPTION_EXECUTIVE: ["dashboard", "carin", "outpass", "customers", "leads"],
+    RECEPTION_EXECUTIVE: ["dashboard", "carin", "outpass", "customers", "leads", "attendance"],
     SERVICE_ADVISOR: ["dashboard", "carin", "jobs", "customers", "leads"],
     TECHNICIAN: ["dashboard", "jobs", "attendance"],
     QUALITY_INSPECTOR: ["dashboard", "jobs", "carin"],

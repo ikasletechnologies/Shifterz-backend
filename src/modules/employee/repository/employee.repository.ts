@@ -45,6 +45,7 @@ export class EmployeeRepository {
         password: hashedPassword,
         role: data.role || "TECHNICIAN",
         franchiseId,
+        hqControlled: franchiseId === null,
         gender: data.gender || null,
         dob: data.dob ? new Date(data.dob) : null,
         doj: data.doj ? new Date(data.doj) : null,

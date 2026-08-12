@@ -14,7 +14,14 @@ export class JobCardRepository {
       orderBy: { createdAt: "desc" },
     });
 
-    const carIns = await db.carIn.findMany({ where: { isDeleted: false } });
+    // The synthetic "delivered but no job card yet" entries below are built
+    // directly from carIn records, bypassing `filter` entirely — so the
+    // franchise scope has to be re-applied here too, or a branch admin could
+    // still see another branch's/HQ's vehicles through this fallback path.
+    const franchiseId = (filter as any)?.franchiseId;
+    const carIns = await db.carIn.findMany({
+      where: franchiseId ? { isDeleted: false, franchiseId } : { isDeleted: false },
+    });
     const customers = await db.customer.findMany({ where: { isDeleted: false } });
 
     const carInMapByJobId = new Map<string, any>();
