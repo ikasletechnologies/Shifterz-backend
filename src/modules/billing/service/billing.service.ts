@@ -224,6 +224,14 @@ export class BillingService {
     const existing = await this.repository.findById(id);
     if (!existing) throw new ValidationError("Invoice not found");
 
+    // A paid invoice cannot be cancelled — payment has already been received
+    if (existing.status === "Paid" || existing.status === "Partially Paid") {
+      throw new ValidationError(
+        `Cannot cancel an invoice with status "${existing.status}". ` +
+        `Payment has already been recorded against this invoice.`
+      );
+    }
+
     const cancelled = await this.repository.cancel(id, reason, actor?.id);
 
     await logAudit({

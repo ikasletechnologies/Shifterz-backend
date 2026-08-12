@@ -12,7 +12,9 @@ function safeIsoDate(input?: string | Date | null): string {
 export class VehicleCheckinRepository {
   async findAll(franchiseId?: string | null) {
     return db.carIn.findMany({
-      where: franchiseId ? { isDeleted: false, franchiseId } : { isDeleted: false },
+      where: franchiseId
+        ? { isDeleted: false, status: { notIn: ["Out", "Delivered", "Issued"] }, franchiseId }
+        : { isDeleted: false, status: { notIn: ["Out", "Delivered", "Issued"] } },
       orderBy: { inTime: "desc" },
     });
   }

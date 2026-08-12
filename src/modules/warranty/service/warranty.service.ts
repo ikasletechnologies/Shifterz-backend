@@ -56,13 +56,67 @@ export class WarrantyService {
     return synced;
   }
 
+  private async resolveCustomerId(clientNameOrId?: string, phone?: string, vehicle?: string, franchiseId?: string | null): Promise<string> {
+    const input = (clientNameOrId || "").trim();
+
+    if (input) {
+      const byId = await db.customer.findUnique({ where: { id: input } });
+      if (byId) return byId.id;
+
+      const byName = await db.customer.findFirst({
+        where: { name: { equals: input, mode: "insensitive" }, isDeleted: false },
+      });
+      if (byName) return byName.id;
+    }
+
+    if (phone && phone.trim()) {
+      const byPhone = await db.customer.findFirst({
+        where: { phone: phone.trim(), isDeleted: false },
+      });
+      if (byPhone) return byPhone.id;
+    }
+
+    if (vehicle && vehicle.trim()) {
+      const byVeh = await db.customer.findFirst({
+        where: { vehicle: { equals: vehicle.trim(), mode: "insensitive" }, isDeleted: false },
+      });
+      if (byVeh) return byVeh.id;
+    }
+
+    const anyCustomer = await db.customer.findFirst({ where: { isDeleted: false } });
+
+    const newCustId = `CUST-${Date.now()}-${Math.floor(Math.random() * 899 + 100)}`;
+    try {
+      const created = await db.customer.create({
+        data: {
+          id: newCustId,
+          name: input || "Walk-in Customer",
+          phone: phone || "0000000000",
+          email: "",
+          vehicle: vehicle || "N/A",
+          model: "General",
+          visits: 1,
+          totalSpend: 0,
+          lastVisit: new Date(),
+          franchiseId: franchiseId || null,
+        },
+      });
+      return created.id;
+    } catch {
+      if (anyCustomer) return anyCustomer.id;
+      throw new ValidationError("Failed to resolve or create customer record for warranty.");
+    }
+  }
+
   async createWarranty(data: CreateWarrantyDTO) {
     if (!data.customerId || !data.vehicleNo || !data.itemName) {
       throw new ValidationError("Customer ID, vehicle number, and item/service name are required.");
     }
+    const validCustomerId = await this.resolveCustomerId(data.customerId, undefined, data.vehicleNo);
     const warrantyNo = await this.repository.allocateWarrantyNo();
     const created = await this.repository.create({
       ...data,
+      customerId: validCustomerId,
       warrantyNo,
     });
     const [synced] = await this.syncExpiryStatuses([created]);
@@ -117,9 +171,17 @@ export class WarrantyService {
 
   async generateFromInvoice(invoiceId: string) {
     const trimmedId = invoiceId.trim();
+    const normInput = trimmedId.replace(/[^A-Z0-9]/g, "").toUpperCase();
+
     let invoice = await db.invoice.findFirst({
       where: { id: { equals: trimmedId, mode: "insensitive" }, isDeleted: false },
     });
+
+    if (!invoice) {
+      invoice = await db.invoice.findFirst({
+        where: { id: { contains: trimmedId, mode: "insensitive" }, isDeleted: false },
+      });
+    }
 
     if (!invoice) {
       invoice = await db.invoice.findFirst({
@@ -127,7 +189,30 @@ export class WarrantyService {
       });
     }
 
-    if (!invoice) throw new NotFoundError("Invoice or billing document not found.");
+    if (!invoice) {
+      invoice = await db.invoice.findFirst({
+        where: { vehicle: { contains: trimmedId, mode: "insensitive" }, isDeleted: false },
+      });
+    }
+
+    if (!invoice) {
+      const allInvoices = await db.invoice.findMany({
+        where: { isDeleted: false },
+      });
+      invoice = allInvoices.find((inv) => {
+        const normId = (inv.id || "").replace(/[^A-Z0-9]/g, "").toUpperCase();
+        const normJob = (inv.jobId || "").replace(/[^A-Z0-9]/g, "").toUpperCase();
+        const normVeh = (inv.vehicle || "").replace(/[^A-Z0-9]/g, "").toUpperCase();
+        return (
+          (normId && normId === normInput) ||
+          (normJob && normJob === normInput) ||
+          (normVeh && normVeh === normInput) ||
+          (normId && normId.includes(normInput))
+        );
+      }) || null;
+    }
+
+    if (!invoice) throw new NotFoundError(`Invoice "${invoiceId}" not found in Billing module.`);
 
     let targetInvoice = invoice;
     if (invoice.type !== "Invoice" && invoice.jobId) {
@@ -145,6 +230,13 @@ export class WarrantyService {
       return this.syncExpiryStatuses(existingWarranties);
     }
 
+    const validCustomerId = await this.resolveCustomerId(
+      targetInvoice.client,
+      targetInvoice.phone,
+      targetInvoice.vehicle,
+      targetInvoice.franchiseId
+    );
+
     let items: Array<{ desc?: string; qty?: number; price?: number; warranty?: string }> = [];
     try {
       items = targetInvoice.items ? (typeof targetInvoice.items === "string" ? JSON.parse(targetInvoice.items) : (Array.isArray(targetInvoice.items) ? targetInvoice.items : [])) : [];
@@ -160,10 +252,9 @@ export class WarrantyService {
       if (warrantyStr && warrantyStr.trim() !== "" && warrantyStr.toLowerCase() !== "no warranty" && warrantyStr.toLowerCase() !== "none") {
         const durationDays = this.parseDurationDays(warrantyStr);
         const warrantyNo = await this.repository.allocateWarrantyNo();
-        const customerId = targetInvoice.client;
         const created = await this.repository.create({
           warrantyNo,
-          customerId,
+          customerId: validCustomerId,
           vehicleNo: targetInvoice.vehicle,
           jobId: targetInvoice.jobId || undefined,
           invoiceId: targetInvoice.id,
@@ -185,7 +276,7 @@ export class WarrantyService {
       const warrantyNo = await this.repository.allocateWarrantyNo();
       const created = await this.repository.create({
         warrantyNo,
-        customerId: targetInvoice.client,
+        customerId: validCustomerId,
         vehicleNo: targetInvoice.vehicle,
         jobId: targetInvoice.jobId || undefined,
         invoiceId: targetInvoice.id,

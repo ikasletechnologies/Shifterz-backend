@@ -90,11 +90,46 @@ export async function computeStaffPerformance(params: StaffPerformanceParams) {
   const todayStr = new Date().toISOString().split("T")[0];
 
   const fullList = employees.map((emp) => {
-    const empJobs = jobs.filter((j) => {
-      const techIdMatch = Boolean(j.technicianId && j.technicianId === emp.id);
-      const nameMatch = Boolean(j.technician && emp.name && j.technician.trim().toLowerCase() === emp.name.trim().toLowerCase());
-      const usernameMatch = Boolean(j.technician && emp.username && j.technician.trim().toLowerCase() === emp.username.trim().toLowerCase());
-      return techIdMatch || nameMatch || usernameMatch;
+    const empJobs = jobs.filter((j: any) => {
+      const empName = emp.name ? emp.name.trim().toLowerCase() : "";
+      const empUsername = emp.username ? emp.username.trim().toLowerCase() : "";
+
+      if (assigneeIdField === "serviceAdvisorId" || role === "SERVICE_ADVISOR") {
+        const saId = j.serviceAdvisorId || j.advisorId;
+        const saName = (j.serviceAdvisor || j.advisor || "").trim().toLowerCase();
+        const createdById = j.createdById;
+        const createdByName = (j.createdBy || j.creator || "").trim().toLowerCase();
+
+        const idMatch = Boolean((saId && saId === emp.id) || (createdById && createdById === emp.id));
+        const nameMatch = Boolean(
+          (saName && empName && (saName === empName || saName.includes(empName) || empName.includes(saName))) ||
+          (createdByName && empName && (createdByName === empName || createdByName.includes(empName) || empName.includes(createdByName)))
+        );
+        const usernameMatch = Boolean(
+          (saName && empUsername && (saName === empUsername || saName.includes(empUsername))) ||
+          (createdByName && empUsername && (createdByName === empUsername || createdByName.includes(empUsername)))
+        );
+
+        return idMatch || nameMatch || usernameMatch;
+      }
+
+      if (assigneeIdField === "qcById") {
+        const qcId = j.qcById;
+        const qcName = (j.qcBy || "").trim().toLowerCase();
+        const idMatch = Boolean(qcId && qcId === emp.id);
+        const nameMatch = Boolean(qcName && empName && qcName === empName);
+        const usernameMatch = Boolean(qcName && empUsername && qcName === empUsername);
+        return idMatch || nameMatch || usernameMatch;
+      }
+
+      // Default (Technicians or other staff)
+      const techId = j.technicianId;
+      const techName = (j.technician || "").trim().toLowerCase();
+      const idMatch = Boolean(techId && techId === emp.id);
+      const nameMatch = Boolean(techName && empName && techName === empName);
+      const usernameMatch = Boolean(techName && empUsername && techName === empUsername);
+
+      return idMatch || nameMatch || usernameMatch;
     });
 
     const assignedJobs = empJobs.length;

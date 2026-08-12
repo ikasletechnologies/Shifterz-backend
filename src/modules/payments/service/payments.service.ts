@@ -4,11 +4,34 @@ import { generateUid } from '../../../shared/utils/idGenerator.js';
 import { NotFoundError } from '../../../shared/errors/NotFoundError.js';
 import { ValidationError } from '../../../shared/errors/ValidationError.js';
 
+import { db } from '../../../lib/db.js';
+
 export class PaymentsService {
   constructor(private readonly repository: PaymentsRepository = new PaymentsRepository()) {}
 
   async getAllPayments() {
-    return this.repository.findAll();
+    const list = await this.repository.findAll();
+    const invoices = await db.invoice.findMany({ where: { isDeleted: false } });
+    const jobs = await db.job.findMany({ where: { isDeleted: false } });
+
+    const invMap = new Map(invoices.map((i) => [i.id, i]));
+    const jobMap = new Map(jobs.map((j) => [j.id, j]));
+
+    return list.map((p) => {
+      const inv = p.invoiceId ? invMap.get(p.invoiceId) : null;
+      const job = p.jobId ? jobMap.get(p.jobId) : null;
+      const vehicle = inv?.vehicle && inv.vehicle !== "-" ? inv.vehicle : job?.vehicle && job.vehicle !== "-" ? job.vehicle : "—";
+      const model = (inv as any)?.model || (inv as any)?.makeModel || (job as any)?.model || "";
+      const phone = (inv as any)?.phone || (job as any)?.phone || "";
+      const client = inv?.client || job?.customer || p.client || "Walk-in Customer";
+      return {
+        ...p,
+        vehicle,
+        model,
+        phone,
+        client,
+      };
+    });
   }
 
   async getPaymentsByCustomer(customerId: string) {
@@ -24,6 +47,12 @@ export class PaymentsService {
       try {
         const invoice = await this.repository.findInvoiceById(data.invoiceId);
         if (invoice) {
+          // Payments are only allowed on Invoices, not on Estimates or Quotations
+          if (invoice.type === 'Estimate' || invoice.type === 'Quotation') {
+            throw new ValidationError(
+              `Payments cannot be recorded against an ${invoice.type}. Please convert it to an Invoice first.`
+            );
+          }
           clientName = invoice.client || clientName;
           invoiceTotal = (invoice.amount || 0) + (invoice.gst || 0) - (invoice.discount || 0);
 
@@ -31,6 +60,8 @@ export class PaymentsService {
           currentTotalPaid = (existingPays || []).reduce((sum, p) => sum + p.amount, 0);
         }
       } catch (err) {
+        // Re-throw business rule violations; only swallow unexpected DB lookup errors
+        if (err instanceof ValidationError) throw err;
         console.error("Invoice lookup non-fatal error:", err);
       }
     } else if (data.jobId) {
@@ -89,27 +120,6 @@ export class PaymentsService {
         const newTotalPaid = currentTotalPaid + amount;
         if (invoiceTotal > 0 && newTotalPaid >= invoiceTotal) {
           await this.repository.updateInvoiceStatus(data.invoiceId, "Paid");
-          
-          try {
-            const invoice = await this.repository.findInvoiceById(data.invoiceId);
-            if (invoice && invoice.vehicle) {
-              const { OutpassService } = await import('../../outpass/service/outpass.service.js');
-              const outpassService = new OutpassService();
-              
-              await outpassService.createOutpass({
-                vehicle: invoice.vehicle,
-                customer: invoice.client || "",
-                phone: invoice.phone || "",
-                service: invoice.service || "",
-                jobCardId: invoice.jobId || undefined,
-                invoiceId: invoice.id,
-                customerConfirmation: true,
-                outTime: new Date().toISOString()
-              }, null, data.createdBy || undefined);
-            }
-          } catch (outpassErr) {
-            console.error("Failed to auto-generate outpass:", outpassErr);
-          }
         } else if (newTotalPaid > 0) {
           await this.repository.updateInvoiceStatus(data.invoiceId, "Partially Paid");
         }
