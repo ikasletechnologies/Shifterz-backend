@@ -1428,6 +1428,60 @@ const VALID_MASTER_CATEGORIES = [
   "NOTIFICATION_TEMPLATE", "NUMBER_SERIES", "BUSINESS_HOURS", "HOLIDAY_CALENDAR",
 ];
 
+async function resequenceCategory(category: string, parentId: string | null = null) {
+  try {
+    const list = await db.masterData.findMany({
+      where: {
+        category: category.toUpperCase(),
+        parentId: parentId || null,
+        isDeleted: false,
+      },
+      orderBy: [
+        { sortOrder: "asc" },
+        { name: "asc" },
+        { createdAt: "asc" },
+        { id: "asc" },
+      ],
+    });
+
+    for (let i = 0; i < list.length; i++) {
+      const item = list[i];
+      if (!item) continue;
+      const targetOrder = i + 1;
+      if (item.sortOrder !== targetOrder) {
+        await db.masterData.update({
+          where: { id: item.id },
+          data: { sortOrder: targetOrder },
+        });
+      }
+    }
+  } catch (err) {
+    console.error(`Failed to resequence category ${category}:`, err);
+  }
+}
+
+// One-time startup resequencing to repair any historical sequence gaps
+setTimeout(async () => {
+  try {
+    const categories = await db.masterData.groupBy({
+      by: ["category"],
+      where: { isDeleted: false },
+    });
+    for (const row of categories) {
+      const parents = await db.masterData.findMany({
+        where: { category: row.category, isDeleted: false },
+        select: { parentId: true },
+        distinct: ["parentId"],
+      });
+      for (const p of parents) {
+        await resequenceCategory(row.category, p.parentId);
+      }
+    }
+  } catch (err) {
+    console.error("Startup resequencing failed:", err);
+  }
+}, 3000);
+
 // GET /api/hq/masters?category=VEHICLE_BRAND  — list all entries for a category
 hqRouter.get("/masters", async (req: Request, res: Response): Promise<void> => {
   try {
@@ -1516,16 +1570,20 @@ hqRouter.post("/masters", async (req: Request, res: Response): Promise<void> => 
       },
     });
 
+    await resequenceCategory(cat, parentId);
+
+    const finalRecord = await db.masterData.findUnique({ where: { id: record.id } }) || record;
+
     await logAudit({
       module: "masters",
-      recordId: record.id,
+      recordId: finalRecord.id,
       action: "create",
       userId: actor?.id || "system",
       branchId: null,
-      newValue: record,
+      newValue: finalRecord,
     });
 
-    res.status(201).json(record);
+    res.status(201).json(finalRecord);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
@@ -1551,6 +1609,15 @@ hqRouter.put("/masters/:id", async (req: Request, res: Response): Promise<void> 
 
     const updated = await db.masterData.update({ where: { id }, data: updateData });
 
+    // Resequence the category and parentId of the record
+    await resequenceCategory(existing.category, existing.parentId);
+    const newParentId = parentId !== undefined ? parentId : existing.parentId;
+    if (newParentId !== existing.parentId) {
+      await resequenceCategory(existing.category, newParentId);
+    }
+
+    const finalRecord = await db.masterData.findUnique({ where: { id } }) || updated;
+
     await logAudit({
       module: "masters",
       recordId: id,
@@ -1558,10 +1625,10 @@ hqRouter.put("/masters/:id", async (req: Request, res: Response): Promise<void> 
       userId: actor?.id || "system",
       branchId: null,
       oldValue: existing,
-      newValue: updated,
+      newValue: finalRecord,
     });
 
-    res.json(updated);
+    res.json(finalRecord);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
@@ -1582,6 +1649,8 @@ hqRouter.delete("/masters/:id", async (req: Request, res: Response): Promise<voi
       where: { id },
       data: { isDeleted: true, deletedAt: new Date(), status: "Inactive" },
     });
+
+    await resequenceCategory(existing.category, existing.parentId);
 
     await logAudit({
       module: "masters",
@@ -1705,6 +1774,12 @@ hqRouter.post("/masters/seed", async (req: Request, res: Response): Promise<void
       } else {
         skipped++;
       }
+    }
+
+    // Resequence all categories that were seeded
+    const categoriesToResequence = Array.from(new Set(defaults.map((d) => d.category)));
+    for (const cat of categoriesToResequence) {
+      await resequenceCategory(cat);
     }
 
     res.json({ success: true, created, skipped, total: defaults.length });
