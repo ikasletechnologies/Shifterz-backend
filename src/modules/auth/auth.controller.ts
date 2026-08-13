@@ -39,7 +39,7 @@ export class AuthController {
       if (error.message === "Invalid username or password") {
         res.status(401).json({ error: error.message });
       } else {
-        res.status(500).json({ error: error.message });
+        res.status(403).json({ error: error.message });
       }
     }
   }

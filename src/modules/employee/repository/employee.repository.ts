@@ -34,13 +34,18 @@ export class EmployeeRepository {
 
   async create(id: string, data: any, hashedPassword: string | null, normalizedUsername: string | null) {
     const franchiseId = (data.franchiseId && data.franchiseId !== "HQ") ? data.franchiseId : null;
+    const isFranchiseEmployee = franchiseId !== null;
+    const approvalStatus = data.approvalStatus || (isFranchiseEmployee ? "Pending" : "Approved");
+    const status = data.status || (isFranchiseEmployee ? "Inactive" : "Active");
+
     return db.employee.create({
       data: {
         id,
         name: data.name,
         phone: data.phone || null,
         email: data.email || null,
-        status: data.status || "Active",
+        status,
+        approvalStatus,
         username: normalizedUsername,
         password: hashedPassword,
         role: data.role || "TECHNICIAN",
@@ -59,6 +64,24 @@ export class EmployeeRepository {
         }
       },
       include: {
+        permission: true
+      }
+    });
+  }
+
+  async findPendingApprovals(statusFilter?: string) {
+    const where: any = { isDeleted: false, franchiseId: { not: null } };
+    if (statusFilter && statusFilter !== "All") {
+      where.approvalStatus = statusFilter;
+    } else if (!statusFilter) {
+      where.approvalStatus = "Pending";
+    }
+
+    return db.employee.findMany({
+      where,
+      orderBy: { id: "desc" },
+      include: {
+        franchise: { select: { id: true, name: true, city: true } },
         permission: true
       }
     });

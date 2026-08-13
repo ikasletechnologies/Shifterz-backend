@@ -17,6 +17,9 @@ technicianRouter.use(authenticate);
 
 // Employees
 employeeRouter.get('/', controller.getAllEmployees);
+employeeRouter.get('/pending-approvals', controller.getPendingApprovals);
+employeeRouter.post('/:id/approve-registration', controller.approveRegistration);
+employeeRouter.post('/:id/reject-registration', controller.rejectRegistration);
 employeeRouter.post('/', validate(createEmployeeSchema), controller.createEmployee);
 employeeRouter.put('/:id', validate(updateEmployeeSchema), controller.updateEmployee);
 employeeRouter.delete('/:id', controller.deleteEmployee);

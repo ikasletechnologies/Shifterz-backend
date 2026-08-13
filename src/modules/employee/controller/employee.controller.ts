@@ -138,5 +138,60 @@ export class EmployeeController {
       next(error);
     }
   };
+
+  getPendingApprovals = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const userRole = req.user?.role || "UNKNOWN";
+      const statusFilter = req.query.status ? String(req.query.status) : undefined;
+      const list = await this.service.getPendingApprovals(userRole, statusFilter);
+      res.json(list);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  approveRegistration = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const id = String(req.params.id);
+      const userRole = req.user?.role || "UNKNOWN";
+      const result = await this.service.approveRegistration(id, userRole);
+      await logAudit({
+        module: "EMPLOYEE",
+        recordId: id,
+        action: "APPROVE_REGISTRATION",
+        userId: req.user?.id || "unknown",
+        branchId: req.user?.franchiseId || null,
+        oldValue: null,
+        newValue: result,
+        ipAddress: req.ip,
+        device: req.headers['user-agent'],
+      });
+      res.json(result);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  rejectRegistration = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const id = String(req.params.id);
+      const userRole = req.user?.role || "UNKNOWN";
+      const result = await this.service.rejectRegistration(id, userRole);
+      await logAudit({
+        module: "EMPLOYEE",
+        recordId: id,
+        action: "REJECT_REGISTRATION",
+        userId: req.user?.id || "unknown",
+        branchId: req.user?.franchiseId || null,
+        oldValue: null,
+        newValue: result,
+        ipAddress: req.ip,
+        device: req.headers['user-agent'],
+      });
+      res.json(result);
+    } catch (error) {
+      next(error);
+    }
+  };
 }
 

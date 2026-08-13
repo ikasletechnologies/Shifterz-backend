@@ -1311,8 +1311,8 @@ hqRouter.post("/purchases/:id/receive", requireRole("SUPER_ADMIN", "HQ_USER"), a
   }
 });
 
-// PUT /api/hq/purchases/:id/invoice - Attach purchase invoice
-hqRouter.put("/purchases/:id/invoice", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: Request, res: Response): Promise<void> => {
+// PUT & POST /api/hq/purchases/:id/invoice - Attach purchase invoice
+const attachPurchaseInvoiceHandler = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = req.params.id as string;
     const { invoiceNumber } = req.body;
@@ -1331,7 +1331,10 @@ hqRouter.put("/purchases/:id/invoice", requireRole("SUPER_ADMIN", "HQ_USER"), as
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
-});
+};
+
+hqRouter.put("/purchases/:id/invoice", requireRole("SUPER_ADMIN", "HQ_USER"), attachPurchaseInvoiceHandler);
+hqRouter.post("/purchases/:id/invoice", requireRole("SUPER_ADMIN", "HQ_USER"), attachPurchaseInvoiceHandler);
 
 // POST /api/hq/purchases/:id/pay - Record Supplier Payment
 hqRouter.post("/purchases/:id/pay", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: Request, res: Response): Promise<void> => {
@@ -1364,6 +1367,42 @@ hqRouter.delete("/purchases/:id", requireRole("SUPER_ADMIN", "HQ_USER"), async (
       }
     });
     res.json(deleted);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// PUT /api/hq/purchases/:id - Edit / Update purchase order
+hqRouter.put("/purchases/:id", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const { orderNumber, vendorId, items, totalAmount, notes } = req.body;
+
+    const existing = await db.purchaseOrder.findUnique({ where: { id } });
+    if (!existing) {
+      res.status(404).json({ error: "Purchase Order not found." });
+      return;
+    }
+
+    const updateData: any = {};
+    if (orderNumber) updateData.orderNumber = orderNumber;
+    if (notes !== undefined) updateData.notes = notes;
+    if (totalAmount !== undefined) updateData.totalAmount = Number(totalAmount) || 0;
+    if (items) updateData.items = typeof items === "string" ? items : JSON.stringify(items);
+
+    if (vendorId) {
+      const vendor = await db.vendor.findUnique({ where: { id: vendorId } });
+      if (vendor) {
+        updateData.vendorId = vendorId;
+        updateData.vendorName = vendor.name;
+      }
+    }
+
+    const updated = await db.purchaseOrder.update({
+      where: { id },
+      data: updateData
+    });
+    res.json(updated);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }

@@ -491,6 +491,7 @@ model Employee {
   phone        String?
   email        String?
   status       String          @default("Active")
+  approvalStatus String        @default("Approved")
   username     String?         @unique
   password     String?
   role         String          @default("TECHNICIAN")

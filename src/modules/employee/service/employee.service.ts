@@ -335,4 +335,53 @@ export class EmployeeService {
 
     return this.repository.softDelete(id);
   }
+
+  async getPendingApprovals(userRole: string, statusFilter?: string) {
+    const baseRole = userRole.split("|")[0];
+    const isHq = baseRole === "SUPER_ADMIN" || baseRole === "HQ_USER" || userRole.includes("SUPER_ADMIN") || userRole.includes("HQ_USER");
+    if (!isHq) {
+      throw new UnauthorizedError("Only Super Admin or HQ users can view employee pending approvals");
+    }
+    const list = await this.repository.findPendingApprovals(statusFilter);
+    return list.map(emp => {
+      const { password, ...rest } = emp;
+      return rest;
+    });
+  }
+
+  async approveRegistration(id: string, userRole: string) {
+    const baseRole = userRole.split("|")[0];
+    const isHq = baseRole === "SUPER_ADMIN" || baseRole === "HQ_USER" || userRole.includes("SUPER_ADMIN") || userRole.includes("HQ_USER");
+    if (!isHq) {
+      throw new UnauthorizedError("Only Super Admin or HQ users can approve employee registration");
+    }
+    const existing = await db.employee.findUnique({ where: { id } });
+    if (!existing) {
+      throw new NotFoundError("Employee not found");
+    }
+    const updated = await this.repository.update(id, {
+      approvalStatus: "Approved",
+      status: "Active",
+    });
+    const { password, ...rest } = updated;
+    return rest;
+  }
+
+  async rejectRegistration(id: string, userRole: string) {
+    const baseRole = userRole.split("|")[0];
+    const isHq = baseRole === "SUPER_ADMIN" || baseRole === "HQ_USER" || userRole.includes("SUPER_ADMIN") || userRole.includes("HQ_USER");
+    if (!isHq) {
+      throw new UnauthorizedError("Only Super Admin or HQ users can reject employee registration");
+    }
+    const existing = await db.employee.findUnique({ where: { id } });
+    if (!existing) {
+      throw new NotFoundError("Employee not found");
+    }
+    const updated = await this.repository.update(id, {
+      approvalStatus: "Rejected",
+      status: "Inactive",
+    });
+    const { password, ...rest } = updated;
+    return rest;
+  }
 }

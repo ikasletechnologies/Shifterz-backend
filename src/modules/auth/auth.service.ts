@@ -30,6 +30,19 @@ export class AuthService {
       throw new Error("Invalid username or password");
     }
 
+    // Validate approval status and account status
+    if (user.approvalStatus === "Pending") {
+      throw new Error("Your account is pending Super Admin approval. Please contact administrator.");
+    }
+
+    if (user.approvalStatus === "Rejected") {
+      throw new Error("Your account approval request has been rejected. Access denied.");
+    }
+
+    if (user.status === "Inactive") {
+      throw new Error("Your account is inactive. Access denied.");
+    }
+
     const baseRole = user.role.split("|")[0];
     const resolvedPermissions = await resolveUserPermissions(user.id, user.role);
 
