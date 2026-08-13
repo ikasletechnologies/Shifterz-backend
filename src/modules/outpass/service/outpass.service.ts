@@ -3,6 +3,7 @@ import type { CreateOutpassDTO, UpdateOutpassDTO } from '../validation/outpass.v
 import { generateUid } from '../../../shared/utils/idGenerator.js';
 import { db } from '../../../lib/db.js';
 import { ValidationError } from '../../../shared/errors/ValidationError.js';
+import { NotFoundError } from '../../../shared/errors/NotFoundError.js';
 
 export class OutpassService {
   constructor(private readonly repository: OutpassRepository = new OutpassRepository()) {}
@@ -220,14 +221,29 @@ export class OutpassService {
   }
 
   async updateOutpass(id: string, data: UpdateOutpassDTO) {
-    return this.repository.update(id, data);
+    const existing = await db.outPass.findUnique({ where: { id } });
+    if (!existing) {
+      throw new NotFoundError("Outpass not found");
+    }
+    if (existing.status === "Delivered" || existing.status === "Approved") {
+      throw new ValidationError("Approved/Delivered outpasses must not be editable.");
+    }
+    if (existing.status !== "Rejected") {
+      throw new ValidationError("Edit functionality is available only for Rejected records.");
+    }
+
+    const enriched = {
+      ...data,
+      status: "Updated",
+    };
+    return this.repository.update(id, enriched);
   }
 
   async approveOutpass(id: string, userId: string, userName: string) {
     const updated = await db.outPass.update({
       where: { id },
       data: {
-        status: "Approved",
+        status: "Delivered",
         issued: true,
         approvedBy: userId,
         approvedAt: new Date(),

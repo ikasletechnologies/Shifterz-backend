@@ -187,7 +187,48 @@ export class JobCardService {
     }
 
     // ── Rule 5: Price and warranty modifications require authorization ──────
-    const isPriceOrWarrantyChange = data.services !== undefined;
+    const canonicalizeService = (item: any) => {
+      if (typeof item !== 'object' || item === null) {
+        return String(item);
+      }
+      return JSON.stringify({
+        name: item.name || item.code || '',
+        price: Number(item.price) || 0,
+        warranty: item.warranty || ''
+      });
+    };
+
+    const haveServicesChanged = (oldVal: any, newVal: any): boolean => {
+      if (oldVal === newVal) return false;
+      if (!oldVal || !newVal) return true;
+
+      let oldArr: any[] = [];
+      let newArr: any[] = [];
+
+      try {
+        oldArr = typeof oldVal === 'string' ? JSON.parse(oldVal) : (Array.isArray(oldVal) ? oldVal : [oldVal]);
+      } catch {
+        oldArr = [oldVal];
+      }
+
+      try {
+        newArr = typeof newVal === 'string' ? JSON.parse(newVal) : (Array.isArray(newVal) ? newVal : [newVal]);
+      } catch {
+        newArr = [newVal];
+      }
+
+      if (oldArr.length !== newArr.length) return true;
+
+      const oldCanon = oldArr.map(canonicalizeService).sort();
+      const newCanon = newArr.map(canonicalizeService).sort();
+
+      for (let i = 0; i < oldCanon.length; i++) {
+        if (oldCanon[i] !== newCanon[i]) return true;
+      }
+      return false;
+    };
+
+    const isPriceOrWarrantyChange = data.services !== undefined && haveServicesChanged(job.services, data.services);
     if (isPriceOrWarrantyChange) {
       if (!userRole || !MANAGEMENT_ROLES.includes(normalizeRole(userRole))) {
         throw new ForbiddenError("Only authorized management may modify service prices or warranty terms.");

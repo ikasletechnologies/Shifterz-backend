@@ -7,6 +7,14 @@ export class OutpassRepository {
   }
 
   async create(id: string, data: any) {
+    let outTimeVal: Date = new Date();
+    if (data.outTime) {
+      const parsed = new Date(data.outTime);
+      if (!isNaN(parsed.getTime())) {
+        outTimeVal = parsed;
+      }
+    }
+
     return db.outPass.create({
       data: {
         id,
@@ -15,7 +23,7 @@ export class OutpassRepository {
         customer: data.customer || "",
         phone: data.phone || "",
         service: data.service || "",
-        outTime: data.outTime || new Date().toISOString(),
+        outTime: outTimeVal,
         securityName: data.securityName || "",
         technicianName: data.technicianName || "",
         remarks: data.remarks || "",
@@ -33,20 +41,29 @@ export class OutpassRepository {
     });
   }
 
-  async update(id: string, data: UpdateOutpassDTO) {
+  async update(id: string, data: any) {
+    const updateData: any = {
+      vehicle: data.vehicle,
+      model: data.model,
+      customer: data.customer,
+      phone: data.phone,
+      service: data.service,
+      securityName: data.securityName,
+      technicianName: data.technicianName,
+      remarks: data.remarks,
+      status: data.status,
+    };
+
+    if (data.outTime) {
+      const parsed = new Date(data.outTime);
+      if (!isNaN(parsed.getTime())) {
+        updateData.outTime = parsed;
+      }
+    }
+
     return db.outPass.update({
       where: { id },
-      data: {
-        vehicle: data.vehicle,
-        model: data.model,
-        customer: data.customer,
-        phone: data.phone,
-        service: data.service,
-        outTime: data.outTime,
-        securityName: data.securityName,
-        technicianName: data.technicianName,
-        remarks: data.remarks,
-      },
+      data: updateData,
     });
   }
 }
