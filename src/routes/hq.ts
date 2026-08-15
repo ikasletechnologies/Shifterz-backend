@@ -14,12 +14,12 @@ hqRouter.use(requireRole("SUPER_ADMIN", "HQ_USER"));
 // FRANCHISE MANAGEMENT (HQ Only)
 // ═══════════════════════════════════════════════════════════════
 
-// Create a new franchise
+// Create a new franchise (goes into Pending state; a License is auto-generated and also stays Pending until Super Admin approval)
 hqRouter.post("/franchises", async (req: Request, res: Response): Promise<void> => {
   try {
     const {
-      name, city, owner, phone, since, startDate, royaltyPct, royalty, status, adminPassword,
-      businessName, gstNumber, email, address, state, pinCode, licenseStatus
+      name, city, owner, phone, since, startDate, royaltyPct, royalty, adminPassword,
+      businessName, gstNumber, email, address, state, pinCode
     } = req.body;
     const adminUsername: string | undefined = req.body.adminUsername ? String(req.body.adminUsername).trim().toLowerCase() : undefined;
 
@@ -28,16 +28,40 @@ hqRouter.post("/franchises", async (req: Request, res: Response): Promise<void> 
         where: { username: adminUsername }
       });
       if (existing) {
-        res.status(400).json({ error: "Username is already taken by another employee/admin" });
-        return;
+        if (existing.isDeleted) {
+          // Free up the username from the deleted account
+          await db.employee.update({
+            where: { id: existing.id },
+            data: { username: `del_${existing.id}_${existing.username}` }
+          });
+        } else {
+          res.status(400).json({ error: "Username is already taken by another employee/admin" });
+          return;
+        }
       }
     }
 
-    // Generate a unique ID (e.g. FRA001)
+    // Generate a unique franchise ID (e.g. FRA001)
     const count = await db.franchise.count();
     const id = `FRA${String(count + 1).padStart(3, "0")}`;
 
-    const newFranchise = await db.$transaction(async (tx) => {
+    // Auto-generate a unique license key (never entered by the user)
+    const generateLicenseKey = (): string => {
+      const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+      const segment = () => Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+      return `STZ-${segment()}-${segment()}-${segment()}-${segment()}`;
+    };
+
+    // Ensure uniqueness — retry on collision (astronomically rare but correct)
+    let licenseKey = generateLicenseKey();
+    while (await db.license.findUnique({ where: { licenseKey } })) {
+      licenseKey = generateLicenseKey();
+    }
+
+    const expiryDate = new Date();
+    expiryDate.setDate(expiryDate.getDate() + 365);
+
+    const { newFranchise, newLicense } = await db.$transaction(async (tx) => {
       const dateVal = since || startDate;
       const franchise = await tx.franchise.create({
         data: {
@@ -50,14 +74,29 @@ hqRouter.post("/franchises", async (req: Request, res: Response): Promise<void> 
           revenue: 0,
           jobs: 0,
           royaltyPct: Number(royaltyPct !== undefined ? royaltyPct : royalty) || 10.0,
-          status: status || "Active",
+          status: "Active",
           businessName,
           gstNumber,
           email,
           address,
           state,
           pinCode,
-          licenseStatus: licenseStatus || "Active"
+          licenseStatus: "Active"
+        }
+      });
+
+      // Create a linked License record in Pending state
+      const license = await tx.license.create({
+        data: {
+          organizationId: id,
+          licenseKey,
+          status: "Active",
+          maxSuperAdmins: 1,
+          maxHQUsers: 6,
+          maxFranchiseAdmins: 1,
+          maxFranchiseUsers: 6,
+          expiryDate,
+          features: ["dashboard", "carin", "jobs", "outpass", "leads", "customers", "billing", "payments", "inventory", "reports", "employees", "attendance"],
         }
       });
 
@@ -76,14 +115,16 @@ hqRouter.post("/franchises", async (req: Request, res: Response): Promise<void> 
         });
       }
 
-      return franchise;
+      return { newFranchise: franchise, newLicense: license };
     });
 
     res.json({
       ...newFranchise,
       startDate: newFranchise.since ? new Date(newFranchise.since).toISOString().split('T')[0] : "",
       royalty: newFranchise.royaltyPct,
-      totalEmployees: (adminUsername && adminPassword) ? 1 : 0
+      totalEmployees: (adminUsername && adminPassword) ? 1 : 0,
+      licenseKey: newLicense.licenseKey,
+      licenseStatus: newLicense.status,
     });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -134,8 +175,16 @@ hqRouter.put("/franchises/:id", async (req: Request, res: Response): Promise<voi
         where: { username: adminUsername, franchiseId: { not: id } }
       });
       if (existingUsername) {
-        res.status(400).json({ error: "Username is already taken by another employee/admin" });
-        return;
+        if (existingUsername.isDeleted) {
+          // Free up the username from the deleted account
+          await db.employee.update({
+            where: { id: existingUsername.id },
+            data: { username: `del_${existingUsername.id}_${existingUsername.username}` }
+          });
+        } else {
+          res.status(400).json({ error: "Username is already taken by another employee/admin" });
+          return;
+        }
       }
     }
 
@@ -231,7 +280,7 @@ hqRouter.delete("/franchises/:id", async (req: Request, res: Response): Promise<
 hqRouter.post("/users", async (req: Request, res: Response): Promise<void> => {
   try {
     const { username, password, role, franchiseId } = req.body;
-    
+
     if (!username || !password || !role) {
       res.status(400).json({ error: "Missing required fields" });
       return;
@@ -414,7 +463,7 @@ hqRouter.post("/licenses", async (req: Request, res: Response): Promise<void> =>
         maxHQUsers: Number(maxHQUsers || 6),
         maxFranchiseAdmins: Number(maxFranchiseAdmins || 1),
         maxFranchiseUsers: Number(maxFranchiseUsers || 6),
-        expiryDate: new Date(expiryDate || new Date(Date.now() + 365*24*60*60*1000)),
+        expiryDate: new Date(expiryDate || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000)),
         features: features || [],
       }
     });
@@ -723,105 +772,60 @@ hqRouter.get("/reports/financial/export", async (req: Request, res: Response): P
 // FRANCHISE ACTIVATION REQUESTS (Ikasle/Super Admin Approval)
 // ═══════════════════════════════════════════════════════════════
 
-// List pending franchise requests
+// List pending franchise requests (unified: both old Approval-table requests and new Pending franchises)
 hqRouter.get("/franchise-requests", async (req: Request, res: Response): Promise<void> => {
   try {
-    const list = await db.approval.findMany({
+    // Old approval-table based requests (legacy)
+    const approvalList = await db.approval.findMany({
       where: { module: "FRANCHISE", status: "Pending" },
       orderBy: { createdAt: "desc" }
     });
-    res.json(list);
+
+    // New flow: pending Franchise records with their linked licenses
+    const pendingFranchises = await db.franchise.findMany({
+      where: { status: "Pending", isDeleted: false },
+      orderBy: { since: "desc" }
+    });
+
+    const franchiseRequests = await Promise.all(pendingFranchises.map(async (f) => {
+      const license = await db.license.findFirst({
+        where: { organizationId: f.id }
+      });
+      return {
+        _type: "franchise",
+        id: f.id,
+        franchiseId: f.id,
+        module: "FRANCHISE",
+        status: "Pending",
+        createdAt: f.since,
+        requesterName: f.owner || f.name,
+        payload: {
+          name: f.name,
+          city: f.city,
+          owner: f.owner,
+          phone: f.phone,
+          email: f.email,
+          address: f.address,
+          state: f.state,
+          pinCode: f.pinCode,
+          gstNumber: f.gstNumber,
+          businessName: f.businessName,
+          royaltyPct: f.royaltyPct,
+          licenseKey: license?.licenseKey || null,
+          licenseExpiry: license?.expiryDate || null,
+          licenseFeatures: license?.features || [],
+        }
+      };
+    }));
+
+    // Return unified list with old approvals first, then new-style franchise requests
+    res.json([...approvalList, ...franchiseRequests]);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// Approve (Activate) a franchise request
-hqRouter.post("/franchise-requests/:id/approve", async (req: Request, res: Response): Promise<void> => {
-  try {
-    const id = String(req.params.id);
-    const reqUser = (req as any).user;
 
-    const approval = await db.approval.findUnique({ where: { id } });
-    if (!approval || approval.status !== "Pending") {
-      res.status(404).json({ error: "Pending activation request not found." });
-      return;
-    }
-
-    const payload: any = approval.payload;
-    const franchiseId = "FRN-" + Math.floor(Math.random() * 9000 + 1000);
-
-    // Create the franchise node
-    const newFranchise = await db.franchise.create({
-      data: {
-        id: franchiseId,
-        name: payload.name,
-        city: payload.city || "Unknown",
-        owner: payload.owner,
-        phone: payload.phone,
-        since: payload.since ? new Date(payload.since) : new Date(),
-        revenue: 0,
-        jobs: 0,
-        royaltyPct: Number(payload.royaltyPct || 5),
-        status: "Active",
-        businessName: payload.businessName || payload.name,
-        gstNumber: payload.gstNumber || null,
-        email: payload.email || null,
-        address: payload.address || null,
-        state: payload.state || null,
-        pinCode: payload.pinCode || null,
-        licenseStatus: "Active",
-      }
-    });
-
-    // Update approval status
-    const updatedApproval = await db.approval.update({
-      where: { id },
-      data: {
-        status: "Approved",
-        approverId: reqUser?.id || "ikasle",
-        approverName: reqUser?.name || "Ikasle Admin",
-      }
-    });
-
-    await logAudit({
-      module: "FRANCHISE",
-      recordId: newFranchise.id,
-      action: "ACTIVATE",
-      userId: reqUser?.id || "ikasle",
-      branchId: null,
-      oldValue: approval,
-      newValue: newFranchise,
-      ipAddress: req.ip,
-      device: req.headers['user-agent'] ? String(req.headers['user-agent']) : null,
-    });
-
-    res.json({ success: true, franchise: newFranchise, approval: updatedApproval });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Reject a franchise request
-hqRouter.post("/franchise-requests/:id/reject", async (req: Request, res: Response): Promise<void> => {
-  try {
-    const id = String(req.params.id);
-    const reqUser = (req as any).user;
-
-    const approval = await db.approval.update({
-      where: { id },
-      data: {
-        status: "Rejected",
-        approverId: reqUser?.id || "ikasle",
-        approverName: reqUser?.name || "Ikasle Admin",
-      }
-    });
-
-    res.json({ success: true, approval });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
-  }
-});
 
 // Franchise Performance Monitoring Stats
 hqRouter.get("/franchises/:id/stats", async (req: Request, res: Response): Promise<void> => {
