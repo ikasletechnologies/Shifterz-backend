@@ -1,5 +1,7 @@
 import express from "express";
 import cors from "cors";
+import helmet from "helmet";
+import cookieParser from "cookie-parser";
 import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -17,10 +19,56 @@ import { env } from "./config/env.js";
 
 const app = express();
 const PORT = env.PORT || 5000;
+const isProd = process.env.NODE_ENV === "production";
 
-// Middleware
-app.use(cors());
-app.use(express.json());
+// Deployed behind a reverse proxy (Vercel) in production — without this,
+// Express sees the proxy's IP on every request, which breaks per-client
+// rate limiting (Phase 0.8) and `req.ip` used throughout audit logging.
+if (isProd) app.set("trust proxy", 1);
+
+// Phase 0.11 — CORS is no longer wide open. ALLOWED_ORIGINS is a
+// comma-separated allowlist (set via env, e.g. "https://app.shifterz.com");
+// local dev falls back to the common Next.js dev ports. `credentials: true`
+// is required for the httpOnly auth cookie (Phase 0.10) to be sent
+// cross-origin at all.
+const defaultDevOrigins = ["http://localhost:3000", "http://127.0.0.1:3000"];
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
+  .split(",")
+  .map((o) => o.trim())
+  .filter(Boolean);
+const originAllowlist = allowedOrigins.length > 0 ? allowedOrigins : defaultDevOrigins;
+
+app.use(
+  cors({
+    origin(origin, callback) {
+      // Same-origin/non-browser requests (curl, server-to-server, health
+      // checks) send no Origin header at all — allow those through; the
+      // browser is what enforces CORS for actual cross-origin JS callers.
+      if (!origin || originAllowlist.includes(origin)) {
+        return callback(null, true);
+      }
+      const err: any = new Error("Not allowed by CORS");
+      err.statusCode = 403;
+      return callback(err);
+    },
+    credentials: true,
+  })
+);
+
+// Phase 0.12 — helmet was an installed-but-unused dependency. contentSecurityPolicy
+// and HSTS are handled explicitly below rather than left on their aggressive
+// defaults: this is a JSON API (not an HTML-rendering app) that also serves
+// uploaded images to a different origin, and HSTS should not be forced on
+// until the deployment is confirmed HTTPS-only.
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+    hsts: isProd,
+  })
+);
+app.use(cookieParser());
+app.use(express.json({ limit: "2mb" }));
 app.use("/uploads", express.static(path.join(__dirname, "../public/uploads")));
 
 import { authRoutes } from "./modules/auth/auth.routes.js";

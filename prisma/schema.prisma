@@ -502,6 +502,7 @@ model Employee {
   attendances  Attendance[]
   franchise    Franchise?      @relation(fields: [franchiseId], references: [id])
   permission   UserPermission?
+  sessions     Session[]
   leaveRequests LeaveRequest[]
   gender        String?
   dob           DateTime?
@@ -509,6 +510,26 @@ model Employee {
   department    String?
   designation   String?
   reportingManager String?
+}
+
+// Server-side login-session record. One row per issued JWT (keyed by its
+// unique `jti` claim). Lets the API revoke a specific session (logout),
+// all sessions for an employee (password change, deactivation), and reject
+// requests bearing a token whose session has been revoked or expired —
+// closing the "stateless JWT can never be invalidated" gap (Phase 0.4-0.7).
+model Session {
+  id            String    @id @default(cuid())
+  employeeId    String
+  jti           String    @unique
+  issuedAt      DateTime  @default(now())
+  expiresAt     DateTime
+  revokedAt     DateTime?
+  revokedReason String?
+  ipAddress     String?
+  device        String?
+  employee      Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
 }
 
 model Attendance {

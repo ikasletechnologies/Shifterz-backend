@@ -7,6 +7,7 @@ import { UnauthorizedError } from '../../../shared/errors/UnauthorizedError.js';
 import { ApiError } from '../../../shared/errors/ApiError.js';
 import { NotFoundError } from '../../../shared/errors/NotFoundError.js';
 import { computeStaffPerformance } from '../../../shared/services/staffPerformance.service.js';
+import { logAudit } from '../../../shared/services/audit.service.js';
 
 const FRANCHISE_ASSIGNABLE_ROLES = [
   "RECEPTION_EXECUTIVE",
@@ -123,6 +124,14 @@ export class EmployeeService {
 
     const roleToCheck = data.role || (isTechnicianRoute ? "TECHNICIAN" : "EMPLOYEE");
 
+    // Phase 0.1 — only an existing Super Administrator may create another
+    // one. Being HQ_USER (or any other role) is not sufficient — HQ_USER is
+    // a broader, lower-trust tier of up to 6 accounts, not interchangeable
+    // with the single, license-capped Super Administrator role.
+    if (roleToCheck === "SUPER_ADMIN" && userRole !== "SUPER_ADMIN") {
+      throw new ApiError(403, "Only a Super Administrator can create a Super Administrator account.");
+    }
+
     if (roleToCheck === "SUPER_ADMIN") {
       const count = await db.employee.count({ where: { role: "SUPER_ADMIN", isDeleted: false } });
       if (count >= limitSuperAdmins) {
@@ -210,6 +219,16 @@ export class EmployeeService {
     if (!existing) {
       throw new NotFoundError("Employee not found");
     }
+
+    // Phase 0.1 — confirmed vulnerability fix. Previously nothing checked
+    // the *new* role being assigned, only whether the *existing* role was
+    // already SUPER_ADMIN — so any authenticated employee (self or a
+    // same-franchise colleague) could PUT {role:"SUPER_ADMIN"} and escalate.
+    // Only an actor who is already a Super Administrator may assign it.
+    if (data.role === "SUPER_ADMIN" && existing.role !== "SUPER_ADMIN" && userRole !== "SUPER_ADMIN") {
+      throw new ApiError(403, "Only a Super Administrator can assign the Super Administrator role.");
+    }
+
     if (existing.role === "SUPER_ADMIN") {
       if (data.role && data.role !== "SUPER_ADMIN") {
         throw new ApiError(400, "Super Administrator role cannot be modified.");
@@ -309,6 +328,21 @@ export class EmployeeService {
       await this.repository.updatePermissions(id, data.permissions);
     }
 
+    // Phase 0.6 — a status/role change is exactly the class of event that
+    // must take effect immediately, not after the token's 24h natural
+    // expiry. `authenticate` also re-checks live employee state on every
+    // request now, but revoking here means the very next request fails
+    // fast at the session lookup instead of relying solely on that check.
+    if (
+      (data.status !== undefined && data.status !== "Active") ||
+      (data.role !== undefined && data.role !== existing.role)
+    ) {
+      await db.session.updateMany({
+        where: { employeeId: id, revokedAt: null },
+        data: { revokedAt: new Date(), revokedReason: data.status !== "Active" ? "DEACTIVATED" : "ROLE_CHANGED" },
+      });
+    }
+
     const { password, ...rest } = updated;
     return {
       ...rest,
@@ -332,6 +366,11 @@ export class EmployeeService {
         throw new ApiError(403, "You do not have permission to remove this employee.");
       }
     }
+
+    await db.session.updateMany({
+      where: { employeeId: id, revokedAt: null },
+      data: { revokedAt: new Date(), revokedReason: "ACCOUNT_DELETED" },
+    });
 
     return this.repository.softDelete(id);
   }

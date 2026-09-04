@@ -13,6 +13,17 @@ export const errorMiddleware = (err: any, req: Request, res: Response, next: Nex
     return;
   }
 
+  // Phase 0.13 — multer's own errors (oversized file, too many files) carry
+  // a `code` rather than a `statusCode`; without this they'd fall through
+  // to a generic 500 instead of a clear 400.
+  if (err?.name === 'MulterError') {
+    res.status(400).json({
+      success: false,
+      error: err.code === 'LIMIT_FILE_SIZE' ? 'File exceeds the maximum allowed size' : err.message
+    });
+    return;
+  }
+
   if (err instanceof ApiError || (err.statusCode && err.message)) {
     res.status(err.statusCode || 400).json({
       success: false,

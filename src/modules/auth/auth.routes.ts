@@ -2,15 +2,17 @@ import { Router } from "express";
 import { authController } from "./auth.controller.js";
 import { authenticate, requireRole } from "../../middleware/auth.middleware.js";
 import { validate } from "../../middleware/validate.middleware.js";
+import { loginRateLimiter } from "../../middleware/rateLimit.middleware.js";
 import { loginSchema, updateProfileSchema, updateRolePermissionsSchema } from "./auth.validation.js";
 
 const router = Router();
 
 // Public route
-router.post("/login", validate(loginSchema), authController.login);
+router.post("/login", loginRateLimiter, validate(loginSchema), authController.login);
 
 // Protected routes
 router.get("/me", authenticate, authController.getMe);
+router.post("/logout", authenticate, authController.logout);
 router.put("/profile", authenticate, validate(updateProfileSchema), authController.updateProfile);
 
 // Admin routes (Example RBAC usage)// RBAC

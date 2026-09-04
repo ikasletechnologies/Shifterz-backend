@@ -210,13 +210,40 @@ hqRouter.put("/franchises/:id", async (req: Request, res: Response): Promise<voi
   }
 });
 
-// Delete a franchise
-hqRouter.delete("/franchises/:id", async (req: Request, res: Response): Promise<void> => {
+// Delete (deactivate) a franchise
+hqRouter.delete("/franchises/:id", async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const id = req.params.id as string;
-    await db.franchise.delete({
-      where: { id }
+    const existing = await db.franchise.findUnique({ where: { id } });
+    if (!existing) {
+      res.status(404).json({ error: "Franchise not found" });
+      return;
+    }
+
+    // Phase 0.3 — confirmed vulnerability fix. This previously ran a real
+    // db.franchise.delete() (hard delete), bypassing the isDeleted/deletedAt
+    // columns the model already defines and risking FK errors or silent
+    // loss of the franchise record for any franchise with dependent
+    // customers/jobs/invoices/employees. Every other protected-record
+    // delete in this codebase is soft; this now matches that policy and
+    // preserves all historical data belonging to the franchise.
+    const franchise = await db.franchise.update({
+      where: { id },
+      data: { isDeleted: true, deletedAt: new Date(), status: "Inactive" },
     });
+
+    await logAudit({
+      module: "FRANCHISE",
+      recordId: id,
+      action: "DELETE",
+      userId: req.user?.id || "unknown",
+      branchId: id,
+      oldValue: existing,
+      newValue: franchise,
+      ipAddress: req.ip,
+      device: req.headers["user-agent"] ? String(req.headers["user-agent"]) : null,
+    });
+
     res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
