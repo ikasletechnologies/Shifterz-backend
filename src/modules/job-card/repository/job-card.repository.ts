@@ -155,6 +155,14 @@ export class JobCardRepository {
       if (data.technicianId !== undefined) updateData.technicianId = data.technicianId;
       if (data.serviceAdvisor !== undefined) updateData.serviceAdvisor = data.serviceAdvisor;
       if (data.serviceAdvisorId !== undefined) updateData.serviceAdvisorId = data.serviceAdvisorId;
+      // Pre-flight Patch B — confirmed vulnerability fix. This whitelist
+      // previously dropped these three fields silently, so job-card.service.ts
+      // setting `assignmentLocked = true` on an HQ reassignment never actually
+      // reached the database — the lock the EPB requires ("HQ-assigned work
+      // cannot be modified by the franchise") was a no-op in practice.
+      if (data.assignmentLocked !== undefined) updateData.assignmentLocked = data.assignmentLocked;
+      if (data.assignedBy !== undefined) updateData.assignedBy = data.assignedBy;
+      if (data.assignedByRole !== undefined) updateData.assignedByRole = data.assignedByRole;
       if (data.status !== undefined) updateData.status = data.status;
       if (data.priority !== undefined) updateData.priority = data.priority;
       if (data.notes !== undefined) updateData.notes = data.notes;

@@ -55,4 +55,61 @@ export async function resolveUserPermissions(userId: string, role: string): Prom
   return fallbackMatrix[base] || [];
 }
 
+// Sentinel representing "every action is allowed" for the action-level
+// permission model (Phase 1B). SUPER_ADMIN is unconditional by design
+// throughout this codebase (see requireRole/requirePermission); the future
+// requireAction() middleware (Phase 1A) must treat this sentinel — or the
+// SUPER_ADMIN role itself, ahead of consulting this list — as "always allow",
+// consistent with how requirePermission() already bypasses SUPER_ADMIN before
+// checking membership in any list.
+export const ALL_ACTIONS = "*";
+
+export interface ActionPermissionInputs {
+  role: string;
+  userPermission?: { actions: string[]; actionsOverride: boolean } | null;
+  rolePermission?: { actions: string[] } | null;
+}
+
+// Pre-flight Patch C — pure resolver for the action-level permission model.
+// Deliberately takes plain data rather than fetching from the DB itself, so
+// it can be unit-tested with zero database dependency. The DB-backed wrapper
+// (resolveActionPermissions below) is what real call sites use.
+//
+// Precedence:
+//   1. SUPER_ADMIN                                -> ALL_ACTIONS
+//   2. UserPermission exists AND actionsOverride   -> that employee's actions, verbatim (even [])
+//   3. otherwise                                   -> RolePermission.actions for the role
+//   4. no RolePermission row for the role          -> [] (fail closed)
+export function resolveActionPermissionsPure(input: ActionPermissionInputs): string[] {
+  const baseRole = (input.role || "").split("|")[0] || "";
+
+  if (baseRole === "SUPER_ADMIN") {
+    return [ALL_ACTIONS];
+  }
+
+  if (input.userPermission?.actionsOverride === true) {
+    return input.userPermission.actions;
+  }
+
+  return input.rolePermission?.actions ?? [];
+}
+
+// DB-backed wrapper — resolves the same way resolveUserPermissions() does
+// for the legacy module list, but for the new action-level list. Not yet
+// called from any route or middleware (Phase 1A wires requireAction() to
+// this); adding it here is inert until that happens.
+export async function resolveActionPermissions(userId: string, role: string): Promise<string[]> {
+  try {
+    const baseRole = role.split("|")[0] || "";
+    const [userPermission, rolePermission] = await Promise.all([
+      db.userPermission.findUnique({ where: { employeeId: userId }, select: { actions: true, actionsOverride: true } }),
+      db.rolePermission.findUnique({ where: { role: baseRole }, select: { actions: true } }),
+    ]);
+    return resolveActionPermissionsPure({ role, userPermission, rolePermission });
+  } catch (err) {
+    logger.error(`Error resolving action permissions: ${err}`);
+    return []; // fail closed, not fail open
+  }
+}
+
 

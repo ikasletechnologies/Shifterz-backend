@@ -214,7 +214,7 @@ export class EmployeeService {
     };
   }
 
-  async updateEmployee(id: string, data: UpdateEmployeeDTO, userRole = "UNKNOWN", userFranchiseId?: string) {
+  async updateEmployee(id: string, data: UpdateEmployeeDTO, userRole = "UNKNOWN", userFranchiseId?: string, userPermissions: string[] = []) {
     const existing = await db.employee.findUnique({ where: { id } });
     if (!existing) {
       throw new NotFoundError("Employee not found");
@@ -242,15 +242,43 @@ export class EmployeeService {
       throw new ApiError(403, "You do not have permission to modify employees outside your franchise.");
     }
 
+    // Pre-flight Patch A — confirmed vulnerability fix. The franchiseId-value
+    // restriction previously lived only inside the FRANCHISE_ADMIN branch
+    // below, so every OTHER non-HQ role (Technician, Service Advisor,
+    // Billing Executive, Reception Executive, Quality Inspector, Inventory
+    // Executive, Branch Manager) could set `franchiseId: null` on themselves
+    // (same-franchise self-targeting already passes the check above), which
+    // derives `hqControlled = true` a few lines down — a self-escalation to
+    // HQ-wide data scope via a field Phase 0's role-escalation fix didn't
+    // cover. This is now a universal guard, checked before any role-specific
+    // branch: only SUPER_ADMIN/HQ_USER may change franchise assignment at
+    // all; everyone else may only ever "change" it to the value it already
+    // is (i.e., leave it alone).
+    if (data.franchiseId !== undefined && userRole !== "SUPER_ADMIN") {
+      if (userRole === "HQ_USER") {
+        // Being exempt from the franchise-scope restriction below is not
+        // itself an authorization grant — an HQ_USER whose "employees"
+        // permission has been explicitly revoked (via UserPermission
+        // override or a customized RolePermission row) must not retain
+        // franchise-reassignment capability purely because of their role
+        // name. This is an interim check against the existing legacy
+        // module-permission list; it becomes the real action-level
+        // "employees:assign"-style check once Phase 1B's action model and
+        // requireAction() exist — not before.
+        if (!userPermissions.includes("employees")) {
+          throw new ApiError(403, "You do not have permission to change franchise assignment.");
+        }
+      } else if (data.franchiseId !== userFranchiseId) {
+        throw new ApiError(403, "You do not have permission to change franchise assignment.");
+      }
+    }
+
     if (userRole === "FRANCHISE_ADMIN") {
       if (!FRANCHISE_ASSIGNABLE_ROLES.includes(existing.role)) {
         throw new ApiError(403, "You do not have permission to modify this account.");
       }
       if (data.role !== undefined && !FRANCHISE_ASSIGNABLE_ROLES.includes(data.role)) {
         throw new ApiError(403, "Franchise admins can only assign Technician, Service Advisor, Reception, QC, Billing, or Inventory roles.");
-      }
-      if (data.franchiseId !== undefined && data.franchiseId !== userFranchiseId) {
-        throw new ApiError(403, "You cannot move an employee to another franchise.");
       }
     }
 

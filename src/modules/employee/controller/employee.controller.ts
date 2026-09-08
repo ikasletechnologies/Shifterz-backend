@@ -96,8 +96,9 @@ export class EmployeeController {
       const id = String(req.params.id);
       const userRole = req.user?.role || "UNKNOWN";
       const userFranchiseId = req.user?.franchiseId || undefined;
+      const userPermissions = req.user?.permissions || [];
       const oldValue = await db.employee.findUnique({ where: { id }, include: { permission: true } });
-      const result = await this.service.updateEmployee(id, req.body, userRole, userFranchiseId);
+      const result = await this.service.updateEmployee(id, req.body, userRole, userFranchiseId, userPermissions);
       await logAudit({
         module: "EMPLOYEE",
         recordId: id,

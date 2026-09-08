@@ -587,6 +587,13 @@ model UserPermission {
   id         String   @id @default(cuid())
   employeeId String   @unique
   modules    String[]
+  // Pre-flight Patch C (Phase 1) — action-level override, Option 1 (sentinel
+  // boolean + native array; Prisma has no nullable-list type, P1012).
+  //   actionsOverride=false            -> no employee override, inherit RolePermission.actions
+  //   actionsOverride=true, actions=[] -> explicit override: zero action grants
+  //   actionsOverride=true, actions=[..] -> explicit employee-specific grants
+  actions         String[] @default([])
+  actionsOverride Boolean  @default(false)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
   employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
@@ -595,6 +602,12 @@ model UserPermission {
 model RolePermission {
   role        String   @id
   permissions String[]
+  // Pre-flight Patch C (Phase 1) companion field — role-level default action
+  // grants. Left @default([]) for every role until Phase 1B's reviewed
+  // permission matrix populates it; nothing reads this yet outside the new
+  // resolver, and the resolver's own fail-closed default (empty matrix ->
+  // deny) means adding this column changes no current behavior.
+  actions     String[] @default([])
 }
 
 model MemberTransferRequest {
