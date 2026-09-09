@@ -3,14 +3,15 @@ import type { CreatePaymentDTO } from '../validation/payments.validation.js';
 import { generateUid } from '../../../shared/utils/idGenerator.js';
 import { NotFoundError } from '../../../shared/errors/NotFoundError.js';
 import { ValidationError } from '../../../shared/errors/ValidationError.js';
+import { scopeWhere, type DataScope } from '../../../shared/scope/dataScope.js';
 
 import { db } from '../../../lib/db.js';
 
 export class PaymentsService {
   constructor(private readonly repository: PaymentsRepository = new PaymentsRepository()) {}
 
-  async getAllPayments() {
-    const list = await this.repository.findAll();
+  async getAllPayments(scope: DataScope) {
+    const list = await this.repository.findAll(scopeWhere(scope));
     const invoices = await db.invoice.findMany({ where: { isDeleted: false } });
     const jobs = await db.job.findMany({ where: { isDeleted: false } });
 
@@ -34,19 +35,26 @@ export class PaymentsService {
     });
   }
 
-  async getPaymentsByCustomer(customerId: string) {
-    return this.repository.findPaymentsByCustomerId(customerId);
+  async getPaymentsByCustomer(customerId: string, scope: DataScope) {
+    return this.repository.findPaymentsByCustomerId(customerId, scopeWhere(scope));
   }
 
-  async createPayment(data: CreatePaymentDTO) {
+  async createPayment(data: CreatePaymentDTO, scope: DataScope) {
     let clientName = data.client || "Walk-in Customer";
     let invoiceTotal = 0;
     let currentTotalPaid = 0;
+    // The payment's franchise is inherited from whichever parent entity it's
+    // linked to (invoice/job/customer); for a walk-in payment with no parent,
+    // it falls back to the actor's own scope. Never trusted from the request body.
+    let franchiseId: string | null = scope.unrestricted ? null : scope.franchiseId;
 
     if (data.invoiceId) {
       try {
         const invoice = await this.repository.findInvoiceById(data.invoiceId);
         if (invoice) {
+          if (!scope.unrestricted && (invoice.franchiseId ?? null) !== scope.franchiseId) {
+            throw new NotFoundError("Invoice not found");
+          }
           // Payments are only allowed on Invoices, not on Estimates or Quotations
           if (invoice.type === 'Estimate' || invoice.type === 'Quotation') {
             throw new ValidationError(
@@ -55,31 +63,42 @@ export class PaymentsService {
           }
           clientName = invoice.client || clientName;
           invoiceTotal = (invoice.amount || 0) + (invoice.gst || 0) - (invoice.discount || 0);
+          franchiseId = invoice.franchiseId ?? null;
 
           const existingPays = await this.repository.findPaymentsByInvoiceId(data.invoiceId);
           currentTotalPaid = (existingPays || []).reduce((sum, p) => sum + p.amount, 0);
         }
       } catch (err) {
-        // Re-throw business rule violations; only swallow unexpected DB lookup errors
-        if (err instanceof ValidationError) throw err;
+        // Re-throw business rule / scope violations; only swallow unexpected DB lookup errors
+        if (err instanceof ValidationError || err instanceof NotFoundError) throw err;
         console.error("Invoice lookup non-fatal error:", err);
       }
     } else if (data.jobId) {
       try {
         const job = await this.repository.findJobById(data.jobId);
         if (job) {
+          if (!scope.unrestricted && (job.franchiseId ?? null) !== scope.franchiseId) {
+            throw new NotFoundError("Job not found");
+          }
           clientName = job.customer || clientName;
+          franchiseId = job.franchiseId ?? null;
         }
       } catch (err) {
+        if (err instanceof NotFoundError) throw err;
         console.error("Job lookup non-fatal error:", err);
       }
     } else if (data.customerId) {
       try {
         const customer = await this.repository.findCustomerById(data.customerId);
         if (customer) {
+          if (!scope.unrestricted && (customer.franchiseId ?? null) !== scope.franchiseId) {
+            throw new NotFoundError("Customer not found");
+          }
           clientName = customer.name || clientName;
+          franchiseId = customer.franchiseId ?? null;
         }
       } catch (err) {
+        if (err instanceof NotFoundError) throw err;
         console.error("Customer lookup non-fatal error:", err);
       }
     }
@@ -111,6 +130,7 @@ export class PaymentsService {
       data,
       clientName,
       receiptNumber,
+      franchiseId,
       outstandingBalance
     );
 
@@ -148,9 +168,8 @@ export class PaymentsService {
     amount: number;
     reason: string;
     approvedBy: string;
-  }) {
-    const allPays = await this.repository.findAll();
-    const original = allPays.find((p) => p.id === data.originalPaymentId);
+  }, scope: DataScope) {
+    const original = await this.repository.findById(data.originalPaymentId, scopeWhere(scope));
     if (!original) {
       throw new NotFoundError("Original payment not found");
     }
@@ -180,6 +199,7 @@ export class PaymentsService {
       },
       original.client,
       receiptNumber,
+      original.franchiseId ?? null,
       undefined
     );
 
@@ -203,7 +223,11 @@ export class PaymentsService {
     return refundPayment;
   }
 
-  async deletePayment(id: string) {
+  async deletePayment(id: string, scope: DataScope) {
+    const existing = await this.repository.findById(id, scopeWhere(scope));
+    if (!existing) {
+      throw new NotFoundError("Payment not found");
+    }
     return this.repository.softDelete(id);
   }
 }

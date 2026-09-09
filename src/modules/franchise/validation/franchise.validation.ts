@@ -16,7 +16,8 @@ export const createFranchiseSchema = z.object({
     address: z.string().optional(),
     state: z.string().optional(),
     pinCode: z.string().optional(),
-    licenseStatus: z.string().optional()
+    licenseStatus: z.string().optional(),
+    gstRegistrationType: z.string().optional()
   })
 });
 
@@ -36,7 +37,8 @@ export const updateFranchiseSchema = z.object({
     address: z.string().optional(),
     state: z.string().optional(),
     pinCode: z.string().optional(),
-    licenseStatus: z.string().optional()
+    licenseStatus: z.string().optional(),
+    gstRegistrationType: z.string().optional()
   })
 });
 

@@ -1,8 +1,17 @@
 import { Router, type Request, type Response } from "express";
 import { db } from "../lib/db.js";
-import { authenticate as requireAuth, requireRole, type AuthRequest } from "../middleware/auth.middleware.js";
+import { authenticate as requireAuth, requireRole, requireAction, type AuthRequest } from "../middleware/auth.middleware.js";
 import bcrypt from "bcrypt";
 import { logAudit } from "../shared/services/audit.service.js";
+import { EmployeeService } from "../modules/employee/service/employee.service.js";
+import { BillingService } from "../modules/billing/service/billing.service.js";
+import { ReportService } from "../modules/report/service/report.service.js";
+import { GstPurchaseInvoiceService } from "../modules/gst/service/gstPurchaseInvoice.service.js";
+import { attachPurchaseInvoiceSchema } from "../modules/gst/validation/purchaseInvoice.validation.js";
+import { isValidPaymentAmount } from "../modules/gst/service/purchaseValidation.helper.js";
+import { RoleActionGrantService } from "../shared/rbac/roleActionGrant.service.js";
+import { setRoleActionsSchema } from "../shared/rbac/roleActionGrant.validation.js";
+import { generateUid } from "../shared/utils/idGenerator.js";
 
 export const hqRouter = Router();
 
@@ -303,47 +312,61 @@ hqRouter.delete("/franchises/:id", async (req: AuthRequest, res: Response): Prom
 // GLOBAL USER MANAGEMENT (HQ Only)
 // ═══════════════════════════════════════════════════════════════
 
-// Create a Franchise Admin for a specific franchise
+// Create a Franchise Admin for a specific franchise.
+// Item #6 (Phase 1B Step 3) — this used to call db.employee.create() directly,
+// which skipped every guard the normal employee-creation path enforces:
+// license-limit checks and, critically, the Phase 0.1 rule that only an
+// existing SUPER_ADMIN may assign the SUPER_ADMIN role. An HQ_USER could
+// therefore create a SUPER_ADMIN account through this endpoint even though
+// every other creation path blocks it. Delegating to the canonical
+// EmployeeService.createEmployee closes that gap by construction — one
+// implementation of "create an employee," not two.
 hqRouter.post("/users", async (req: Request, res: Response): Promise<void> => {
   try {
-    const { username, password, role, franchiseId } = req.body;
+    const { username, password, role, franchiseId, name } = req.body;
 
     if (!username || !password || !role) {
       res.status(400).json({ error: "Missing required fields" });
       return;
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const userId = `USR${Date.now().toString(36).toUpperCase()}`;
+    const authReq = req as AuthRequest;
+    const employeeService = new EmployeeService();
+    const newUser = await employeeService.createEmployee(
+      { name: name || username, username, password, role, franchiseId: franchiseId || null },
+      authReq.user?.role || "UNKNOWN",
+      authReq.user?.franchiseId ?? undefined
+    );
 
-    const newUser = await db.employee.create({
-      data: {
-        id: userId,
-        username,
-        name: username, // Employee requires name
-        password: hashedPassword,
-        role,
-        franchiseId: franchiseId || null,
-      }
-    });
-
-    // Exclude password from response
-    const { password: _, ...userWithoutPassword } = newUser;
-    res.json(userWithoutPassword);
+    res.json(newUser);
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    res.status(error.statusCode || 500).json({ error: error.message });
   }
 });
 
 // Get HQ global dashboard stats
-hqRouter.get("/dashboard", async (req: Request, res: Response): Promise<void> => {
+// REP-01C (D-REP1/D-REP2/D-REP3) — classified COMPATIBILITY: existing
+// response contract (totalFranchises/globalRevenue/businessSummary/
+// salesSummary/inventorySummary/employeeSummary) preserved unchanged, but
+// every metric that overlaps with the canonical getHQSummary() aggregation
+// now comes from ReportService's shared methods instead of a second,
+// independent Prisma computation. Fields with no canonical equivalent yet
+// (completedJobCards, pendingQualityChecks, pendingOutpasses,
+// nearExpiryProducts, jobsAssigned/jobsCompleted, franchiseRevenue's
+// string-formatted shape) remain local — not invented, just not
+// consolidated because nothing else calculates them yet.
+hqRouter.get("/dashboard", requireAction('reports:hq-summary:view'), async (req: Request, res: Response): Promise<void> => {
   try {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const reportService = new ReportService();
+    const [revenueSummary, employeeSummary, inventorySummary] = await Promise.all([
+      reportService.getRevenueSummary(),
+      reportService.getEmployeeSummary(),
+      reportService.getInventorySummary(),
+    ]);
 
-    const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-
-    // Business Summary queries
+    // Business Summary queries — no canonical equivalent yet for these
+    // exact fields (completedJobCards/pendingQualityChecks/pendingOutpasses
+    // combine statuses no shared method currently groups this way).
     const totalFranchises = await db.franchise.count({ where: { isDeleted: false } });
     const activeFranchises = await db.franchise.count({ where: { status: "Active", isDeleted: false } });
     const totalCustomers = await db.customer.count({ where: { isDeleted: false } });
@@ -353,52 +376,20 @@ hqRouter.get("/dashboard", async (req: Request, res: Response): Promise<void> =>
     const pendingQualityChecks = await db.job.count({ where: { status: "Work Completed", isDeleted: false } });
     const pendingOutpasses = await db.outPass.count({ where: { status: "Pending", isDeleted: false } });
 
-    // Sales Summary queries
-    const leadsReceived = await db.lead.count({ where: { isDeleted: false } });
-    const leadsConverted = await db.lead.count({ where: { status: "Converted", isDeleted: false } });
-
-    const invoicesToday = await db.invoice.findMany({
-      where: { date: { gte: today }, isDeleted: false }
-    });
-    const revenueToday = invoicesToday.reduce((sum, i) => sum + (i.amount + i.gst - i.discount), 0);
-
-    const invoicesThisMonth = await db.invoice.findMany({
-      where: { date: { gte: startOfMonth }, isDeleted: false }
-    });
-    const revenueThisMonth = invoicesThisMonth.reduce((sum, i) => sum + (i.amount + i.gst - i.discount), 0);
-
-    const allInvoices = await db.invoice.findMany({
-      where: { isDeleted: false, status: { not: "Cancelled" } }
-    });
-    let outstandingPayments = 0;
-    for (const inv of allInvoices) {
-      const payments = await db.payment.findMany({ where: { invoiceId: inv.id, isDeleted: false } });
-      const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
-      const totalAmount = inv.amount + inv.gst - inv.discount;
-      if (totalPaid < totalAmount) {
-        outstandingPayments += (totalAmount - totalPaid);
-      }
-    }
-
-    // Inventory Summary queries
-    const pendingStockRequests = await db.inventoryRequest.count({ where: { status: "Pending", isDeleted: false } });
-    const pendingDispatches = await db.inventoryRequest.count({ where: { status: "Approved", isDeleted: false } });
-
-    const inventory = await db.inventory.findMany({ where: { isDeleted: false } });
-    const lowStockAlerts = inventory.filter(item => item.stock <= item.reorder).length;
-    const nearExpiryProducts = 0;
-
-    // Employee Summary queries
-    const totalEmployees = await db.employee.count({ where: { isDeleted: false } });
-    const presentToday = await db.attendance.count({
-      where: { date: { gte: today }, status: "Present", isDeleted: false }
-    });
-    const absentToday = await db.attendance.count({
-      where: { date: { gte: today }, status: "Absent", isDeleted: false }
-    });
-
+    // Employee Summary's job-related fields — no canonical equivalent yet.
     const jobsAssigned = await db.job.count({ where: { status: { in: ["Pending", "In Progress"] }, isDeleted: false } });
     const jobsCompleted = await db.job.count({ where: { status: "Completed", isDeleted: false } });
+
+    // leadsReceived/leadsConverted kept local, NOT consolidated into
+    // getLeadSummary(): leadsReceived is a genuine unconditional total
+    // (every lead regardless of status) which the 4-bucket shared summary
+    // doesn't provide, and this route's own leadsConverted definition
+    // (status === "Converted" only) is narrower than getLeadSummary()'s
+    // (status IN ['Converted','Won','Closed']) — not confirmed to be the
+    // same metric, so not merged, per the same conservative rule already
+    // applied to workshop.service.ts's pendingQualityChecks.
+    const leadsReceived = await db.lead.count({ where: { isDeleted: false } });
+    const leadsConverted = await db.lead.count({ where: { status: "Converted", isDeleted: false } });
 
     const franchises = await db.franchise.findMany({ where: { isDeleted: false } });
     const franchiseRevenue = franchises.map(f => ({
@@ -409,10 +400,10 @@ hqRouter.get("/dashboard", async (req: Request, res: Response): Promise<void> =>
 
     res.json({
       totalFranchises,
-      globalRevenue: revenueThisMonth,
+      globalRevenue: revenueSummary.monthlyRevenue,
       totalJobs: completedJobCards,
       franchiseRevenue,
-      globalLowStock: lowStockAlerts,
+      globalLowStock: inventorySummary.lowStock,
       businessSummary: {
         totalFranchises,
         activeFranchises,
@@ -426,20 +417,20 @@ hqRouter.get("/dashboard", async (req: Request, res: Response): Promise<void> =>
       salesSummary: {
         leadsReceived,
         leadsConverted,
-        revenueToday,
-        revenueThisMonth,
-        outstandingPayments,
+        revenueToday: revenueSummary.todayRevenue,
+        revenueThisMonth: revenueSummary.monthlyRevenue,
+        outstandingPayments: revenueSummary.outstandingPayments,
       },
       inventorySummary: {
-        pendingStockRequests,
-        pendingDispatches,
-        lowStockAlerts,
-        nearExpiryProducts,
+        pendingStockRequests: inventorySummary.pendingStockRequests,
+        pendingDispatches: inventorySummary.pendingDispatches,
+        lowStockAlerts: inventorySummary.lowStock,
+        nearExpiryProducts: 0, // unchanged — no expiry/batch tracking exists (INV-03, deferred)
       },
       employeeSummary: {
-        totalEmployees,
-        presentToday,
-        absentToday,
+        totalEmployees: employeeSummary.totalEmployees,
+        presentToday: employeeSummary.presentToday,
+        absentToday: employeeSummary.absentToday,
         jobsAssigned,
         jobsCompleted,
       }
@@ -594,13 +585,47 @@ hqRouter.put("/services/master/:id", async (req: Request, res: Response): Promis
   }
 });
 
-hqRouter.delete("/services/master/:id", async (req: Request, res: Response): Promise<void> => {
+// Item #3 (Phase 1B Step 3) — ServiceMaster has no isDeleted field, so this
+// remains a genuine hard delete for now (a proper soft-delete migration is a
+// separate, later schema phase). Interim containment: SUPER_ADMIN only, a
+// mandatory reason, and a full pre-delete snapshot written to the audit log
+// in the same transaction as the delete — if either half fails, neither
+// happens, so the audit trail can never claim a deletion that didn't occur.
+hqRouter.delete("/services/master/:id", requireRole("SUPER_ADMIN"), async (req: Request, res: Response): Promise<void> => {
   try {
     const id = String(req.params.id);
-    await db.serviceMaster.delete({ where: { id } });
-    res.json({ success: true });
+    const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+    if (!reason) {
+      res.status(400).json({ error: "A reason is required to permanently delete a Service Master entry." });
+      return;
+    }
+
+    const authReq = req as AuthRequest;
+    const result = await db.$transaction(async (tx) => {
+      const existing = await tx.serviceMaster.findUnique({ where: { id } });
+      if (!existing) {
+        throw new Error("Service Master entry not found");
+      }
+
+      await tx.auditLog.create({
+        data: {
+          module: "SERVICE_MASTER",
+          recordId: id,
+          action: "PERMANENT_DELETE",
+          userId: authReq.user?.id || "unknown",
+          oldValue: JSON.parse(JSON.stringify(existing)),
+          newValue: { reason },
+          ipAddress: req.ip,
+          device: req.headers["user-agent"] ? String(req.headers["user-agent"]) : null,
+        },
+      });
+
+      return tx.serviceMaster.delete({ where: { id } });
+    });
+
+    res.json({ success: true, deleted: result });
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    res.status(error.message === "Service Master entry not found" ? 404 : 500).json({ error: error.message });
   }
 });
 
@@ -708,46 +733,154 @@ hqRouter.post("/deleted-records/:model/:id/restore", async (req: Request, res: R
   }
 });
 
-hqRouter.delete("/deleted-records/:model/:id/permanent", async (req: Request, res: Response): Promise<void> => {
+// Item #2 (Phase 1B Step 3) — this generic route used to hard-delete any of
+// six models with zero per-model precondition, which for `employees` bypassed
+// the SUPER_ADMIN-immutability guard entirely (it called db.employee.delete
+// directly, never consulting employee.service.ts's checks), and for `invoices`
+// provided a second, laxer path around Item #1's dedicated purge policy.
+// Locked policy: SUPER_ADMIN only; invoices delegate to the one canonical
+// invoice-purge service (never a second implementation); payments/customers/
+// jobs/inventory are blocked entirely (payments have no legitimate hard-delete
+// path at all, the other three are pending their own safety-precondition design);
+// employees are blocked from ever targeting a SUPER_ADMIN account.
+// RBAC-02 — grant-management foundation. SUPER_ADMIN only (deliberately
+// narrower than this router's default SUPER_ADMIN/HQ_USER gate — this
+// manages the grants every other role, HQ_USER included, is checked
+// against). Validates the role against the known-role roster and every
+// action against the RBAC-01 catalog before writing anything; touches only
+// RolePermission.actions, never the legacy .permissions field. Atomic grant
+// write + audit event via RoleActionGrantService.
+hqRouter.put(
+  "/role-permissions/:role/actions",
+  requireRole("SUPER_ADMIN"),
+  async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      const role = String(req.params.role || "");
+      const parsed = setRoleActionsSchema.safeParse({ body: req.body });
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join('; ') });
+        return;
+      }
+      const updated = await new RoleActionGrantService().setRoleActions(role, parsed.data.body.actions, req.user);
+      res.json(updated);
+    } catch (error: any) {
+      const status = error.statusCode || 500;
+      res.status(status).json({ error: error.message });
+    }
+  }
+);
+
+hqRouter.delete("/deleted-records/:model/:id/permanent", requireRole("SUPER_ADMIN"), async (req: Request, res: Response): Promise<void> => {
   try {
     const model = String(req.params.model || "");
     const id = String(req.params.id || "");
-    let result = null;
+    const authReq = req as AuthRequest;
 
-    if (model === "customers") result = await db.customer.delete({ where: { id } });
-    else if (model === "jobs") result = await db.job.delete({ where: { id } });
-    else if (model === "employees") result = await db.employee.delete({ where: { id } });
-    else if (model === "inventory") result = await db.inventory.delete({ where: { id } });
-    else if (model === "invoices") result = await db.invoice.delete({ where: { id } });
-    else if (model === "payments") result = await db.payment.delete({ where: { id } });
-    else {
+    if (model === "invoices") {
+      const billingService = new BillingService();
+      const deleted = await billingService.deleteInvoice(id, req.body?.reason, authReq.user);
+      res.json({ success: true, deleted });
+      return;
+    }
+
+    if (model === "payments") {
+      res.status(400).json({ error: "Payments have no permanent-delete path. Use the existing payment soft-delete instead." });
+      return;
+    }
+
+    if (model === "customers" || model === "jobs" || model === "inventory") {
+      res.status(400).json({ error: `Permanent deletion of ${model} is not yet enabled pending a dedicated safety policy for this model.` });
+      return;
+    }
+
+    if (model !== "employees") {
       res.status(400).json({ error: "Invalid model name" });
       return;
     }
 
-    const userId = (req as any).user?.id || "unknown";
-    await logAudit({
-      module: model.toUpperCase(),
-      recordId: id,
-      action: "PERMANENT_DELETE",
-      userId,
-      branchId: null,
-      oldValue: result,
-      newValue: null,
-      ipAddress: req.ip,
-      device: req.headers['user-agent'] ? String(req.headers['user-agent']) : null,
+    const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+    if (!reason) {
+      res.status(400).json({ error: "A reason is required to permanently delete an employee record." });
+      return;
+    }
+
+    const result = await db.$transaction(async (tx) => {
+      const existing = await tx.employee.findUnique({ where: { id } });
+      if (!existing) {
+        throw new Error("Employee not found");
+      }
+      if (existing.role === "SUPER_ADMIN") {
+        throw new Error("A Super Administrator account can never be permanently deleted.");
+      }
+
+      await tx.auditLog.create({
+        data: {
+          module: "EMPLOYEES",
+          recordId: id,
+          action: "PERMANENT_DELETE",
+          userId: authReq.user?.id || "unknown",
+          branchId: existing.franchiseId,
+          oldValue: JSON.parse(JSON.stringify(existing)),
+          newValue: { reason },
+          ipAddress: req.ip,
+          device: req.headers['user-agent'] ? String(req.headers['user-agent']) : null,
+        },
+      });
+
+      return tx.employee.delete({ where: { id } });
     });
 
-    res.json({ success: true });
+    const { password: _pw, ...deletedWithoutPassword } = result;
+    res.json({ success: true, deleted: deletedWithoutPassword });
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    const status = error.statusCode || (/not found/i.test(error.message) ? 404 : /Super Administrator/i.test(error.message) ? 403 : 500);
+    res.status(status).json({ error: error.message });
   }
 });
 
 // Financial GST & Accounting CSV Export
-hqRouter.get("/reports/financial/export", async (req: Request, res: Response): Promise<void> => {
+hqRouter.get("/reports/financial/export", async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { type, franchiseId, startDate, endDate } = req.query;
+
+    if (type === "gst") {
+      // GST-10 — this used to re-derive CGST/SGST directly from Invoice with
+      // its own flat-half fallback, a second GST calculation living outside
+      // GstTransaction. It now delegates to the gstr1 CSV export (per-invoice
+      // / rate-HSN detail, matching this endpoint's original filing-grade
+      // granularity) built on the same ledger, so there is exactly one GST
+      // CSV implementation, not two. The coarser monthly aggregate remains
+      // separately available at /api/reports/billing/export?type=gst-summary.
+      const reportService = new ReportService();
+      const { csv, filename } = await reportService.exportBillingCsv(
+        "gstr1",
+        franchiseId ? String(franchiseId) : undefined,
+        startDate ? String(startDate) : undefined,
+        endDate ? String(endDate) : undefined
+      );
+
+      // Phase G — this route previously produced no audit event at all,
+      // unlike the modular /api/reports/billing/export path (which calls
+      // ReportController.auditExport for every export). Same event shape,
+      // so both GST CSV export paths are equally auditable.
+      if (req.user) {
+        await logAudit({
+          module: "Reports Export",
+          recordId: "NONE",
+          action: "EXPORT",
+          userId: req.user.username || req.user.name || req.user.id || "unknown",
+          branchId: req.user.franchiseId || null,
+          ipAddress: req.ip || String(req.headers["x-forwarded-for"] || ""),
+          device: req.headers["user-agent"] || "Unknown Device",
+          newValue: { reportName: "gstr1", queryParams: { type, franchiseId, startDate, endDate } },
+        });
+      }
+
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", `attachment; filename=${filename}`);
+      res.send(csv);
+      return;
+    }
 
     const conditions: any = { isDeleted: false };
     if (franchiseId) conditions.franchiseId = String(franchiseId);
@@ -763,33 +896,14 @@ hqRouter.get("/reports/financial/export", async (req: Request, res: Response): P
       orderBy: { date: "desc" }
     });
 
-    if (type === "gst") {
-      let csv = "Invoice Number,Date,Client,Client GSTIN,Taxable Value (R),CGST (R),SGST (R),IGST (R),Total GST (R),Discount (R),Total Amount (R),Franchise\n";
-      for (const inv of invoices) {
-        const taxable = inv.amount;
-        const totalGst = inv.gst;
-        const cgst = Number((totalGst / 2).toFixed(2));
-        const sgst = Number((totalGst / 2).toFixed(2));
-        const igst = 0;
-        const discount = inv.discount;
-        const total = taxable + totalGst - discount;
-        csv += `"${inv.id}","${new Date(inv.date).toISOString().slice(0, 10)}","${inv.client}","${inv.gstNumber || 'N/A'}",${taxable},${cgst},${sgst},${igst},${totalGst},${discount},${total},"${inv.franchise?.name || 'HQ'}"\n`;
-      }
-      res.setHeader("Content-Type", "text/csv");
-      res.setHeader("Content-Disposition", "attachment; filename=gst_filing_report.csv");
-      res.send(csv);
-      return;
-    } else {
-      let csv = "Txn Number,Date,Type,Particulars,Debit (R),Credit (R),Franchise\n";
-      for (const inv of invoices) {
-        const total = inv.amount + inv.gst - inv.discount;
-        csv += `"${inv.id}","${new Date(inv.date).toISOString().slice(0, 10)}","Sales Invoice","${inv.client}",${total},0,"${inv.franchise?.name || 'HQ'}"\n`;
-      }
-      res.setHeader("Content-Type", "text/csv");
-      res.setHeader("Content-Disposition", "attachment; filename=accounting_ledger.csv");
-      res.send(csv);
-      return;
+    let csv = "Txn Number,Date,Type,Particulars,Debit (R),Credit (R),Franchise\n";
+    for (const inv of invoices) {
+      const total = inv.amount + inv.gst - inv.discount;
+      csv += `"${inv.id}","${new Date(inv.date).toISOString().slice(0, 10)}","Sales Invoice","${inv.client}",${total},0,"${inv.franchise?.name || 'HQ'}"\n`;
     }
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", "attachment; filename=accounting_ledger.csv");
+    res.send(csv);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
@@ -854,12 +968,28 @@ hqRouter.get("/franchise-requests", async (req: Request, res: Response): Promise
 
 
 
-// Franchise Performance Monitoring Stats
+// Franchise Performance Monitoring Stats (§3.7 — distinct from §16.4's
+// Franchise Dashboard: this is HQ inspecting ANY specific franchise by id,
+// with string-formatted display fields and a recent-activity feed, not a
+// self-service operational dashboard).
+// REP-01C (D-REP1/D-REP4) — classified SPECIALIZED: genuinely different
+// purpose/shape from the canonical Franchise Dashboard (§16.4), so its
+// response contract is preserved, but lowStockItems/presentToday now come
+// from the shared getInventorySummary()/getEmployeeSummary() instead of
+// independent queries. revenue/pendingPayments/customerCount/vehicleCount/
+// activeLeads/jobCards/dailyActivitySummary have no canonical equivalent
+// (different filters — e.g. vehicleCount here is "Delivered" jobs only,
+// revenue includes Cancelled invoices unlike the canonical revenue
+// summary) and stay local rather than risk silently changing this
+// established monitoring view's numbers.
 hqRouter.get("/franchises/:id/stats", async (req: Request, res: Response): Promise<void> => {
   try {
     const id = String(req.params.id);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const reportService = new ReportService();
+    const [inventorySummary, employeeSummary] = await Promise.all([
+      reportService.getInventorySummary(id),
+      reportService.getEmployeeSummary(id),
+    ]);
 
     const customerCount = await db.customer.count({ where: { franchiseId: id, isDeleted: false } });
     const vehicleCount = await db.job.count({ where: { franchiseId: id, status: "Delivered", isDeleted: false } });
@@ -880,13 +1010,6 @@ hqRouter.get("/franchises/:id/stats", async (req: Request, res: Response): Promi
       }
     }
 
-    const inventory = await db.inventory.findMany({ where: { franchiseId: id, isDeleted: false } });
-    const lowStockItems = inventory.filter(item => item.stock <= item.reorder).length;
-
-    const presentToday = await db.attendance.count({
-      where: { franchiseId: id, date: { gte: today }, status: "Present", isDeleted: false }
-    });
-
     const dailyActivity = await db.auditLog.findMany({
       where: { branchId: id },
       orderBy: { createdAt: "desc" },
@@ -900,8 +1023,8 @@ hqRouter.get("/franchises/:id/stats", async (req: Request, res: Response): Promi
       jobCards,
       revenue,
       pendingPayments,
-      inventoryStatus: lowStockItems > 0 ? `${lowStockItems} low stock items` : "All Good",
-      employeeAttendance: `${presentToday} present today`,
+      inventoryStatus: inventorySummary.lowStock > 0 ? `${inventorySummary.lowStock} low stock items` : "All Good",
+      employeeAttendance: `${employeeSummary.presentToday} present today`,
       dailyActivitySummary: dailyActivity.map(log => `${log.userId} performed ${log.action} on ${log.module}`),
     });
   } catch (error: any) {
@@ -910,105 +1033,19 @@ hqRouter.get("/franchises/:id/stats", async (req: Request, res: Response): Promi
 });
 
 // Employee Performance Reporting Stats
-hqRouter.get("/reports/employees/performance", async (req: Request, res: Response): Promise<void> => {
+// REP-01C (D-REP1/D-REP2) — COMPATIBILITY adapter: the calculation logic
+// that used to live here directly is now the canonical
+// ReportService.getEmployeePerformanceReport (added §16.8), reused
+// verbatim (identical dateLimit/timeframe rules, identical per-employee
+// field shape) so this route's existing response contract is unchanged.
+hqRouter.get("/reports/employees/performance", requireAction('reports:employee:view'), async (req: Request, res: Response): Promise<void> => {
   try {
     const { timeframe, franchiseId } = req.query;
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    let dateLimit = new Date(today);
-    if (timeframe === "weekly") {
-      dateLimit.setDate(today.getDate() - 7);
-    } else if (timeframe === "monthly") {
-      dateLimit.setMonth(today.getMonth() - 1);
-    } else if (timeframe === "annual") {
-      dateLimit.setFullYear(today.getFullYear() - 1);
-    } else {
-      dateLimit = today;
-    }
-
-    const conditions: any = { isDeleted: false };
-    if (franchiseId) {
-      conditions.franchiseId = String(franchiseId);
-    }
-
-    const employees = await db.employee.findMany({
-      where: conditions,
-      include: { franchise: true }
-    });
-
-    const report = [];
-
-    for (const emp of employees) {
-      const presentCount = await db.attendance.count({
-        where: { employeeId: emp.id, date: { gte: dateLimit }, status: "Present", isDeleted: false }
-      });
-      const absentCount = await db.attendance.count({
-        where: { employeeId: emp.id, date: { gte: dateLimit }, status: "Absent", isDeleted: false }
-      });
-
-      const jobs = await db.job.findMany({
-        where: {
-          OR: [
-            { technicianId: emp.id },
-            { serviceAdvisorId: emp.id }
-          ],
-          createdAt: { gte: dateLimit },
-          isDeleted: false
-        }
-      });
-
-      const jobsAssigned = jobs.length;
-      const jobsCompleted = jobs.filter(j => j.status === "Delivered" || j.status === "Completed" || j.status === "QC Passed").length;
-      const jobsPending = jobs.filter(j => j.status === "Pending" || j.status === "In Progress").length;
-      const reworkCount = jobs.reduce((sum, j) => sum + j.reworkCount, 0);
-      const qcFails = jobs.filter(j => j.failedAt !== null).length;
-
-      const leads = await db.lead.findMany({
-        where: { assignedTo: emp.name || "", date: { gte: dateLimit }, isDeleted: false }
-      });
-      const leadsAssigned = leads.length;
-      const leadsConverted = leads.filter(l => l.status === "Converted").length;
-
-      const jobIds = jobs.map(j => j.id);
-      const invoices = await db.invoice.findMany({
-        where: {
-          OR: [
-            { id: { in: jobIds } },
-            { client: { in: jobs.map(j => j.customer) } }
-          ],
-          date: { gte: dateLimit },
-          isDeleted: false
-        }
-      });
-      const revenueContribution = invoices.reduce((sum, i) => sum + (i.amount + i.gst - i.discount), 0);
-
-      report.push({
-        employeeId: emp.id,
-        name: emp.name,
-        role: emp.role,
-        franchiseName: emp.franchise?.name || "HQ",
-        attendance: {
-          present: presentCount,
-          absent: absentCount
-        },
-        jobs: {
-          assigned: jobsAssigned,
-          completed: jobsCompleted,
-          pending: jobsPending,
-          qcFailures: qcFails,
-          reworkCount
-        },
-        leads: {
-          assigned: leadsAssigned,
-          converted: leadsConverted,
-          conversionRate: leadsAssigned > 0 ? Number(((leadsConverted / leadsAssigned) * 100).toFixed(2)) : 0
-        },
-        revenueContribution
-      });
-    }
-
+    const reportService = new ReportService();
+    const report = await reportService.getEmployeePerformanceReport(
+      franchiseId ? String(franchiseId) : undefined,
+      timeframe ? String(timeframe) : undefined
+    );
     res.json(report);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -1120,7 +1157,12 @@ hqRouter.get("/reports/overview", async (req: Request, res: Response): Promise<v
 // ═══════════════════════════════════════════════════════════════
 
 // GET /api/hq/vendors - List all active vendors
-hqRouter.get("/vendors", async (req: Request, res: Response): Promise<void> => {
+// Purchase GST/ITC foundation — previously had no role gate at all; any
+// authenticated user, any role, could read HQ's entire vendor register.
+// Purchases/vendors are architecturally HQ-global (no franchiseId to scope
+// by), so the correct fix is the same HQ-only gate every purchase write
+// route already uses, not a new franchise-scope mechanism.
+hqRouter.get("/vendors", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: Request, res: Response): Promise<void> => {
   try {
     const vendors = await db.vendor.findMany({
       where: { isDeleted: false },
@@ -1133,9 +1175,12 @@ hqRouter.get("/vendors", async (req: Request, res: Response): Promise<void> => {
 });
 
 // POST /api/hq/vendors - Create a new vendor (HQ only)
-hqRouter.post("/vendors", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: Request, res: Response): Promise<void> => {
+hqRouter.post("/vendors", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { code, name, gstNumber, contact, phone, email, address, status } = req.body;
+    // Purchase GST/ITC foundation — `state` already existed on the schema
+    // (GST-08) but was never accepted here, so it was permanently null for
+    // every vendor created through this endpoint.
+    const { code, name, gstNumber, contact, phone, email, address, state, status } = req.body;
     if (!code || !name) {
       res.status(400).json({ error: "Vendor code and name are required." });
       return;
@@ -1154,9 +1199,21 @@ hqRouter.post("/vendors", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: Req
         phone: phone || "",
         email: email || "",
         address: address || "",
+        state: state || null,
         status: status || "Active",
       }
     });
+
+    await logAudit({
+      module: "Vendor",
+      recordId: vendor.id,
+      action: "CREATE",
+      userId: req.user?.id || "unknown",
+      branchId: null,
+      oldValue: null,
+      newValue: vendor,
+    });
+
     res.status(201).json(vendor);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -1164,14 +1221,30 @@ hqRouter.post("/vendors", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: Req
 });
 
 // PUT /api/hq/vendors/:id - Update an existing vendor (HQ only)
-hqRouter.put("/vendors/:id", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: Request, res: Response): Promise<void> => {
+hqRouter.put("/vendors/:id", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const id = req.params.id as string;
+    const existing = await db.vendor.findUnique({ where: { id } });
+    if (!existing) {
+      res.status(404).json({ error: "Vendor not found." });
+      return;
+    }
     const { modifiedBy, createdBy, id: bodyId, createdAt, updatedAt, purchases, ...updateData } = req.body;
     const updated = await db.vendor.update({
       where: { id },
       data: updateData
     });
+
+    await logAudit({
+      module: "Vendor",
+      recordId: id,
+      action: "UPDATE",
+      userId: req.user?.id || "unknown",
+      branchId: null,
+      oldValue: existing,
+      newValue: updated,
+    });
+
     res.json(updated);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -1179,13 +1252,29 @@ hqRouter.put("/vendors/:id", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: 
 });
 
 // DELETE /api/hq/vendors/:id - Soft-delete a vendor (PRD rule: Purchase records shall not be permanently deleted)
-hqRouter.delete("/vendors/:id", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: Request, res: Response): Promise<void> => {
+hqRouter.delete("/vendors/:id", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const id = req.params.id as string;
+    const existing = await db.vendor.findUnique({ where: { id } });
+    if (!existing) {
+      res.status(404).json({ error: "Vendor not found." });
+      return;
+    }
     const deleted = await db.vendor.update({
       where: { id },
       data: { isDeleted: true, status: "Inactive", deletedAt: new Date().toISOString() }
     });
+
+    await logAudit({
+      module: "Vendor",
+      recordId: id,
+      action: "DELETE",
+      userId: req.user?.id || "unknown",
+      branchId: null,
+      oldValue: existing,
+      newValue: deleted,
+    });
+
     res.json(deleted);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -1195,7 +1284,9 @@ hqRouter.delete("/vendors/:id", requireRole("SUPER_ADMIN", "HQ_USER"), async (re
 // ── Purchase Orders ──────────────────────────────────────────────────────────
 
 // GET /api/hq/purchases - List purchase orders (with vendor info)
-hqRouter.get("/purchases", async (req: Request, res: Response): Promise<void> => {
+// Purchase GST/ITC foundation — same auth gap as GET /vendors: previously
+// reachable by any authenticated user regardless of role.
+hqRouter.get("/purchases", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: Request, res: Response): Promise<void> => {
   try {
     const status = req.query.status as string | undefined;
     const where: any = { isDeleted: false };
@@ -1219,7 +1310,7 @@ hqRouter.get("/purchases", async (req: Request, res: Response): Promise<void> =>
 });
 
 // POST /api/hq/purchases - Create a new Purchase Order (PRD rule: Only HQ shall create Purchase Orders)
-hqRouter.post("/purchases", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: Request, res: Response): Promise<void> => {
+hqRouter.post("/purchases", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { orderNumber, vendorId, items, totalAmount, notes, createdBy } = req.body;
     if (!orderNumber || !vendorId) {
@@ -1245,6 +1336,17 @@ hqRouter.post("/purchases", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: R
         createdBy: createdBy || "HQ User",
       }
     });
+
+    await logAudit({
+      module: "Purchase",
+      recordId: order.id,
+      action: "CREATE",
+      userId: req.user?.id || "unknown",
+      branchId: null,
+      oldValue: null,
+      newValue: order,
+    });
+
     res.status(201).json(order);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -1252,7 +1354,7 @@ hqRouter.post("/purchases", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: R
 });
 
 // POST /api/hq/purchases/:id/receive - Goods Receipt & auto-update HQ inventory (PRD rule: Purchase shall automatically update HQ inventory)
-hqRouter.post("/purchases/:id/receive", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: Request, res: Response): Promise<void> => {
+hqRouter.post("/purchases/:id/receive", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const id = req.params.id as string;
     const order = await db.purchaseOrder.findUnique({ where: { id } });
@@ -1272,68 +1374,90 @@ hqRouter.post("/purchases/:id/receive", requireRole("SUPER_ADMIN", "HQ_USER"), a
       parsedItems = [];
     }
 
-    // Automatically update HQ inventory for each purchased item
-    for (const item of parsedItems) {
-      const qty = Number(item.qty) || 0;
-      if (qty <= 0) continue;
+    const performedBy = req.user?.id || "unknown";
 
-      const existingItem = await db.inventory.findFirst({
-        where: {
-          name: item.name,
-          isDeleted: false,
-          franchiseId: null // HQ inventory
-        }
-      });
+    // INV-02 — this whole receipt (every item's stock/movement write, plus
+    // the PO's own stage transition) now runs as one transaction. It used
+    // to be a sequence of unwrapped calls: a failure partway through could
+    // leave some items updated with no movement record, or stock applied
+    // with the PO never reaching RECEIVED. Actor is now the authenticated
+    // caller (was a hardcoded "HQ Procurement" string), and new HQ items
+    // use the same canonical generateUid("ITM") every other creation path
+    // uses (was an ad hoc INV-<timestamp>-<random> id).
+    const updated = await db.$transaction(async (tx) => {
+      for (const item of parsedItems) {
+        const qty = Number(item.qty) || 0;
+        if (qty <= 0) continue;
 
-      let inventoryId = "";
-      let newStock = qty;
-      if (existingItem) {
-        inventoryId = existingItem.id;
-        newStock = existingItem.stock + qty;
-        await db.inventory.update({
-          where: { id: existingItem.id },
-          data: {
-            stock: newStock,
-            cost: item.unitPrice ? Number(item.unitPrice) : existingItem.cost
-          }
-        });
-      } else {
-        inventoryId = `INV-${Date.now()}-${Math.floor(Math.random() * 900 + 100)}`;
-        newStock = qty;
-        await db.inventory.create({
-          data: {
-            id: inventoryId,
+        const existingItem = await tx.inventory.findFirst({
+          where: {
             name: item.name,
-            category: "Purchase Goods",
-            stock: qty,
-            unit: "Pcs",
-            reorder: 5,
-            cost: item.unitPrice ? Number(item.unitPrice) : 0,
-            supplier: "HQ Supplier",
-            location: "HQ Warehouse",
-            franchiseId: null
+            isDeleted: false,
+            franchiseId: null // HQ inventory
+          }
+        });
+
+        let inventoryId = "";
+        let newStock = qty;
+        if (existingItem) {
+          inventoryId = existingItem.id;
+          newStock = existingItem.stock + qty;
+          await tx.inventory.update({
+            where: { id: existingItem.id },
+            data: {
+              stock: newStock,
+              cost: item.unitPrice ? Number(item.unitPrice) : existingItem.cost
+            }
+          });
+        } else {
+          inventoryId = generateUid("ITM");
+          newStock = qty;
+          await tx.inventory.create({
+            data: {
+              id: inventoryId,
+              name: item.name,
+              category: "Purchase Goods",
+              stock: qty,
+              unit: "Pcs",
+              reorder: 5,
+              cost: item.unitPrice ? Number(item.unitPrice) : 0,
+              supplier: "HQ Supplier",
+              location: "HQ Warehouse",
+              franchiseId: null
+            }
+          });
+        }
+
+        await tx.inventoryMovement.create({
+          data: {
+            itemId: inventoryId,
+            type: "PURCHASE_RECEIPT",
+            quantity: qty,
+            balance: newStock,
+            reference: order.orderNumber,
+            performedBy,
+            franchiseId: null,
           }
         });
       }
 
-      await db.inventoryMovement.create({
+      return tx.purchaseOrder.update({
+        where: { id },
         data: {
-          itemId: inventoryId,
-          type: "PURCHASE_RECEIPT",
-          quantity: qty,
-          balance: newStock,
-          reference: order.orderNumber,
-          performedBy: "HQ Procurement"
+          stage: "RECEIVED",
+          receivedAt: new Date().toISOString()
         }
       });
-    }
+    });
 
-    const updated = await db.purchaseOrder.update({
-      where: { id },
-      data: {
-        stage: "RECEIVED",
-        receivedAt: new Date().toISOString()
-      }
+    await logAudit({
+      module: "Purchase",
+      recordId: id,
+      action: "RECEIVE",
+      userId: req.user?.id || "unknown",
+      branchId: null,
+      oldValue: order,
+      newValue: updated,
     });
 
     res.json(updated);
@@ -1343,24 +1467,24 @@ hqRouter.post("/purchases/:id/receive", requireRole("SUPER_ADMIN", "HQ_USER"), a
 });
 
 // PUT & POST /api/hq/purchases/:id/invoice - Attach purchase invoice
-const attachPurchaseInvoiceHandler = async (req: Request, res: Response): Promise<void> => {
+// Purchase GST/ITC foundation — previously wrote only invoiceNumber + stage.
+// Now resolves and persists the purchase's GST snapshot, PurchaseOrderLine
+// rows, and PURCHASE GstTransaction ledger rows, all atomically, via
+// GstPurchaseInvoiceService (mirrors the sales/CN/DN architecture exactly —
+// no second GST engine or ledger).
+const attachPurchaseInvoiceHandler = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const id = req.params.id as string;
-    const { invoiceNumber } = req.body;
-    if (!invoiceNumber) {
-      res.status(400).json({ error: "invoiceNumber is required." });
+    const parsed = attachPurchaseInvoiceSchema.safeParse({ body: req.body });
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join('; ') });
       return;
     }
-    const updated = await db.purchaseOrder.update({
-      where: { id },
-      data: {
-        invoiceNumber,
-        stage: "INVOICED"
-      }
-    });
+    const updated = await new GstPurchaseInvoiceService().attachInvoice(id, parsed.data.body, req.user);
     res.json(updated);
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    const status = error.statusCode || 500;
+    res.status(status).json({ error: error.message });
   }
 };
 
@@ -1368,18 +1492,38 @@ hqRouter.put("/purchases/:id/invoice", requireRole("SUPER_ADMIN", "HQ_USER"), at
 hqRouter.post("/purchases/:id/invoice", requireRole("SUPER_ADMIN", "HQ_USER"), attachPurchaseInvoiceHandler);
 
 // POST /api/hq/purchases/:id/pay - Record Supplier Payment
-hqRouter.post("/purchases/:id/pay", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: Request, res: Response): Promise<void> => {
+hqRouter.post("/purchases/:id/pay", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const id = req.params.id as string;
-    const { paidAmount } = req.body;
+    const existing = await db.purchaseOrder.findUnique({ where: { id } });
+    if (!existing || existing.isDeleted) {
+      res.status(404).json({ error: "Purchase Order not found." });
+      return;
+    }
+    const paidAmount = Number(req.body.paidAmount) || 0;
+    if (!isValidPaymentAmount(paidAmount, existing.totalAmount)) {
+      res.status(400).json({ error: `paidAmount must be between 0 and the purchase total (${existing.totalAmount}).` });
+      return;
+    }
     const updated = await db.purchaseOrder.update({
       where: { id },
       data: {
-        paidAmount: Number(paidAmount) || 0,
+        paidAmount,
         stage: "PAID",
         paidAt: new Date().toISOString()
       }
     });
+
+    await logAudit({
+      module: "Purchase",
+      recordId: id,
+      action: "PAY",
+      userId: req.user?.id || "unknown",
+      branchId: null,
+      oldValue: existing,
+      newValue: updated,
+    });
+
     res.json(updated);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -1387,9 +1531,14 @@ hqRouter.post("/purchases/:id/pay", requireRole("SUPER_ADMIN", "HQ_USER"), async
 });
 
 // DELETE /api/hq/purchases/:id - Soft-delete purchase order (PRD rule: Purchase records shall not be permanently deleted)
-hqRouter.delete("/purchases/:id", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: Request, res: Response): Promise<void> => {
+hqRouter.delete("/purchases/:id", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const id = req.params.id as string;
+    const existing = await db.purchaseOrder.findUnique({ where: { id } });
+    if (!existing) {
+      res.status(404).json({ error: "Purchase Order not found." });
+      return;
+    }
     const deleted = await db.purchaseOrder.update({
       where: { id },
       data: {
@@ -1397,6 +1546,17 @@ hqRouter.delete("/purchases/:id", requireRole("SUPER_ADMIN", "HQ_USER"), async (
         deletedAt: new Date().toISOString()
       }
     });
+
+    await logAudit({
+      module: "Purchase",
+      recordId: id,
+      action: "DELETE",
+      userId: req.user?.id || "unknown",
+      branchId: null,
+      oldValue: existing,
+      newValue: deleted,
+    });
+
     res.json(deleted);
   } catch (error: any) {
     res.status(500).json({ error: error.message });

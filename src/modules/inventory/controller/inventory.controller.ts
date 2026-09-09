@@ -9,9 +9,7 @@ export class InventoryController {
 
   getAllItems = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const userRole = req.user?.role || "UNKNOWN";
-      const userFranchiseId = req.user?.franchiseId || undefined;
-      const list = await this.service.getAllItems(userRole, userFranchiseId);
+      const list = await this.service.getAllItems(req.user);
       res.json(list);
     } catch (error) {
       next(error);
@@ -21,9 +19,7 @@ export class InventoryController {
   createItem = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const userId = req.user?.id || "unknown";
-      const userRole = req.user?.role || "UNKNOWN";
-      const userFranchiseId = req.user?.franchiseId || undefined;
-      const result = await this.service.createItem(req.body, userId, userRole, userFranchiseId);
+      const result = await this.service.createItem(req.body, userId, req.user);
       await logAudit({
         module: "INVENTORY",
         recordId: result.id,
@@ -46,7 +42,7 @@ export class InventoryController {
       const id = String(req.params.id);
       const userId = req.user?.id || "unknown";
       const oldValue = await db.inventory.findUnique({ where: { id } });
-      const result = await this.service.updateItem(id, req.body, userId);
+      const result = await this.service.updateItem(id, req.body, userId, req.user);
       await logAudit({
         module: "INVENTORY",
         recordId: id,
@@ -69,7 +65,7 @@ export class InventoryController {
       const id = String(req.params.id);
       const userId = req.user?.id || "unknown";
       const oldValue = await db.inventory.findUnique({ where: { id } });
-      await this.service.deleteItem(id);
+      await this.service.deleteItem(id, req.user);
       await logAudit({
         module: "INVENTORY",
         recordId: id,
@@ -93,14 +89,13 @@ export class InventoryController {
 
   createRequest = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const franchiseId = req.user?.franchiseId || null;
-      const request = await this.service.createRequest(req.body, franchiseId);
+      const request = await this.service.createRequest(req.body, req.user);
       await logAudit({
         module: "INVENTORY",
         recordId: request.id,
         action: "REQUEST_STOCK",
         userId: req.user?.id || "unknown",
-        branchId: franchiseId,
+        branchId: request.franchiseId,
         oldValue: null,
         newValue: request,
         ipAddress: req.ip,
@@ -114,9 +109,7 @@ export class InventoryController {
 
   getRequests = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const role = req.user?.role || "UNKNOWN";
-      const franchiseId = req.user?.franchiseId || undefined;
-      const list = await this.service.getRequests(role, franchiseId);
+      const list = await this.service.getRequests(req.user);
       res.json(list);
     } catch (error) {
       next(error);
@@ -132,7 +125,7 @@ export class InventoryController {
       }
       const id = String(req.params.id);
       const oldValue = await db.inventoryRequest.findUnique({ where: { id } });
-      const request = await this.service.approveRequest(id, req.body);
+      const request = await this.service.approveRequest(id, req.body, req.user || {});
       await logAudit({
         module: "INVENTORY",
         recordId: id,
@@ -159,7 +152,7 @@ export class InventoryController {
       }
       const id = String(req.params.id);
       const oldValue = await db.inventoryRequest.findUnique({ where: { id } });
-      const request = await this.service.rejectRequest(id);
+      const request = await this.service.rejectRequest(id, req.user || {});
       await logAudit({
         module: "INVENTORY",
         recordId: id,
@@ -186,7 +179,7 @@ export class InventoryController {
       }
       const id = String(req.params.id);
       const oldValue = await db.inventoryRequest.findUnique({ where: { id } });
-      const request = await this.service.dispatchRequest(id);
+      const request = await this.service.dispatchRequest(id, req.user?.id || "unknown");
       await logAudit({
         module: "INVENTORY",
         recordId: id,
@@ -209,7 +202,7 @@ export class InventoryController {
       const id = String(req.params.id);
       const userId = req.user?.id || "unknown";
       const oldValue = await db.inventoryRequest.findUnique({ where: { id } });
-      const request = await this.service.receiveRequest(id, userId);
+      const request = await this.service.receiveRequest(id, userId, req.user);
       await logAudit({
         module: "INVENTORY",
         recordId: id,
@@ -229,7 +222,9 @@ export class InventoryController {
 
   getMovements = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const list = await this.service.getMovements(req.query.itemId ? String(req.query.itemId) : undefined);
+      const userRole = req.user?.role || "UNKNOWN";
+      const userFranchiseId = req.user?.franchiseId || undefined;
+      const list = await this.service.getMovements(userRole, userFranchiseId, req.query.itemId ? String(req.query.itemId) : undefined);
       res.json(list);
     } catch (error) {
       next(error);

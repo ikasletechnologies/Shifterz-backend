@@ -2,6 +2,8 @@ import { db } from '../../../lib/db.js';
 import type { CreateJobCardDTO, UpdateJobCardDTO } from '../validation/job-card.validation.js';
 import { NotFoundError } from '../../../shared/errors/NotFoundError.js';
 
+type FranchiseScopeWhere = { franchiseId?: string | null };
+
 export class JobCardRepository {
   async findAll(filter: any) {
     const isDeletedFilter = { isDeleted: false };
@@ -87,12 +89,12 @@ export class JobCardRepository {
     return resultList;
   }
 
-  async findById(id: string) {
-    const job = await db.job.findFirst({ where: { id, isDeleted: false } });
+  async findById(id: string, scopeWhere: FranchiseScopeWhere = {}) {
+    const job = await db.job.findFirst({ where: { id, isDeleted: false, ...scopeWhere } });
     if (job) return job;
-    const carIn = await db.carIn.findFirst({ where: { id, isDeleted: false } });
+    const carIn = await db.carIn.findFirst({ where: { id, isDeleted: false, ...scopeWhere } });
     if (carIn && carIn.jobCardId) {
-      return db.job.findFirst({ where: { id: carIn.jobCardId, isDeleted: false } });
+      return db.job.findFirst({ where: { id: carIn.jobCardId, isDeleted: false, ...scopeWhere } });
     }
     return null;
   }
@@ -101,7 +103,7 @@ export class JobCardRepository {
     return db.employee.findFirst({ where: { name } });
   }
 
-  async create(id: string, data: CreateJobCardDTO, techId: string | null) {
+  async create(id: string, data: CreateJobCardDTO, techId: string | null, franchiseId: string | null) {
     const parseDate = (val?: string | null) => {
       if (!val || (typeof val === 'string' && !val.trim())) return new Date();
       const d = new Date(val);
@@ -132,6 +134,7 @@ export class JobCardRepository {
         photos: data.photos || [],
         customerSignature: data.customerSignature || null,
         companyAcknowledgement: data.companyAcknowledgement || null,
+        franchiseId,
       },
     });
   }
@@ -173,10 +176,11 @@ export class JobCardRepository {
       if (data.customerSignature !== undefined) updateData.customerSignature = data.customerSignature;
       if (data.companyAcknowledgement !== undefined) updateData.companyAcknowledgement = data.companyAcknowledgement;
       if (data.qcNotes !== undefined) updateData.qcNotes = data.qcNotes;
-      if (data.qcById !== undefined) updateData.qcById = data.qcById;
-      if (data.qcBy !== undefined) updateData.qcBy = data.qcBy;
-      if (data.isRework !== undefined) updateData.isRework = data.isRework;
-      if (data.reworkCount !== undefined) updateData.reworkCount = data.reworkCount;
+      // qcById/qcBy/isRework/reworkCount/passedAt/failedAt are intentionally
+      // NOT whitelisted here (Step 3 Item #4) — this generic update path must
+      // be structurally unable to set QC-controlled fields, for any role.
+      // The canonical QC module (QcRepository.updateJob) writes these directly
+      // via its own db.job.update call, entirely separate from this method.
 
       if (data.startDate !== undefined && data.startDate !== null) {
         if (typeof data.startDate === 'string' && data.startDate.trim()) {
@@ -203,26 +207,6 @@ export class JobCardRepository {
           if (!isNaN(d.getTime())) updateData.actualCompletion = d;
         } else if (raw instanceof Date) {
           updateData.actualCompletion = raw;
-        }
-      }
-
-      if (data.passedAt !== undefined && data.passedAt !== null) {
-        const raw = data.passedAt;
-        if (typeof raw === 'string' && raw.trim()) {
-          const d = new Date(raw);
-          if (!isNaN(d.getTime())) updateData.passedAt = d;
-        } else if (raw instanceof Date) {
-          updateData.passedAt = raw;
-        }
-      }
-
-      if (data.failedAt !== undefined && data.failedAt !== null) {
-        const raw = data.failedAt;
-        if (typeof raw === 'string' && raw.trim()) {
-          const d = new Date(raw);
-          if (!isNaN(d.getTime())) updateData.failedAt = d;
-        } else if (raw instanceof Date) {
-          updateData.failedAt = raw;
         }
       }
 
@@ -317,9 +301,9 @@ export class JobCardRepository {
     return merged.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
   }
 
-  async getWithDetails(id: string) {
+  async getWithDetails(id: string, scopeWhere: FranchiseScopeWhere = {}) {
     return db.job.findFirst({
-      where: { id, isDeleted: false },
+      where: { id, isDeleted: false, ...scopeWhere },
       include: {
         additionalWorks: { where: { isDeleted: false }, orderBy: { createdAt: 'desc' } },
         jobPhotos: { orderBy: { createdAt: 'desc' } },
@@ -404,8 +388,8 @@ export class JobCardRepository {
     return db.materialConsumption.findMany({ where: { jobId, isDeleted: false }, orderBy: { createdAt: 'desc' } });
   }
 
-  async findMaterialConsumptionById(id: string) {
-    return db.materialConsumption.findFirst({ where: { id, isDeleted: false } });
+  async findMaterialConsumptionById(id: string, scopeWhere: FranchiseScopeWhere = {}) {
+    return db.materialConsumption.findFirst({ where: { id, isDeleted: false, ...scopeWhere } });
   }
 
   async updateMaterialConsumption(id: string, data: {

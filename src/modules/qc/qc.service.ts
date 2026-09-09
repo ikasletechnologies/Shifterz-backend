@@ -5,6 +5,7 @@ import { db } from '../../lib/db.js';
 import { NotFoundError } from '../../shared/errors/NotFoundError.js';
 import { ForbiddenError } from '../../shared/errors/ForbiddenError.js';
 import { ValidationError } from '../../shared/errors/ValidationError.js';
+import { resolveDataScope, assertWithinScope } from '../../shared/scope/dataScope.js';
 import {
   notifyQcAssigned,
   notifyQcFailed,
@@ -213,15 +214,23 @@ export class QcService {
     return this.repository.createChecklistTemplateItem(data);
   }
 
-  async updateChecklistTemplateItem(id: string, data: UpdateChecklistTemplateItemDTO) {
+  // D-18 — tenant-isolation fix: these previously had no franchise-scope
+  // check at all, so any authenticated user could modify or delete any QC
+  // checklist template item, including other franchises' or HQ's global
+  // (null franchiseId) ones — the same defect as D-17's workflow-stage
+  // service. Role eligibility (who besides HQ/FRANCHISE_ADMIN may administer)
+  // is deferred to RBAC-04, not decided here.
+  async updateChecklistTemplateItem(id: string, data: UpdateChecklistTemplateItemDTO, user?: ActingUser) {
     const existing = await this.repository.findChecklistTemplateItemById(id);
     if (!existing) throw new NotFoundError("Checklist item not found");
+    assertWithinScope(resolveDataScope(user), existing.franchiseId, "Checklist item not found");
     return this.repository.updateChecklistTemplateItem(id, data);
   }
 
-  async deleteChecklistTemplateItem(id: string) {
+  async deleteChecklistTemplateItem(id: string, user?: ActingUser) {
     const existing = await this.repository.findChecklistTemplateItemById(id);
     if (!existing) throw new NotFoundError("Checklist item not found");
+    assertWithinScope(resolveDataScope(user), existing.franchiseId, "Checklist item not found");
     if (existing.isDefault) {
       throw new ForbiddenError("Default checklist items cannot be removed.");
     }

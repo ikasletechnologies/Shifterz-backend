@@ -43,7 +43,7 @@ export class JobCardController {
   getJobById = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const id = String(req.params.id);
-      const job = await this.service.getJobWithDetails(id);
+      const job = await this.service.getJobWithDetails(id, req.user);
       res.json(job);
     } catch (error) {
       next(error);
@@ -73,7 +73,6 @@ export class JobCardController {
   updateJob = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const id = String(req.params.id);
-      await this.service.checkTechnicianAccess(id, req.user);
       const oldValue = await db.job.findUnique({ where: { id } });
       const result = await this.service.updateJob(id, req.body, req.user);
       await logAudit({
@@ -97,7 +96,7 @@ export class JobCardController {
     try {
       const id = String(req.params.id);
       const oldValue = await db.job.findUnique({ where: { id } });
-      const result = await this.service.submitChecklist(id, req.body.checklist);
+      const result = await this.service.submitChecklist(id, req.body.checklist, req.user);
       await logAudit({
         module: "JOB",
         recordId: id,
@@ -124,7 +123,7 @@ export class JobCardController {
         return;
       }
       const urls = files.map((f) => `/uploads/${f.filename}`);
-      const result = await this.service.appendQcPhotos(id, urls);
+      const result = await this.service.appendQcPhotos(id, urls, req.user);
       res.json({ photos: result.qcPhotos });
     } catch (error) {
       next(error);
@@ -134,9 +133,8 @@ export class JobCardController {
   deleteJob = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const id = String(req.params.id);
-      await this.service.checkTechnicianAccess(id, req.user);
       const oldValue = await db.job.findUnique({ where: { id } });
-      await this.service.deleteJob(id);
+      await this.service.deleteJob(id, req.user);
       await logAudit({
         module: "JOB",
         recordId: id,
@@ -159,7 +157,7 @@ export class JobCardController {
   getJobHistory = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const id = String(req.params.id);
-      const history = await this.service.getJobHistory(id);
+      const history = await this.service.getJobHistory(id, req.user);
       res.json(history);
     } catch (error) {
       next(error);
@@ -171,7 +169,7 @@ export class JobCardController {
   listAdditionalWorks = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const jobId = String(req.params.id);
-      const works = await this.service.listAdditionalWorks(jobId);
+      const works = await this.service.listAdditionalWorks(jobId, req.user);
       res.json(works);
     } catch (error) {
       next(error);
@@ -184,7 +182,9 @@ export class JobCardController {
       const result = await this.service.requestAdditionalWork(jobId, req.body, {
         id: req.user?.id,
         name: req.user?.name,
+        role: req.user?.role,
         franchiseId: req.user?.franchiseId ?? undefined,
+        hqControlled: req.user?.hqControlled,
       });
       await logAudit({
         module: "ADDITIONAL_WORK",
@@ -229,7 +229,6 @@ export class JobCardController {
   updateWorkStage = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const id = String(req.params.id);
-      await this.service.checkTechnicianAccess(id, req.user);
       const oldValue = await db.job.findUnique({ where: { id } });
       const result = await this.service.updateWorkStage(id, req.body.stage, req.body.notes, req.user);
       await logAudit({
@@ -282,7 +281,7 @@ export class JobCardController {
   listJobPhotos = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const id = String(req.params.id);
-      const result = await this.service.listJobPhotos(id);
+      const result = await this.service.listJobPhotos(id, req.user);
       res.json(result);
     } catch (error) {
       next(error);
@@ -315,7 +314,7 @@ export class JobCardController {
   listWorkNotes = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const id = String(req.params.id);
-      const result = await this.service.listWorkNotes(id);
+      const result = await this.service.listWorkNotes(id, req.user);
       res.json(result);
     } catch (error) {
       next(error);
@@ -348,7 +347,7 @@ export class JobCardController {
   listMaterialConsumptions = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const id = String(req.params.id);
-      const result = await this.service.listMaterialConsumptions(id);
+      const result = await this.service.listMaterialConsumptions(id, req.user);
       res.json(result);
     } catch (error) {
       next(error);
@@ -416,7 +415,7 @@ export class JobCardController {
       }
 
       const printService = new JobCardPrintService();
-      await printService.generatePdf(id, copyType, res);
+      await printService.generatePdf(id, copyType, res, req.user);
     } catch (error) {
       next(error);
     }

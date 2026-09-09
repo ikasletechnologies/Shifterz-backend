@@ -8,6 +8,62 @@ export const dashboardRouter = Router();
 dashboardRouter.use(requireAuth);
 dashboardRouter.use(tenantScope);
 
+// D-21 — the general dashboard previously returned every section (crm,
+// workshop, financial, hr, inventory) to any authenticated user, franchise-
+// scoped only, with no role differentiation at all. This maps each role to
+// the dashboard "class" D-21 grants it, matching its section list as
+// literally as the underlying data model allows: executive tier
+// (SUPER_ADMIN/HQ_USER/FRANCHISE_ADMIN/BRANCH_MANAGER) keeps the full
+// picture including revenue, per D-21's explicit text; reception-facing
+// roles get customer/workshop status but not financial/HR/inventory;
+// TECHNICIAN and QUALITY_INSPECTOR are limited to workshop; BILLING_EXECUTIVE
+// and INVENTORY_EXECUTIVE get only their own domain. This is data
+// separation on the existing endpoint, not requireAction()-based
+// enforcement — RBAC-04 stays blocked until RBAC-02 is verified.
+//
+// Note: "RECEPTION" in D-21's text is this codebase's RECEPTION_EXECUTIVE
+// (confirmed against employee.service.ts / reception.service.ts).
+// Any role not listed below gets no sections — fails closed rather than
+// silently exposing data to an unanticipated role.
+const DASHBOARD_SECTIONS_BY_ROLE: Record<string, string[]> = {
+  SUPER_ADMIN: ["crm", "workshop", "financial", "hr", "inventory"],
+  HQ_USER: ["crm", "workshop", "financial", "hr", "inventory"],
+  FRANCHISE_ADMIN: ["crm", "workshop", "financial", "hr", "inventory"],
+  BRANCH_MANAGER: ["crm", "workshop", "financial", "hr", "inventory"],
+  RECEPTION_EXECUTIVE: ["crm", "workshop"],
+  SERVICE_ADVISOR: ["crm", "workshop"],
+  TECHNICIAN: ["workshop"],
+  QUALITY_INSPECTOR: ["workshop"],
+  BILLING_EXECUTIVE: ["financial"],
+  INVENTORY_EXECUTIVE: ["inventory"],
+};
+
+export function allowedDashboardSections(role?: string): string[] {
+  const baseRole = (role || "").split("|")[0] || "";
+  return DASHBOARD_SECTIONS_BY_ROLE[baseRole] ?? [];
+}
+
+// REP-01C (D-REP4) — endpoint C. Classified SPECIALIZED, not a
+// compatibility duplicate of the canonical §16.4 Franchise Dashboard: its
+// entire purpose is D-21's per-role section visibility (crm/workshop/
+// financial/hr/inventory subsets, plus SERVICE_ADVISOR's own personal-
+// jobs override), which the canonical dashboard does not have. Its
+// individual metrics were compared field-by-field against the shared
+// aggregation layer and found NOT to share the same underlying
+// definition with any of them (e.g. revenueToday here counts only
+// status === "Paid" invoices — collected revenue — while the canonical
+// getRevenueSummary counts all non-Cancelled invoices — billed revenue;
+// vehiclesInProgress here includes "Assigned" as well as "In Progress";
+// pendingStockRequests here filters status "Pending", not the canonical
+// "Submitted"). Per the conservative-consolidation principle, none of
+// these were merged — this endpoint's existing, already-reviewed (D-21)
+// behavior is left unchanged rather than silently altered on an
+// unverified assumption that a same-sounding field means the same thing.
+// Not gated with requireAction(): D-21's per-role section filtering
+// already IS this endpoint's access-control mechanism (every
+// authenticated role may call it; which sections come back is what's
+// restricted) — a blanket action gate would be redundant with, not
+// additive to, that existing design.
 dashboardRouter.get("/", async (req: Request, res: Response) => {
   try {
     const user = (req as any).user;
@@ -110,7 +166,10 @@ dashboardRouter.get("/", async (req: Request, res: Response) => {
       where: { ...tenantFilter, status: "Pending" }
     });
 
-    res.json({
+    // D-21 — computed the same way as before (no query/business-logic
+    // change); only which sections are actually sent back is now
+    // role-dependent.
+    const fullDashboard: Record<string, unknown> = {
       crm: {
         appointmentsToday,
         leadsToday,
@@ -145,7 +204,14 @@ dashboardRouter.get("/", async (req: Request, res: Response) => {
         lowStockItems,
         pendingStockRequests
       }
-    });
+    };
+
+    const allowedSections = allowedDashboardSections(user?.role);
+    const dashboard = Object.fromEntries(
+      Object.entries(fullDashboard).filter(([section]) => allowedSections.includes(section))
+    );
+
+    res.json(dashboard);
 
   } catch (error: any) {
     res.status(500).json({ error: error.message });

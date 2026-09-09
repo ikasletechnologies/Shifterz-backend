@@ -17,9 +17,12 @@ export class AttendanceController {
     }
   };
 
+  // D-14 — self-service check-in/out always acts as the authenticated actor;
+  // any employeeId in the request body is ignored, so a request can never
+  // check in/out as a different employee.
   checkIn = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const result = await this.service.checkIn(req.body);
+      const result = await this.service.checkIn({ employeeId: req.user?.id || "" });
       res.json(result);
     } catch (error) {
       next(error);
@@ -28,7 +31,7 @@ export class AttendanceController {
 
   checkOut = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const result = await this.service.checkOut(req.body);
+      const result = await this.service.checkOut({ employeeId: req.user?.id || "" });
       res.json(result);
     } catch (error) {
       next(error);
@@ -38,7 +41,7 @@ export class AttendanceController {
   updateAttendance = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const id = String(req.params.id);
-      const result = await this.service.updateAttendance(id, req.body);
+      const result = await this.service.updateAttendance(id, req.body, req.user);
       res.json(result);
     } catch (error) {
       next(error);

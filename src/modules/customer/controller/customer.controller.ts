@@ -176,7 +176,7 @@ export class CustomerController {
   getWarranties = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const id = String(req.params.id);
-      const warranties = await this.service.getWarranties(id);
+      const warranties = await this.service.getWarranties(id, req.user);
       res.json(warranties);
     } catch (error) {
       next(error);
@@ -186,7 +186,18 @@ export class CustomerController {
   addWarranty = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const id = String(req.params.id);
-      const warranty = await this.service.addWarranty(id, req.body);
+      const warranty = await this.service.addWarranty(id, req.body, req.user);
+      await logAudit({
+        module: "WARRANTY",
+        recordId: warranty.id,
+        action: "CREATE",
+        userId: req.user?.id || "unknown",
+        branchId: req.user?.franchiseId || null,
+        oldValue: null,
+        newValue: warranty,
+        ipAddress: req.ip,
+        device: req.headers['user-agent'],
+      });
       res.json(warranty);
     } catch (error) {
       next(error);

@@ -54,7 +54,7 @@ export class LeadController {
       const id = String(req.params.id);
       const updatedBy = req.user?.name || req.user?.id || "System";
       const oldValue = await db.lead.findUnique({ where: { id } });
-      const lead = await this.service.updateLead(id, req.body, updatedBy);
+      const lead = await this.service.updateLead(id, req.body, updatedBy, req.user);
       await logAudit({
         module: "LEAD",
         recordId: id,
@@ -76,7 +76,7 @@ export class LeadController {
     try {
       const id = String(req.params.id);
       const oldValue = await db.lead.findUnique({ where: { id } });
-      await this.service.deleteLead(id);
+      await this.service.deleteLead(id, req.user);
       await logAudit({
         module: "LEAD",
         recordId: id,
@@ -99,7 +99,7 @@ export class LeadController {
       const id = String(req.params.id);
       const { toFranchiseId, reason } = req.body;
       const oldValue = await db.lead.findUnique({ where: { id } });
-      const lead = await this.service.transferLead(id, toFranchiseId);
+      const lead = await this.service.transferLead(id, toFranchiseId, req.user, reason);
       await logAudit({
         module: "LEAD",
         recordId: id,
@@ -120,7 +120,7 @@ export class LeadController {
   getAssignmentHistory = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const leadId = String(req.params.id);
-      const history = await this.service.getAssignmentHistory(leadId);
+      const history = await this.service.getAssignmentHistory(leadId, req.user);
       res.json(history);
     } catch (error) {
       next(error);
@@ -137,7 +137,7 @@ export class LeadController {
       const id = String(req.params.id);
       const convertedBy = req.user?.name || req.user?.id || "System";
       const oldValue = await db.lead.findUnique({ where: { id } });
-      const customer = await this.service.convertLead(id, convertedBy);
+      const customer = await this.service.convertLead(id, convertedBy, req.user);
       await logAudit({
         module: "LEAD",
         recordId: id,

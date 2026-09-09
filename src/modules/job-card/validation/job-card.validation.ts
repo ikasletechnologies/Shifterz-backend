@@ -45,8 +45,10 @@ export const updateJobCardSchema = z.object({
     carInId: z.string().nullable().optional(),
     photos: z.array(z.string()).optional(),
     qcNotes: z.string().nullable().optional(),
-    passedAt: z.string().nullable().optional(),
-    failedAt: z.string().nullable().optional(),
+    // passedAt/failedAt intentionally NOT accepted here (Step 3 Item #4) —
+    // these are QC-controlled fields, settable only via the canonical
+    // POST /api/qc/:jobId/decision endpoint, never through the generic job
+    // update, for any role including management.
     customerSignature: z.string().nullable().optional(),
     companyAcknowledgement: z.string().nullable().optional(),
   })

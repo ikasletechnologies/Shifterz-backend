@@ -8,6 +8,7 @@ import { NotFoundError } from '../../../shared/errors/NotFoundError.js';
 import { ForbiddenError } from '../../../shared/errors/ForbiddenError.js';
 import { ValidationError } from '../../../shared/errors/ValidationError.js';
 import { InventoryService } from '../../inventory/service/inventory.service.js';
+import { resolveDataScope, scopeWhere, type ScopeActor } from '../../../shared/scope/dataScope.js';
 import {
   notifyJobAssigned,
   notifyManagers,
@@ -20,40 +21,66 @@ import {
 
 const QC_TRANSITION_STATUSES = ["Inspecting", "QC Passed", "QC Failed", "Rework"];
 const MANAGEMENT_ROLES = ['SUPER_ADMIN', 'HQ_USER', 'FRANCHISE_ADMIN', 'BRANCH_MANAGER'];
+// Mirrors qc.service.ts's QC_ROLES — kept as a separate constant here rather
+// than importing from the qc module, matching this file's existing pattern
+// of not cross-importing between modules for a handful of role literals.
+const QC_ROLES = ['QUALITY_INSPECTOR', 'QUALITY_INSPECTION', 'QC_INSPECTOR', 'QC', 'QUALITY_ASSURANCE'];
 const normalizeRole = (role?: string) => (role || '').toUpperCase().replace(/[\s_]+/g, '_');
 
 export class JobCardService {
   constructor(private readonly repository: JobCardRepository = new JobCardRepository()) { }
 
-  async checkTechnicianAccess(jobId: string, user?: { id?: string; name?: string; role?: string }) {
-    if (!user) return;
-    const userRole = (user.role || "").toUpperCase().replace(/[\s_]+/g, "_");
-    if (userRole !== "TECHNICIAN") return;
-
-    const job = await this.repository.findById(jobId);
+  // Franchise-scope-only fetch: the database query itself excludes jobs
+  // outside the actor's franchise (see resolveDataScope/scopeWhere). Used by
+  // every read/write job-card endpoint that doesn't additionally restrict a
+  // TECHNICIAN to only their own assigned jobs. A 404, not a 403, is
+  // returned for an out-of-scope id so existence elsewhere isn't confirmed.
+  async findScopedJob(jobId: string, user?: ScopeActor) {
+    const scope = resolveDataScope(user);
+    const job = await this.repository.findById(jobId, scopeWhere(scope));
     if (!job) throw new NotFoundError("Job card not found");
+    return job;
+  }
 
-    const userId = user.id;
-    const userName = user.name ? user.name.trim().toLowerCase() : "";
+  // Same franchise-scope enforcement as findScopedJob, plus the existing
+  // TECHNICIAN-identity restriction for endpoints that mutate a job's
+  // assignment/work state (the set that already called checkTechnicianAccess
+  // before this fix).
+  async getScopedJob(jobId: string, user?: ScopeActor & { id?: string; name?: string }) {
+    const job = await this.findScopedJob(jobId, user);
 
-    const techIdMatch = Boolean(userId && job.technicianId === userId);
-    const techNameMatch = Boolean(
-      userName &&
-      job.technician &&
-      job.technician.trim().toLowerCase() === userName &&
-      job.technician.trim().toLowerCase() !== "unassigned"
-    );
+    const userRole = (user?.role || "").toUpperCase().replace(/[\s_]+/g, "_");
+    if (userRole === "TECHNICIAN") {
+      const userId = user?.id;
+      const userName = user?.name ? user.name.trim().toLowerCase() : "";
 
-    if (!techIdMatch && !techNameMatch) {
-      throw new ForbiddenError("You do not have permission to access or modify this job card");
+      const techIdMatch = Boolean(userId && job.technicianId === userId);
+      const techNameMatch = Boolean(
+        userName &&
+        job.technician &&
+        job.technician.trim().toLowerCase() === userName &&
+        job.technician.trim().toLowerCase() !== "unassigned"
+      );
+
+      if (!techIdMatch && !techNameMatch) {
+        throw new ForbiddenError("You do not have permission to access or modify this job card");
+      }
     }
+
+    return job;
+  }
+
+  // Preserved for existing call sites that only need the access check, not
+  // the job payload itself.
+  async checkTechnicianAccess(jobId: string, user?: ScopeActor & { id?: string; name?: string }) {
+    await this.getScopedJob(jobId, user);
   }
 
   async getJobs(filter: any) {
     return this.repository.findAll(filter);
   }
 
-  async createJob(data: CreateJobCardDTO, user?: { id?: string; name?: string }) {
+  async createJob(data: CreateJobCardDTO, user?: ScopeActor & { id?: string; name?: string }) {
     // ── Rule 2: A Job Card shall be created only after estimate approval ─────
     const estimate = await db.estimate.findFirst({
       where: { vehicle: data.vehicle, isDeleted: false },
@@ -74,7 +101,12 @@ export class JobCardService {
       if (techRecord) techId = techRecord.id;
     }
 
-    const createdJob = await this.repository.create(jobId, data, techId);
+    // franchiseId is always server-derived from the actor, never accepted
+    // from the request body — the create DTO doesn't even carry the field.
+    const scope = resolveDataScope(user);
+    const franchiseId = scope.unrestricted ? null : scope.franchiseId;
+
+    const createdJob = await this.repository.create(jobId, data, techId, franchiseId);
 
     // Record creation in activity history
     await db.jobHistory.create({
@@ -93,9 +125,8 @@ export class JobCardService {
     return createdJob;
   }
 
-  async updateJob(id: string, data: UpdateJobCardDTO, user?: { id?: string; name?: string; role?: string }) {
-    const job = await this.repository.findById(id);
-    if (!job) throw new NotFoundError("Job card not found");
+  async updateJob(id: string, data: UpdateJobCardDTO, user?: ScopeActor & { id?: string; name?: string }) {
+    const job = await this.getScopedJob(id, user);
 
     const userRole = user?.role || "";
     const isHq = userRole === "SUPER_ADMIN" || userRole === "HQ_USER";
@@ -118,6 +149,18 @@ export class JobCardService {
     }
 
     if (data.status) {
+      // Step 3 Item #4 — QC status transitions must go exclusively through
+      // the canonical POST /api/qc/:jobId/decision endpoint (and its
+      // checklist/photo/assign siblings), for every role including
+      // management. This generic edit path must never be a second way to
+      // reach `passedAt`/`failedAt`, which billing.service.ts trusts
+      // unconditionally as proof of QC approval.
+      if (QC_TRANSITION_STATUSES.includes(data.status)) {
+        throw new ValidationError(
+          `"${data.status}" is a QC-controlled status and cannot be set through this endpoint. Use the QC module (POST /api/qc/:jobId/decision) to record a Pass/Fail decision.`
+        );
+      }
+
       // ── Rule 3: Inspection mandatory before work begins ───────────────────
       // Temporarily disabled to allow job progression without mandatory photos during testing
       /*
@@ -171,16 +214,6 @@ export class JobCardService {
         }
       }
 
-      if (QC_TRANSITION_STATUSES.includes(data.status) && user?.id) {
-        enriched.qcById = user.id;
-        enriched.qcBy = user.name || '';
-      }
-      if (data.status === 'QC Passed') enriched.passedAt = new Date().toISOString();
-      if (data.status === 'QC Failed') enriched.failedAt = new Date().toISOString();
-      if (data.status === 'Rework') {
-        enriched.isRework = true;
-        enriched.reworkCount = { increment: 1 };
-      }
       if (COMPLETED_JOB_STATUSES.includes(data.status)) {
         enriched.actualCompletion = new Date().toISOString();
       }
@@ -312,35 +345,47 @@ export class JobCardService {
     return updated;
   }
 
-  async submitChecklist(id: string, checklist: QcChecklistDTO['checklist']) {
-    const job = await this.repository.findById(id);
-    if (!job) throw new NotFoundError("Job card not found");
+  // Step 3 Item #4 — this writes to Job.checklist directly, a separate field
+  // from the canonical qc module's QCInspection.checklist. Re-gated to the
+  // same QC_ROLES/MANAGEMENT_ROLES tier as the canonical endpoint rather than
+  // merged into it, since merging would silently move where this data is
+  // stored without confirming nothing still reads Job.checklist directly.
+  async submitChecklist(id: string, checklist: QcChecklistDTO['checklist'], user?: ScopeActor) {
+    await this.findScopedJob(id, user);
+    if (!MANAGEMENT_ROLES.includes(normalizeRole(user?.role)) && !QC_ROLES.includes(normalizeRole(user?.role))) {
+      throw new ForbiddenError("Only an authorized Quality Inspector or management may submit a QC checklist.");
+    }
     return this.repository.updateChecklist(id, checklist);
   }
 
-  async appendQcPhotos(id: string, urls: string[]) {
-    const job = await this.repository.findById(id);
-    if (!job) throw new NotFoundError("Job card not found");
+  // Same reasoning as submitChecklist above — Job.qcPhotos is a separate
+  // field from the canonical qc module's JobPhoto rows.
+  async appendQcPhotos(id: string, urls: string[], user?: ScopeActor) {
+    await this.findScopedJob(id, user);
+    if (!MANAGEMENT_ROLES.includes(normalizeRole(user?.role)) && !QC_ROLES.includes(normalizeRole(user?.role))) {
+      throw new ForbiddenError("Only an authorized Quality Inspector or management may upload QC photos.");
+    }
     return this.repository.appendQcPhotos(id, urls);
   }
 
-  async deleteJob(id: string) {
+  async deleteJob(id: string, user?: ScopeActor & { id?: string; name?: string }) {
+    await this.getScopedJob(id, user);
     return this.repository.softDelete(id);
   }
 
   // ─── Job Details (with Additional Works) ─────────────────────────────────────
 
-  async getJobWithDetails(id: string) {
-    const job = await this.repository.getWithDetails(id);
+  async getJobWithDetails(id: string, user?: ScopeActor & { id?: string; name?: string }) {
+    const scope = resolveDataScope(user);
+    const job = await this.repository.getWithDetails(id, scopeWhere(scope));
     if (!job) throw new NotFoundError("Job card not found");
     return job;
   }
 
   // ─── Job History ──────────────────────────────────────────────────────────────
 
-  async getJobHistory(id: string) {
-    const job = await this.repository.findById(id);
-    if (!job) throw new NotFoundError("Job card not found");
+  async getJobHistory(id: string, user?: ScopeActor) {
+    await this.findScopedJob(id, user);
     return this.repository.getHistory(id);
   }
 
@@ -349,10 +394,9 @@ export class JobCardService {
   async requestAdditionalWork(
     jobId: string,
     data: { description: string; estimatedCost: number },
-    user?: { id?: string; name?: string; franchiseId?: string }
+    user?: ScopeActor & { id?: string; name?: string }
   ) {
-    const job = await this.repository.findById(jobId);
-    if (!job) throw new NotFoundError("Job card not found");
+    const job = await this.findScopedJob(jobId, user);
     if (job.isDeleted) throw new NotFoundError("Job card not found");
 
     const id = await import('../../../shared/utils/idGenerator.js').then(m => m.generateUid('AW'));
@@ -378,7 +422,7 @@ export class JobCardService {
   async resolveAdditionalWork(
     id: string,
     data: { status: 'Approved' | 'Rejected'; rejectionNote?: string | null; customerApproved?: boolean },
-    user?: { id?: string; name?: string; role?: string }
+    user?: ScopeActor & { id?: string; name?: string }
   ) {
     // Only management can approve/reject additional work
     const userRole = normalizeRole(user?.role);
@@ -386,7 +430,8 @@ export class JobCardService {
       throw new ForbiddenError("Only authorized management may approve or reject additional work.");
     }
 
-    const existing = await db.additionalWork.findFirst({ where: { id, isDeleted: false } });
+    const scope = resolveDataScope(user);
+    const existing = await db.additionalWork.findFirst({ where: { id, isDeleted: false, ...scopeWhere(scope) } });
     if (!existing) throw new NotFoundError("Additional work request not found");
 
     // 10.14.4: Additional work shall require customer approval before execution
@@ -426,18 +471,15 @@ export class JobCardService {
     return result;
   }
 
-  async listAdditionalWorks(jobId: string) {
-    const job = await this.repository.findById(jobId);
-    if (!job) throw new NotFoundError("Job card not found");
+  async listAdditionalWorks(jobId: string, user?: ScopeActor) {
+    await this.findScopedJob(jobId, user);
     return this.repository.listAdditionalWorks(jobId);
   }
 
   // ─── Work Stage (10.5) ────────────────────────────────────────────────────
 
-  async updateWorkStage(jobId: string, stage: string, notes: string | undefined, user?: { id?: string; name?: string; role?: string; franchiseId?: string | null }) {
-    await this.checkTechnicianAccess(jobId, user);
-    const job = await this.repository.findById(jobId);
-    if (!job) throw new NotFoundError("Job card not found");
+  async updateWorkStage(jobId: string, stage: string, notes: string | undefined, user?: ScopeActor & { id?: string; name?: string }) {
+    const job = await this.getScopedJob(jobId, user);
 
     const workflowStage = await this.repository.findWorkflowStage(stage, job.franchiseId);
     if (!workflowStage) {
@@ -449,10 +491,8 @@ export class JobCardService {
 
   // ─── Work Photographs (10.6) ──────────────────────────────────────────────
 
-  async uploadJobPhotos(jobId: string, category: string, urls: string[], user?: { id?: string; name?: string; role?: string; franchiseId?: string | null }) {
-    await this.checkTechnicianAccess(jobId, user);
-    const job = await this.repository.findById(jobId);
-    if (!job) throw new NotFoundError("Job card not found");
+  async uploadJobPhotos(jobId: string, category: string, urls: string[], user?: ScopeActor & { id?: string; name?: string }) {
+    const job = await this.getScopedJob(jobId, user);
 
     if (!(JOB_PHOTO_CATEGORIES as readonly string[]).includes(category)) {
       throw new ValidationError(`Invalid photo category "${category}". Must be one of: ${JOB_PHOTO_CATEGORIES.join(', ')}.`);
@@ -465,18 +505,15 @@ export class JobCardService {
     });
   }
 
-  async listJobPhotos(jobId: string) {
-    const job = await this.repository.findById(jobId);
-    if (!job) throw new NotFoundError("Job card not found");
+  async listJobPhotos(jobId: string, user?: ScopeActor) {
+    await this.findScopedJob(jobId, user);
     return this.repository.listJobPhotos(jobId);
   }
 
   // ─── Work Notes (10.9) ────────────────────────────────────────────────────
 
-  async addWorkNote(jobId: string, note: string, user?: { id?: string; name?: string; role?: string; franchiseId?: string | null }) {
-    await this.checkTechnicianAccess(jobId, user);
-    const job = await this.repository.findById(jobId);
-    if (!job) throw new NotFoundError("Job card not found");
+  async addWorkNote(jobId: string, note: string, user?: ScopeActor & { id?: string; name?: string }) {
+    const job = await this.getScopedJob(jobId, user);
 
     return this.repository.createWorkNote(jobId, note, {
       id: user?.id,
@@ -485,9 +522,8 @@ export class JobCardService {
     });
   }
 
-  async listWorkNotes(jobId: string) {
-    const job = await this.repository.findById(jobId);
-    if (!job) throw new NotFoundError("Job card not found");
+  async listWorkNotes(jobId: string, user?: ScopeActor) {
+    await this.findScopedJob(jobId, user);
     return this.repository.listWorkNotes(jobId);
   }
 
@@ -496,13 +532,19 @@ export class JobCardService {
   async recordMaterialConsumption(
     jobId: string,
     data: { itemId: string; quantity: number; unit?: string },
-    user?: { id?: string; name?: string; role?: string; franchiseId?: string | null }
+    user?: ScopeActor & { id?: string; name?: string }
   ) {
-    await this.checkTechnicianAccess(jobId, user);
-    const job = await this.repository.findById(jobId);
-    if (!job) throw new NotFoundError("Job card not found");
+    const job = await this.getScopedJob(jobId, user);
 
-    const item = await db.inventory.findFirst({ where: { id: data.itemId } });
+    // INV-02 — franchise-ownership check. This lookup used to be unscoped,
+    // so a technician could record consumption against any inventory item
+    // id — another franchise's, or HQ's — and once management approved the
+    // record, consumeItem() would silently decrement that other tenant's
+    // stock. Scoped the same way every other item lookup in this codebase
+    // is (resolveDataScope/scopeWhere), so an out-of-scope itemId can never
+    // enter a JobMaterialConsumption record in the first place.
+    const scope = resolveDataScope(user);
+    const item = await db.inventory.findFirst({ where: { id: data.itemId, ...scopeWhere(scope) } });
     if (!item) throw new NotFoundError("Inventory item not found");
 
     const record = await this.repository.createMaterialConsumption(jobId, {
@@ -526,23 +568,23 @@ export class JobCardService {
     return record;
   }
 
-  async listMaterialConsumptions(jobId: string) {
-    const job = await this.repository.findById(jobId);
-    if (!job) throw new NotFoundError("Job card not found");
+  async listMaterialConsumptions(jobId: string, user?: ScopeActor) {
+    await this.findScopedJob(jobId, user);
     return this.repository.listMaterialConsumptions(jobId);
   }
 
   async resolveMaterialConsumption(
     id: string,
     data: { status: 'Approved' | 'Rejected'; rejectionNote?: string | null },
-    user?: { id?: string; name?: string; role?: string }
+    user?: ScopeActor & { id?: string; name?: string }
   ) {
     const userRole = normalizeRole(user?.role);
     if (!MANAGEMENT_ROLES.includes(userRole)) {
       throw new ForbiddenError("Only authorized management may approve or reject material consumption.");
     }
 
-    const record = await this.repository.findMaterialConsumptionById(id);
+    const scope = resolveDataScope(user);
+    const record = await this.repository.findMaterialConsumptionById(id, scopeWhere(scope));
     if (!record) throw new NotFoundError("Material consumption record not found");
     if (record.status !== 'Pending') {
       throw new ValidationError(`This material consumption has already been ${record.status.toLowerCase()}.`);
@@ -563,9 +605,8 @@ export class JobCardService {
 
   // ─── Completion Request (10.10) ───────────────────────────────────────────
 
-  async requestCompletion(jobId: string, user?: { id?: string; name?: string; role?: string }) {
-    const job = await this.repository.findById(jobId);
-    if (!job) throw new NotFoundError("Job card not found");
+  async requestCompletion(jobId: string, user?: ScopeActor & { id?: string; name?: string }) {
+    const job = await this.findScopedJob(jobId, user);
 
     const userRole = normalizeRole(user?.role);
     const isManagement = MANAGEMENT_ROLES.includes(userRole);

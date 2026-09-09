@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { QcController } from './qc.controller.js';
 import { validate } from '../../middleware/validate.middleware.js';
-import { authenticate } from '../../middleware/auth.middleware.js';
+import { authenticate, requireAction } from '../../middleware/auth.middleware.js';
 import { upload } from '../upload/config/multer.config.js';
 import {
   assignQcSchema,
@@ -20,10 +20,17 @@ qcRouter.use(authenticate);
 qcRouter.get('/queue', controller.getQueue);
 
 // ─── Checklist Template (12.4, HQ-configurable) ──────────────────────────────────
+// Read/use stays ungated — D-18 explicitly allows QUALITY_INSPECTOR (and
+// anyone with QC execution access) to use templates without administering
+// them; qc:templates:view/:use were deliberately deferred/TBD (RBAC-01), so
+// no action is invented here for the read path.
 qcRouter.get('/checklist-template',        controller.getChecklistTemplate);
-qcRouter.post('/checklist-template',       validate(createChecklistTemplateItemSchema), controller.createChecklistTemplateItem);
-qcRouter.put('/checklist-template/:id',    validate(updateChecklistTemplateItemSchema), controller.updateChecklistTemplateItem);
-qcRouter.delete('/checklist-template/:id', controller.deleteChecklistTemplateItem);
+// RBAC-04 — D-18. requireAction() is additive: QcService's tenant-isolation
+// check (assertWithinScope, fixed during the D-18 lock) on update/delete,
+// and the isDefault deletion guard, are unchanged and still run after this gate.
+qcRouter.post('/checklist-template',       requireAction('qc:templates:manage'), validate(createChecklistTemplateItemSchema), controller.createChecklistTemplateItem);
+qcRouter.put('/checklist-template/:id',    requireAction('qc:templates:manage'), validate(updateChecklistTemplateItemSchema), controller.updateChecklistTemplateItem);
+qcRouter.delete('/checklist-template/:id', requireAction('qc:templates:manage'), controller.deleteChecklistTemplateItem);
 
 // ─── QC Assignment (12.3) ─────────────────────────────────────────────────────────
 qcRouter.post('/:jobId/assign', validate(assignQcSchema), controller.assignInspector);

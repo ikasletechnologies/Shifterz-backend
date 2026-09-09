@@ -1,9 +1,10 @@
 import { Router } from 'express';
 import { CustomerController } from '../controller/customer.controller.js';
 import { validate } from '../../../middleware/validate.middleware.js';
-import { authenticate } from '../../../middleware/auth.middleware.js';
-import { 
-  createCustomerSchema, 
+import { authenticate, requireAction } from '../../../middleware/auth.middleware.js';
+import { requireSystemCredential } from '../../../middleware/system-auth.middleware.js';
+import {
+  createCustomerSchema,
   updateCustomerSchema, 
   createVehicleSchema, 
   updateVehicleSchema, 
@@ -19,6 +20,14 @@ export const customerRouter = Router();
 const controller = new CustomerController();
 const vehicleController = new VehicleController();
 
+// D-20 — registered before customerRouter.use(authenticate) below, so this
+// route never requires a human JWT.
+customerRouter.post(
+  '/reminders/dispatch',
+  requireSystemCredential('scheduler:customers:dispatch'),
+  controller.dispatchReminders
+);
+
 customerRouter.use(authenticate);
 
 // Vehicle lookup by vehicle registration number (existing)
@@ -28,20 +37,28 @@ customerRouter.get('/vehicle/:vehicleNo', vehicleController.lookupVehicle);
 customerRouter.get('/search', controller.searchCustomers);
 
 // Export CSV reports
-customerRouter.get('/reports/export', controller.exportCSVReport);
+// REP-01C (D-REP1/D-REP2/D-REP7) — the Customer report duplicate flagged
+// in REP-01: CustomerService.getReportCSV's own CSV switch overlaps by
+// name with report.service.ts's canonical /api/reports/customer/*
+// exports, but was left as-is (not merged) since it exposes a different
+// type-key surface (e.g. 'customer_register') than the canonical routes.
+// Gated with the existing reports:customer:export action rather than a
+// new one, consistent with the canonical Customer report routes.
+customerRouter.get('/reports/export', requireAction('reports:customer:export'), controller.exportCSVReport);
 
-// Dispatch reminders
-customerRouter.post('/reminders/dispatch', controller.dispatchReminders);
-
-// Vehicle Service History cross-franchise
-customerRouter.get('/vehicles/:vehicleNo/history', controller.getVehicleServiceHistory);
+// RBAC-04 — D-19. requireAction() gates who may reach this route; the
+// cross-franchise read itself (CustomerService.getVehicleServiceHistory
+// deliberately queries with no franchise filter) and its narrow response
+// shape (status only, no amounts/contact/GSTIN) are unchanged — the action
+// grant is not a scope mechanism, per D-19's own text.
+customerRouter.get('/vehicles/:vehicleNo/history', requireAction('vehicles:history:view'), controller.getVehicleServiceHistory);
 
 // Customers list and register
 customerRouter.get('/', controller.getCustomers);
 customerRouter.post('/', validate(createCustomerSchema), controller.createCustomer);
 
 // Aggregate report/summary
-customerRouter.get('/reports/summary', controller.getReportsSummary);
+customerRouter.get('/reports/summary', requireAction('reports:customer:view'), controller.getReportsSummary);
 
 // Specific Customer Profile endpoints
 customerRouter.get('/:id', controller.getCustomerById);

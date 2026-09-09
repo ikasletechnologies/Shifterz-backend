@@ -45,7 +45,7 @@ export class QcController {
   updateChecklistTemplateItem = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const id = String(req.params.id);
-      const result = await this.service.updateChecklistTemplateItem(id, req.body);
+      const result = await this.service.updateChecklistTemplateItem(id, req.body, req.user);
       res.json(result);
     } catch (error) { next(error); }
   };
@@ -53,7 +53,7 @@ export class QcController {
   deleteChecklistTemplateItem = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const id = String(req.params.id);
-      await this.service.deleteChecklistTemplateItem(id);
+      await this.service.deleteChecklistTemplateItem(id, req.user);
       res.json({ success: true, message: "Checklist item deleted" });
     } catch (error) { next(error); }
   };

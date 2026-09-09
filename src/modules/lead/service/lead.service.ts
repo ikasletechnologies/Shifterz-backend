@@ -3,6 +3,10 @@ import { generateSequentialId } from '../../../shared/utils/idGenerator.js';
 import { db } from '../../../lib/db.js';
 import { ReferralService } from './referral.service.js';
 import { sendNotification, notifyManagers } from '../../../shared/services/notification.service.js';
+import { NotFoundError } from '../../../shared/errors/NotFoundError.js';
+import { ForbiddenError } from '../../../shared/errors/ForbiddenError.js';
+import { ValidationError } from '../../../shared/errors/ValidationError.js';
+import { resolveDataScope, scopeWhere, type ScopeActor } from '../../../shared/scope/dataScope.js';
 
 
 export class LeadService {
@@ -97,9 +101,11 @@ export class LeadService {
     return newLead;
   }
 
-  async updateLead(id: string, data: any, updatedBy?: string) {
+  async updateLead(id: string, data: any, updatedBy?: string, actor?: ScopeActor) {
     // Capture previous assignment before update
-    const existing = await this.repository.findById(id);
+    const scope = resolveDataScope(actor);
+    const existing = await this.repository.findById(id, scopeWhere(scope));
+    if (!existing) throw new NotFoundError("Lead not found");
 
     const updatedLead = await this.repository.update(id, {
       name: data.name,
@@ -158,11 +164,17 @@ export class LeadService {
     return updatedLead;
   }
 
-  async deleteLead(id: string) {
+  async deleteLead(id: string, actor?: ScopeActor) {
+    const scope = resolveDataScope(actor);
+    const existing = await this.repository.findById(id, scopeWhere(scope));
+    if (!existing) throw new NotFoundError("Lead not found");
     return this.repository.softDelete(id);
   }
 
-  async getAssignmentHistory(leadId: string) {
+  async getAssignmentHistory(leadId: string, actor?: ScopeActor) {
+    const scope = resolveDataScope(actor);
+    const lead = await this.repository.findById(leadId, scopeWhere(scope));
+    if (!lead) throw new NotFoundError("Lead not found");
     return db.leadAssignmentHistory.findMany({
       where: { leadId },
       orderBy: { assignedAt: "desc" }
@@ -174,9 +186,10 @@ export class LeadService {
    * Can also be triggered implicitly when status is set to "Converted".
    * Idempotent: safe to call multiple times on the same lead.
    */
-  async convertLead(leadId: string, convertedBy?: string) {
-    const lead = await this.repository.findById(leadId);
-    if (!lead) throw new Error("Lead not found");
+  async convertLead(leadId: string, convertedBy?: string, actor?: ScopeActor) {
+    const scope = resolveDataScope(actor);
+    const lead = await this.repository.findById(leadId, scopeWhere(scope));
+    if (!lead) throw new NotFoundError("Lead not found");
 
     const result = await this.handleConvertedLeadCustomer(lead, lead.franchiseId);
     return result;
@@ -249,10 +262,71 @@ export class LeadService {
     return customer;
   }
 
-  async transferLead(id: string, toFranchiseId: string) {
-    const lead = await this.repository.findById(id);
-    if (!lead) throw new Error("Lead not found");
-    return this.repository.update(id, { franchiseId: toFranchiseId });
+  // Cross-franchise lead transfer. Authority model:
+  //   SUPER_ADMIN / HQ_USER      -> always allowed
+  //   FRANCHISE_ADMIN            -> only if their own (source) franchise has
+  //                                 canTransferLeads granted by HQ; the lead
+  //                                 must already be in-scope for them (the
+  //                                 scoped findById below enforces this)
+  //   everyone else              -> forbidden
+  // Writes franchiseId + a one-time originalFranchiseId snapshot + a
+  // LeadTransferHistory row atomically — all three fields already existed in
+  // the schema but were never wired up by the previous stub implementation.
+  async transferLead(
+    id: string,
+    toFranchiseId: string,
+    actor?: ScopeActor & { id?: string; name?: string },
+    reason?: string
+  ) {
+    const scope = resolveDataScope(actor);
+    const lead = await this.repository.findById(id, scopeWhere(scope));
+    if (!lead) throw new NotFoundError("Lead not found");
+
+    const role = (actor?.role || "").split("|")[0];
+    const isHQ = role === "SUPER_ADMIN" || role === "HQ_USER";
+
+    const fromFranchiseId = lead.franchiseId;
+    const fromFranchise = fromFranchiseId
+      ? await db.franchise.findUnique({ where: { id: fromFranchiseId } })
+      : null;
+
+    if (!isHQ) {
+      if (role !== "FRANCHISE_ADMIN" || !fromFranchise || fromFranchise.isDeleted || !fromFranchise.canTransferLeads) {
+        throw new ForbiddenError("You do not have permission to transfer leads across franchises.");
+      }
+    }
+
+    if (!toFranchiseId || toFranchiseId === fromFranchiseId) {
+      throw new ValidationError("A valid, different target franchise is required.");
+    }
+
+    const targetFranchise = await db.franchise.findUnique({ where: { id: toFranchiseId } });
+    if (!targetFranchise || targetFranchise.isDeleted || targetFranchise.status !== "Active") {
+      throw new ValidationError("Target franchise is not a valid, active franchise.");
+    }
+
+    const [updatedLead] = await db.$transaction([
+      db.lead.update({
+        where: { id },
+        data: {
+          franchiseId: toFranchiseId,
+          originalFranchiseId: lead.originalFranchiseId ?? fromFranchiseId ?? null,
+        },
+      }),
+      db.leadTransferHistory.create({
+        data: {
+          leadId: id,
+          fromFranchiseId,
+          fromFranchiseName: fromFranchise?.name ?? null,
+          toFranchiseId,
+          toFranchiseName: targetFranchise.name,
+          transferredBy: actor?.id || actor?.name || "System",
+          reason: reason ?? null,
+        },
+      }),
+    ]);
+
+    return updatedLead;
   }
 }
 

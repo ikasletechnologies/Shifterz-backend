@@ -1,8 +1,11 @@
 import { WorkshopRepository } from '../repository/workshop.repository.js';
 import { COMPLETED_JOB_STATUSES } from '../../../shared/constants/jobStatus.constants.js';
 import { db } from '../../../lib/db.js';
+import { ReportService } from '../../report/service/report.service.js';
 
 export class WorkshopService {
+  private readonly reportService = new ReportService();
+
   constructor(private readonly repository: WorkshopRepository = new WorkshopRepository()) {}
 
   async getDashboardSummary(employeeId: string) {
@@ -91,15 +94,34 @@ export class WorkshopService {
     };
   }
 
+  // REP-01C (D-REP1/D-REP3) — SPECIALIZED, retained: this view has
+  // substantial unique value (customer retention rate, QC pass rate, avg
+  // completion time, lead conversion) with no equivalent anywhere in the
+  // canonical report layer, so it is not reduced to a thin adapter.
+  // Metrics that DO overlap with the canonical shared aggregation
+  // (revenue, employee attendance, inventory) now come from
+  // ReportService's shared methods instead of independent queries — this
+  // also fixes a real inconsistency the consolidation surfaced:
+  // vehiclesInProgress here used to count status IN
+  // ["Pending","In Progress","In_Progress"], a strictly broader definition
+  // than the canonical getWorkshopSummary()'s ["In Progress"] only. Per
+  // D-REP1 ("one authoritative implementation per metric"), this now
+  // matches the canonical definition rather than keeping a second,
+  // silently different one.
   async getFranchiseDashboard(franchiseId: string | null) {
     if (!franchiseId) throw new Error("Franchise ID is required");
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    const [revenueSummary, employeeSummary, inventorySummary, workshopSummary] = await Promise.all([
+      this.reportService.getRevenueSummary(franchiseId),
+      this.reportService.getEmployeeSummary(franchiseId),
+      this.reportService.getInventorySummary(franchiseId),
+      this.reportService.getWorkshopSummary(franchiseId),
+    ]);
 
-    // Customer metrics
+    // Customer metrics — no canonical equivalent yet, stays local.
     const leadsToday = await db.lead.count({
       where: { franchiseId, date: { gte: today }, isDeleted: false }
     });
@@ -116,15 +138,17 @@ export class WorkshopService {
     const totalCustomers = await db.customer.count({ where: { franchiseId, isDeleted: false } });
     const customerRetentionRate = totalCustomers > 0 ? Number(((returningCustomers / totalCustomers) * 100).toFixed(2)) : 0;
 
-    // Workshop metrics
+    // Workshop metrics — vehiclesReceived, QC pass rate, avg completion
+    // time have no canonical equivalent yet, stay local. pendingQC here
+    // deliberately stays local too, NOT consolidated into
+    // getWorkshopSummary().qcPending: this uses status "Work Completed"
+    // (work finished, not yet queued for QC) while the shared summary's
+    // qcPending uses status "QC Pending" — these read as two different
+    // pipeline stages, not confirmed to be the same metric, so
+    // consolidating them would risk silently changing behavior on an
+    // unverified assumption rather than genuinely fixing a duplicate.
     const vehiclesReceived = await db.job.count({
       where: { franchiseId, createdAt: { gte: today }, isDeleted: false }
-    });
-    const vehiclesInProgress = await db.job.count({
-      where: { franchiseId, status: { in: ["Pending", "In Progress", "In_Progress"] }, isDeleted: false }
-    });
-    const vehiclesReady = await db.job.count({
-      where: { franchiseId, status: "QC Passed", isDeleted: false }
     });
     const pendingQC = await db.job.count({
       where: { franchiseId, status: "Work Completed", isDeleted: false }
@@ -148,44 +172,21 @@ export class WorkshopService {
         completedJobsCount++;
       }
     }
-    const avgCompletionTimeStr = completedJobsCount > 0 
-      ? (totalCompletionMinutes / completedJobsCount / 60).toFixed(1) + " hrs" 
+    const avgCompletionTimeStr = completedJobsCount > 0
+      ? (totalCompletionMinutes / completedJobsCount / 60).toFixed(1) + " hrs"
       : "0.0 hrs";
 
-    // Finance metrics
-    const invoicesToday = await db.invoice.findMany({
-      where: { franchiseId, date: { gte: today }, isDeleted: false }
-    });
-    const revenueToday = invoicesToday.reduce((sum, i) => sum + (i.amount + i.gst - i.discount), 0);
-
-    const invoicesThisMonth = await db.invoice.findMany({
-      where: { franchiseId, date: { gte: startOfMonth }, isDeleted: false }
-    });
-    const revenueThisMonth = invoicesThisMonth.reduce((sum, i) => sum + (i.amount + i.gst - i.discount), 0);
-
+    // Finance: pendingInvoices count has no canonical equivalent yet, stays
+    // local; revenueToday/revenueThisMonth/outstandingPayments now come
+    // from the shared getRevenueSummary().
     const invoices = await db.invoice.findMany({
       where: { franchiseId, isDeleted: false, status: { not: "Cancelled" } }
     });
-    let outstandingPayments = 0;
-    let pendingInvoices = 0;
+    const pendingInvoices = invoices.filter(inv => inv.status === "Pending").length;
 
-    for (const inv of invoices) {
-      if (inv.status === "Pending") pendingInvoices++;
-      const payments = await db.payment.findMany({ where: { invoiceId: inv.id, isDeleted: false } });
-      const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
-      const totalAmount = inv.amount + inv.gst - inv.discount;
-      if (totalPaid < totalAmount) {
-        outstandingPayments += (totalAmount - totalPaid);
-      }
-    }
-
-    // Employees metrics
-    const presentToday = await db.attendance.count({
-      where: { franchiseId, date: { gte: today }, status: "Present", isDeleted: false }
-    });
-    const absentToday = await db.attendance.count({
-      where: { franchiseId, date: { gte: today }, status: "Absent", isDeleted: false }
-    });
+    // Employees: jobsAssigned/jobsCompleted have no canonical equivalent
+    // yet, stay local; presentToday/absentToday now come from the shared
+    // getEmployeeSummary().
     const jobsAssigned = await db.job.count({
       where: { franchiseId, status: { in: ["Pending", "In Progress"] }, isDeleted: false }
     });
@@ -193,15 +194,13 @@ export class WorkshopService {
       where: { franchiseId, status: "Completed", isDeleted: false }
     });
 
-    // Inventory metrics
+    // Inventory: availableStock has no canonical equivalent yet, stays
+    // local; lowStockItems/pendingStockRequests now come from the shared
+    // getInventorySummary().
     const inventory = await db.inventory.findMany({
       where: { franchiseId, isDeleted: false }
     });
     const availableStock = inventory.reduce((sum, i) => sum + i.stock, 0);
-    const lowStockItems = inventory.filter(item => item.stock <= item.reorder).length;
-    const pendingStockRequests = await db.inventoryRequest.count({
-      where: { franchiseId, status: "Pending", isDeleted: false }
-    });
 
     return {
       customer: {
@@ -213,28 +212,28 @@ export class WorkshopService {
       },
       workshop: {
         vehiclesReceived,
-        vehiclesInProgress,
-        vehiclesReadyForDelivery: vehiclesReady,
+        vehiclesInProgress: workshopSummary.vehiclesInProgress,
+        vehiclesReadyForDelivery: workshopSummary.readyForDelivery,
         pendingQualityChecks: pendingQC,
         qcPassRate,
         avgCompletionTime: avgCompletionTimeStr
       },
       finance: {
-        revenueToday,
-        revenueThisMonth,
-        outstandingPayments,
+        revenueToday: revenueSummary.todayRevenue,
+        revenueThisMonth: revenueSummary.monthlyRevenue,
+        outstandingPayments: revenueSummary.outstandingPayments,
         pendingInvoices
       },
       employees: {
-        presentToday,
-        absentToday,
+        presentToday: employeeSummary.presentToday,
+        absentToday: employeeSummary.absentToday,
         jobsAssigned,
         jobsCompleted
       },
       inventory: {
         availableStock,
-        lowStockItems,
-        pendingStockRequests
+        lowStockItems: inventorySummary.lowStock,
+        pendingStockRequests: inventorySummary.pendingStockRequests
       }
     };
   }

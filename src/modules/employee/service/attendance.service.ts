@@ -51,7 +51,25 @@ export class AttendanceService {
     return this.repository.updateCheckOut(existing.id, clockOut);
   }
 
-  async updateAttendance(id: string, data: UpdateAttendanceDTO) {
+  // D-14 — administrative attendance edit. Immediate tenant/data-scope fix
+  // (same class as D-17/D-18): SUPER_ADMIN/HQ_USER global, FRANCHISE_ADMIN
+  // own franchise only, every other role blocked outright — this previously
+  // had no check at all. Precise role/action enforcement beyond this remains
+  // RBAC-04's job.
+  async updateAttendance(id: string, data: UpdateAttendanceDTO, actor?: { role?: string; franchiseId?: string | null }) {
+    const existing = await this.repository.findById(id);
+    if (!existing) throw new NotFoundError("Attendance record not found");
+
+    const role = actor?.role || "";
+    if (role !== "SUPER_ADMIN" && role !== "HQ_USER") {
+      if (role !== "FRANCHISE_ADMIN") {
+        throw new ApiError(403, "You do not have permission to edit attendance records.");
+      }
+      if (existing.franchiseId !== (actor?.franchiseId ?? null)) {
+        throw new ApiError(403, "You do not have permission to edit attendance records outside your franchise.");
+      }
+    }
+
     return this.repository.updateAttendance(id, data);
   }
 }

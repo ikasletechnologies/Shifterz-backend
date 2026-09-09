@@ -1,4 +1,5 @@
 import { db } from '../../lib/db.js';
+import type { Prisma } from '@prisma/client';
 
 interface AuditLogOptions {
   module: string;
@@ -12,21 +13,39 @@ interface AuditLogOptions {
   device?: string | null;
 }
 
-export async function logAudit(options: AuditLogOptions) {
+// `tx` is optional so a caller can make the audit write part of the same
+// transaction as the mutation it's recording (e.g. RBAC-02's grant
+// management — "do not leave a successful mutation without its audit
+// event"); every existing caller that doesn't pass one keeps using the
+// plain client, unchanged.
+export async function logAudit(options: AuditLogOptions, tx?: Prisma.TransactionClient) {
+  const client = tx ?? db;
+  const write = () => client.auditLog.create({
+    data: {
+      module: options.module,
+      recordId: options.recordId,
+      action: options.action,
+      userId: options.userId,
+      branchId: options.branchId || null,
+      oldValue: options.oldValue ? JSON.parse(JSON.stringify(options.oldValue)) : null,
+      newValue: options.newValue ? JSON.parse(JSON.stringify(options.newValue)) : null,
+      ipAddress: options.ipAddress || null,
+      device: options.device || null,
+    }
+  });
+
+  // Standalone callers (no tx): audit failure must not block a business
+  // operation that already succeeded, so it's logged and swallowed, same as
+  // before this change. Callers inside a transaction want the opposite —
+  // "do not leave a successful mutation without its audit event" means an
+  // audit failure there must roll back the whole transaction, not be
+  // silently absorbed, so the error propagates instead.
+  if (tx) {
+    await write();
+    return;
+  }
   try {
-    await db.auditLog.create({
-      data: {
-        module: options.module,
-        recordId: options.recordId,
-        action: options.action,
-        userId: options.userId,
-        branchId: options.branchId || null,
-        oldValue: options.oldValue ? JSON.parse(JSON.stringify(options.oldValue)) : null,
-        newValue: options.newValue ? JSON.parse(JSON.stringify(options.newValue)) : null,
-        ipAddress: options.ipAddress || null,
-        device: options.device || null,
-      }
-    });
+    await write();
   } catch (error) {
     console.error("Failed to write audit log:", error);
   }

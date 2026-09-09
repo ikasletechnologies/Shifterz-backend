@@ -1,9 +1,15 @@
 import { db } from '../../../lib/db.js';
 import type { CreateOutpassDTO, UpdateOutpassDTO } from '../validation/outpass.validation.js';
 
+type FranchiseScopeWhere = { franchiseId?: string | null };
+
 export class OutpassRepository {
   async findAll() {
     return db.outPass.findMany({ orderBy: { outTime: "desc" } });
+  }
+
+  async findById(id: string, scopeWhere: FranchiseScopeWhere = {}) {
+    return db.outPass.findFirst({ where: { id, ...scopeWhere } });
   }
 
   async create(id: string, data: any) {

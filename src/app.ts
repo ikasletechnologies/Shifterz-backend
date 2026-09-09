@@ -78,6 +78,8 @@ import { vehicleCheckinRouter } from "./modules/vehicle-checkin/routes/vehicle-c
 import { jobCardRouter } from "./modules/job-card/routes/job-card.routes.js";
 import { workshopRouter } from "./modules/workshop/routes/workshop.routes.js";
 import { billingRouter } from "./modules/billing/routes/billing.routes.js";
+import { creditNoteRouter } from "./modules/gst/routes/creditNote.routes.js";
+import { debitNoteRouter } from "./modules/gst/routes/debitNote.routes.js";
 import { paymentsRouter } from "./modules/payments/routes/payments.routes.js";
 import { outpassRouter } from "./modules/outpass/routes/outpass.routes.js";
 import { inventoryRouter } from "./modules/inventory/routes/inventory.routes.js";
@@ -113,6 +115,8 @@ app.use("/api/carin", vehicleCheckinRouter);
 app.use("/api/jobs", jobCardRouter);
 app.use("/api/technician", workshopRouter);
 app.use("/api/invoices", billingRouter);
+app.use("/api/gst/credit-notes", creditNoteRouter);
+app.use("/api/gst/debit-notes", debitNoteRouter);
 app.use("/api/payments", paymentsRouter);
 app.use("/api/outpass", outpassRouter);
 app.use("/api/inventory", inventoryRouter);

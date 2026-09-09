@@ -125,8 +125,215 @@ model Invoice {
   modifiedBy          String?
   cancelledBy         String?
   approvedBy          String?
+  // GST-01 — immutable GST snapshot, captured once at invoice creation by the
+  // (future, GST-02) calculation engine and never recomputed afterward, so a
+  // later change to a service's rate or a franchise's GST config never alters
+  // an already-issued invoice. All nullable: existing invoices keep working
+  // with none of these populated. `gstNumber` above already existed and is
+  // reused as the buyer GSTIN snapshot — not duplicated here. The existing
+  // `gst` field remains the total GST amount; cgst+sgst+igst+cess is its
+  // breakdown, not a second total.
+  sellerGstin         String?
+  sellerState         String?
+  buyerState          String?
+  placeOfSupply       String?
+  supplyType          String?    // "B2B" | "B2C"
+  taxableAmount       Float?
+  cgst                Float?
+  sgst                Float?
+  igst                Float?
+  cess                Float?
+  hsnSac              String?    // simplified invoice-level snapshot; single-group case only, see GST-04's InvoiceLine for the full per-line breakdown
+  gstCalculationMeta  Json?
   franchise           Franchise? @relation(fields: [franchiseId], references: [id])
   job                 Job?       @relation(fields: [jobId], references: [id])
+  // GST-04 — structured per-line GST detail. Additive: `items` (Json) above
+  // is untouched and still populated exactly as before; nothing currently
+  // reads invoiceLines, so no existing invoice needs one for this schema
+  // change to be safe. Cascades on invoice delete because these rows have no
+  // independent existence of their own — unlike Payment (Step 3 Item #1
+  // explicitly stopped cascading Payment deletes, because a payment is an
+  // independent financial record with its own audit significance; a line
+  // item is not, it's a component of the invoice itself).
+  invoiceLines        InvoiceLine[]
+  creditNotes         CreditNote[]
+  debitNotes          DebitNote[]
+}
+
+// GST-04 — structured replacement for reading Invoice.items as an opaque
+// blob. Each line snapshots its own rate/HSN at billing time (never a live
+// reference to Service, which can change rate later) — same immutability
+// principle as the invoice-level GST snapshot from GST-01.
+model InvoiceLine {
+  id            String   @id @default(cuid())
+  invoiceId     String
+  invoice       Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  serviceId     String?  // plain reference, not an enforced FK — matches how Job.services already matches Service by name, not id
+  description   String
+  quantity      Float    @default(1)
+  unitPrice     Float
+  discount      Float    @default(0)
+  hsnSac        String?
+  gstRate       Float
+  taxableAmount Float
+  cgst          Float    @default(0)
+  sgst          Float    @default(0)
+  igst          Float    @default(0)
+  cess          Float    @default(0)
+  lineTotal     Float
+  createdAt     DateTime @default(now())
+}
+
+// GST-04 — a GST Credit Note is a statutory tax document, NOT a financial
+// refund. `linkedPaymentId` is a deliberately loose, optional, non-enforced
+// cross-reference for when the two happen to relate to the same event — it
+// must never become the mechanism that creates one from the other. No
+// service/workflow logic reads or writes this model yet; that's a distinct,
+// later phase (deciding when/how a credit note actually gets issued is a
+// business-workflow question, not a schema one). `originalInvoiceId` has no
+// onDelete cascade — deleting the source invoice (already an exceptional,
+// SUPER_ADMIN-only, cancelled-and-payment-free operation per Step 3 Item #1)
+// must not silently take a statutory correction document down with it; the
+// database's own FK constraint blocks that deletion while a credit/debit
+// note still references the invoice.
+model CreditNote {
+  id                String           @id @default(cuid())
+  number            String           @unique
+  date              DateTime         @default(now())
+  franchiseId       String?
+  originalInvoiceId String
+  originalInvoice   Invoice          @relation(fields: [originalInvoiceId], references: [id])
+  customerId        String?
+  reason            String
+  taxableAmount     Float
+  cgst              Float            @default(0)
+  sgst              Float            @default(0)
+  igst              Float            @default(0)
+  cess              Float            @default(0)
+  totalTax          Float
+  totalAmount       Float
+  status            String           @default("Issued") // "Issued" | "Cancelled" — never hard-deleted
+  createdBy         String?
+  linkedPaymentId   String?          // optional, non-enforced — see model comment; NOT the same concept as a refund
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  lines             CreditNoteLine[]
+}
+
+model CreditNoteLine {
+  id            String     @id @default(cuid())
+  creditNoteId  String
+  creditNote    CreditNote @relation(fields: [creditNoteId], references: [id], onDelete: Cascade)
+  description   String
+  hsnSac        String?
+  quantity      Float      @default(1)
+  rate          Float
+  taxableAmount Float
+  gstRate       Float
+  cgst          Float      @default(0)
+  sgst          Float      @default(0)
+  igst          Float      @default(0)
+  cess          Float      @default(0)
+  lineTotal     Float
+}
+
+// GST-04 — mirrors CreditNote exactly; same statutory-document-not-a-payment
+// distinction applies. A Debit Note increases, rather than reduces, the
+// output tax liability against the original invoice.
+model DebitNote {
+  id                String          @id @default(cuid())
+  number            String          @unique
+  date              DateTime        @default(now())
+  franchiseId       String?
+  originalInvoiceId String
+  originalInvoice   Invoice         @relation(fields: [originalInvoiceId], references: [id])
+  customerId        String?
+  reason            String
+  taxableAmount     Float
+  cgst              Float           @default(0)
+  sgst              Float           @default(0)
+  igst              Float           @default(0)
+  cess              Float           @default(0)
+  totalTax          Float
+  totalAmount       Float
+  status            String          @default("Issued")
+  createdBy         String?
+  linkedPaymentId   String?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  lines             DebitNoteLine[]
+}
+
+model DebitNoteLine {
+  id            String    @id @default(cuid())
+  debitNoteId   String
+  debitNote     DebitNote @relation(fields: [debitNoteId], references: [id], onDelete: Cascade)
+  description   String
+  hsnSac        String?
+  quantity      Float     @default(1)
+  rate          Float
+  taxableAmount Float
+  gstRate       Float
+  cgst          Float     @default(0)
+  sgst          Float     @default(0)
+  igst          Float     @default(0)
+  cess          Float     @default(0)
+  lineTotal     Float
+}
+
+// GST-05 — the single normalized reporting source, per the architecture
+// locked across GST-01 through GST-04: resolve -> calculate -> snapshot ->
+// ledger -> reports. References the original document by (documentType,
+// documentId) rather than owning/duplicating its business data — this table
+// is a reporting index, not a second source of truth. documentId is a plain
+// string, not an enforced FK: it points at one of five different tables
+// depending on documentType, which Prisma has no native polymorphic-relation
+// support for, so a loose reference is the correct mechanism here, not a
+// shortcut. Only INVOICE rows are populated so far (see billing.service.ts) —
+// CREDIT_NOTE/DEBIT_NOTE/REFUND/PURCHASE exist in the type vocabulary but
+// nothing writes them yet, matching GST-04's explicit deferral of the CN/DN
+// issuance workflow and the equivalent not-yet-decided question of how a
+// refund or purchase should map onto this ledger.
+model GstTransaction {
+  id             String   @id @default(cuid())
+  franchiseId    String?
+  documentType   String   // "INVOICE" | "CREDIT_NOTE" | "DEBIT_NOTE" | "REFUND" | "PURCHASE"
+  documentId     String
+  documentNumber String
+  documentDate   DateTime
+  returnPeriod   String   // "YYYY-MM", derived from documentDate — never client-supplied
+  sellerGstin    String?
+  buyerGstin     String?
+  buyerName      String?  // GST-07 — needed for GSTR-1's Customer Name column; the invoice snapshot has client name but the ledger didn't carry it until now
+  sellerState    String?
+  placeOfSupply  String?
+  supplyType     String?  // "B2B" | "B2C"
+  // GST-07 — a ledger row is now one (rate, HSN) group, not one aggregate
+  // per invoice (amends GST-05's original one-row-per-invoice granularity).
+  // GSTR-1's HSN-wise and rate-wise summaries are meaningless at
+  // aggregate-invoice granularity for a multi-rate invoice, so this had to
+  // change before GSTR-1 could be built correctly rather than approximately.
+  hsnSac         String?
+  gstRate        Float?
+  taxableValue   Float
+  cgst           Float    @default(0)
+  sgst           Float    @default(0)
+  igst           Float    @default(0)
+  cess           Float    @default(0)
+  // GST-08 — only meaningful for documentType='PURCHASE' rows (input tax);
+  // null for INVOICE/CREDIT_NOTE/DEBIT_NOTE (output tax, no ITC concept).
+  // Carried on the ledger row itself so GSTR-3B's input-tax-credit total
+  // never has to join back to PurchaseOrder to know eligibility.
+  itcEligible    Boolean?
+  // Mirrors the source document's own status (e.g. an invoice getting
+  // cancelled) — not an independently editable field on this ledger row.
+  status         String   @default("Active")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([franchiseId])
+  @@index([returnPeriod])
+  @@index([documentType, documentId])
 }
 
 // Race-safe invoice numbering (13.12): counter is the highest sequence number ever
@@ -201,6 +408,13 @@ model Service {
   status    String    @default("Active")
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
+  // GST-01 — `gst` above is already the applicable rate; these two are the
+  // only fields this model was missing for GST invoicing. hsnSac is a plain
+  // string (not an FK to HsnSacMaster) to match how other master-data
+  // references already work in this schema (e.g. Job/Invoice service line
+  // items are copied snapshots, not live foreign keys).
+  hsnSac        String?
+  taxApplicable Boolean @default(true)
 }
 
 model Franchise {
@@ -222,6 +436,11 @@ model Franchise {
   pinCode           String?
   licenseStatus     String?            @default("Active")
   canTransferLeads  Boolean            @default(false) // HQ grants Franchise Manager transfer permission
+  // GST-01 — franchise's own GST registration type ("Regular" | "Composition" |
+  // "Unregistered"). gstNumber/state above already existed and are reused as
+  // the seller GSTIN/state for invoice GST snapshots; this is the only new
+  // field this model needs.
+  gstRegistrationType String?
   isDeleted         Boolean            @default(false)
   deletedAt         DateTime?
   appointments      Appointment[]
@@ -231,6 +450,7 @@ model Franchise {
   employees         Employee[]
   inventory         Inventory[]
   inventoryRequests InventoryRequest[]
+  inventoryAdjustmentRequests InventoryAdjustmentRequest[]
   invoices          Invoice[]
   jobsList          Job[]
   leads             Lead[]
@@ -560,9 +780,43 @@ model InventoryRequest {
   priority          String?    @default("Medium")
   remarks           String?
   franchiseId       String?
+  // INV-05 — additive, nullable. Needed to detect and block an HQ_USER
+  // approving their own request (no franchiseId scope separates an HQ_USER
+  // from other HQ_USERs the way it does for franchise requesters). Legacy
+  // rows predating this column stay null, meaning the self-approval check
+  // simply cannot trigger for them — same "nullable, backward-compatible,
+  // no redesign" treatment as every other additive inventory field this
+  // engagement (InventoryMovement.franchiseId, InventoryAdjustmentRequest).
+  requestedById     String?
+  requestedBy       String?
   isDeleted         Boolean    @default(false)
   deletedAt         DateTime?
   franchise         Franchise? @relation(fields: [franchiseId], references: [id])
+}
+
+// INV-04 — a manual, single-location stock correction, deliberately not
+// modeled on InventoryRequest (a two-location HQ<->franchise transfer with
+// its own dispatch/receive steps that don't apply here). Shaped instead
+// after MaterialConsumption's request/approve/reject pattern: single-step,
+// stock only changes at approval, requester and approver always distinct.
+model InventoryAdjustmentRequest {
+  id            String    @id @default(cuid())
+  itemId        String
+  requestedQty  Int       // signed: positive adds stock, negative removes it
+  reason        String
+  status        String    @default("Pending") // Pending | Approved | Rejected | Cancelled
+  requestedById String?
+  requestedBy   String?
+  approvedById  String?
+  approvedBy    String?
+  approvedAt    DateTime?
+  rejectionNote String?
+  franchiseId   String?
+  isDeleted     Boolean   @default(false)
+  deletedAt     DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @default(now()) @updatedAt
+  franchise     Franchise? @relation(fields: [franchiseId], references: [id])
 }
 
 model Appointment {
@@ -647,12 +901,19 @@ model AuditLog {
 model InventoryMovement {
   id          String   @id @default(cuid())
   itemId      String
-  type        String   // "ADD", "REQUEST", "DISPATCH", "RECEIVE", "CONSUME", "ADJUST"
+  type        String   // "ADD", "ADJUST", "DISPATCH", "RECEIVE", "CONSUME", "PURCHASE_RECEIPT"
   reference   String   // e.g. "INV-001", "REQ-002"
   quantity    Int
   balance     Int
   performedBy String
   performedAt DateTime @default(now())
+  // INV-02 — additive, nullable. Populated on every new movement going
+  // forward (DISPATCH carries the *destination* franchise; every other
+  // type carries the affected item's own franchiseId; HQ-only movements
+  // are null). Historical rows predating this column stay null forever —
+  // callers must keep the itemId -> Inventory.franchiseId join as a
+  // fallback for those, never assume this column is populated.
+  franchiseId String?
 }
 
 model License {
@@ -692,12 +953,33 @@ model PriceMaster {
   status      String   @default("Active")
 }
 
+// GST-01 — this model already existed (name/percentage/franchiseId/status)
+// but was completely unwired anywhere in the codebase. Repurposed as the GST
+// rate master rather than creating a second, duplicate model: added
+// effective-dating so a rate change never retroactively alters an already-
+// issued invoice's stored GST snapshot (which reads the rate that was active
+// on the invoice's date, not TaxMaster's current value).
 model TaxMaster {
-  id          String   @id @default(cuid())
-  name        String
-  percentage  Float
-  franchiseId String?
-  status      String   @default("Active")
+  id            String    @id @default(cuid())
+  name          String
+  percentage    Float
+  franchiseId   String?
+  status        String    @default("Active")
+  effectiveFrom DateTime?
+  effectiveTo   DateTime?
+}
+
+// GST-01 — SAC/HSN code lookup. Kept independent of Service.hsnSac (a plain
+// string) rather than an enforced foreign key, consistent with how master
+// data is referenced elsewhere in this schema.
+model HsnSacMaster {
+  id             String    @id @default(cuid())
+  code           String    @unique
+  description    String
+  type           String    // "SAC" | "HSN"
+  defaultGstRate Float?
+  status         String    @default("Active")
+  createdAt      DateTime  @default(now())
 }
 
 model DiscountMaster {
@@ -747,6 +1029,28 @@ model LeaveRequest {
   createdAt    DateTime   @default(now())
   employee     Employee   @relation(fields: [employeeId], references: [id])
   franchise    Franchise? @relation(fields: [franchiseId], references: [id])
+}
+
+// REP-01C (D-REP5) — minimum viable dashboard widget configuration:
+// HQ-controlled visibility + display order only, no layout engine, no
+// per-franchise customization (explicitly out of scope per D-REP5). One
+// row per (dashboardType, widgetKey) pair; dashboardType matches the D-21
+// dashboard classes ("executive", "reception", "workshop", "qc",
+// "billing", "inventory") plus "franchise" for the canonical §16.4
+// Franchise Dashboard. A missing row for a given widgetKey means
+// "visible, default order" — callers merge against each dashboard's own
+// known widget-key list, so this table never needs to be pre-seeded.
+model DashboardWidgetConfig {
+  id            String   @id @default(cuid())
+  dashboardType String
+  widgetKey     String
+  visible       Boolean  @default(true)
+  order         Int      @default(0)
+  updatedBy     String?
+  updatedAt     DateTime @default(now()) @updatedAt
+  createdAt     DateTime @default(now())
+
+  @@unique([dashboardType, widgetKey])
 }
 
 model Callback {
@@ -1006,6 +1310,7 @@ model Vendor {
   phone      String?
   email      String?
   address    String?
+  state      String?   // GST-08 — needed alongside gstNumber to determine intra/inter-state on a purchase, same role Franchise/Customer.state already play for sales
   status     String          @default("Active")
   isDeleted  Boolean         @default(false)
   deletedAt  DateTime?
@@ -1032,6 +1337,61 @@ model PurchaseOrder {
   updatedAt      DateTime  @default(now()) @updatedAt
   isDeleted      Boolean   @default(false)
   deletedAt      DateTime?
+  // GST-08 — input-GST snapshot for the attached purchase invoice, same
+  // immutability principle as the sales-side Invoice snapshot (GST-01).
+  // Nullable throughout: existing purchase orders keep working with none of
+  // this populated. Nothing currently writes these fields or a matching
+  // GstTransaction(documentType='PURCHASE') row — deciding who resolves the
+  // vendor's GSTIN/state, how the GST breakdown gets computed, and what
+  // makes a line ITC-eligible is a business-workflow question, deferred the
+  // same way GST-04 deferred CN/DN issuance.
+  vendorGstin    String?
+  vendorState    String?
+  invoiceDate    DateTime?
+  hsnSac         String?    // simplified single-group snapshot, same limitation as Invoice.hsnSac — see PurchaseOrderLine for the real per-line breakdown
+  taxableValue   Float?
+  cgst           Float?
+  sgst           Float?
+  igst           Float?
+  cess           Float?
+  itcEligible    Boolean?
+  itcClaimed     Boolean   @default(false)
+  // Purchase GST/ITC foundation — snapshot at invoice-attachment time,
+  // mirroring Invoice.placeOfSupply/supplyType exactly (frozen so a later
+  // change to Vendor.state or the company's own GST config never alters an
+  // already-attached purchase invoice's classification). Reverse charge is
+  // explicitly out of scope for this phase — no field added for it; every
+  // purchase this system resolves GST for is treated as a standard (non-RCM)
+  // supply until a future phase decides otherwise.
+  placeOfSupply  String?
+  supplyType     String?    // "B2B" | "B2C"
+  lines          PurchaseOrderLine[]
+}
+
+// Purchase GST/ITC foundation — additive alongside the existing `items` Json
+// field on PurchaseOrder, which is left untouched for backward compatibility
+// (nothing currently reads/writes it changes here). Mirrors InvoiceLine's
+// shape exactly: one row per GST rate/HSN group on the purchase invoice.
+// `sku`/`productRef` is a plain reference, not an enforced FK — same
+// convention as InvoiceLine.serviceId and Job.services (matched by value,
+// not id).
+model PurchaseOrderLine {
+  id              String        @id @default(cuid())
+  purchaseOrderId String
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  description     String
+  sku             String?
+  hsnSac          String?
+  quantity        Float         @default(1)
+  unitPrice       Float
+  taxableAmount   Float
+  gstRate         Float
+  cgst            Float         @default(0)
+  sgst            Float         @default(0)
+  igst            Float         @default(0)
+  cess            Float         @default(0)
+  lineTotal       Float
+  itcEligible     Boolean       @default(false)
 }
 
 // ──────────────────────────────────────────────────────────────

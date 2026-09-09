@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { WarrantyController } from "../controller/warranty.controller.js";
 import { authenticate } from "../../../middleware/auth.middleware.js";
+import { validate } from "../../../middleware/validate.middleware.js";
+import { createWarrantySchema } from "../validation/warranty.validation.js";
 
 export const warrantyRouter = Router();
 const controller = new WarrantyController();
@@ -13,8 +15,10 @@ warrantyRouter.get("/", controller.getWarranties);
 // GET /api/warranties/:id - Get single warranty by ID
 warrantyRouter.get("/:id", controller.getWarrantyById);
 
-// POST /api/warranties - Create a warranty manually
-warrantyRouter.post("/", controller.createWarranty);
+// POST /api/warranties - Create a warranty manually (WTY-01C/D-W2: requires
+// a qualifying invoiceId; customerId/vehicleNo are no longer accepted from
+// the client, derived from the invoice instead)
+warrantyRouter.post("/", validate(createWarrantySchema), controller.createWarranty);
 
 // POST /api/warranties/generate-from-invoice/:invoiceId - Generate warranty(s) from a completed invoice
 warrantyRouter.post("/generate-from-invoice/:invoiceId", controller.generateFromInvoice);

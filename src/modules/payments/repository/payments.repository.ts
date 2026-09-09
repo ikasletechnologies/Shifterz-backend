@@ -1,11 +1,19 @@
 import { db } from '../../../lib/db.js';
 import type { CreatePaymentDTO } from '../validation/payments.validation.js';
 
+type FranchiseScopeWhere = { franchiseId?: string | null };
+
 export class PaymentsRepository {
-  async findAll() {
+  async findAll(scopeWhere: FranchiseScopeWhere = {}) {
     return db.payment.findMany({
-      where: { isDeleted: false },
+      where: { isDeleted: false, ...scopeWhere },
       orderBy: { date: "desc" },
+    });
+  }
+
+  async findById(id: string, scopeWhere: FranchiseScopeWhere = {}) {
+    return db.payment.findFirst({
+      where: { id, isDeleted: false, ...scopeWhere },
     });
   }
 
@@ -36,6 +44,7 @@ export class PaymentsRepository {
     data: CreatePaymentDTO,
     clientName: string,
     receiptNumber: string,
+    franchiseId: string | null,
     outstandingBalance?: number
   ) {
     const parseDate = (d?: string | null) => {
@@ -64,6 +73,7 @@ export class PaymentsRepository {
         originalReceiptRef: data.originalReceiptRef || null,
         approvedBy: data.approvedBy || null,
         createdBy: data.createdBy || data.receivedBy || null,
+        franchiseId,
       },
     });
   }
@@ -76,8 +86,8 @@ export class PaymentsRepository {
     return db.payment.findMany({ where: { jobId, isDeleted: false } });
   }
 
-  async findPaymentsByCustomerId(customerId: string) {
-    return db.payment.findMany({ where: { customerId, isDeleted: false }, orderBy: { date: "desc" } });
+  async findPaymentsByCustomerId(customerId: string, scopeWhere: FranchiseScopeWhere = {}) {
+    return db.payment.findMany({ where: { customerId, isDeleted: false, ...scopeWhere }, orderBy: { date: "desc" } });
   }
 
   async updateInvoiceStatus(id: string, status: string) {

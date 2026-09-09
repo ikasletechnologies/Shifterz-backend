@@ -30,6 +30,8 @@ export class ServiceRepository {
         warranty: data.warranty || "1 Year",
         desc: data.desc || "",
         status: data.status || "Active",
+        hsnSac: data.hsnSac || null,
+        taxApplicable: data.taxApplicable ?? true,
       }
     });
   }

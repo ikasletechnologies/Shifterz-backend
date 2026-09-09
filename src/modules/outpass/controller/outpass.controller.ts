@@ -43,7 +43,7 @@ export class OutpassController {
     try {
       const id = String(req.params.id);
       const oldValue = await db.outPass.findUnique({ where: { id } });
-      const result = await this.service.updateOutpass(id, req.body);
+      const result = await this.service.updateOutpass(id, req.body, req.user);
       await logAudit({
         module: "OUTPASS",
         recordId: id,
@@ -67,7 +67,7 @@ export class OutpassController {
       const userId = req.user?.id || "unknown";
       const userName = req.user?.name || "HQ Admin";
       const oldValue = await db.outPass.findUnique({ where: { id } });
-      const result = await this.service.approveOutpass(id, userId, userName);
+      const result = await this.service.approveOutpass(id, userId, userName, req.user);
       await logAudit({
         module: "OUTPASS",
         recordId: id,
@@ -89,7 +89,7 @@ export class OutpassController {
     try {
       const id = String(req.params.id);
       const oldValue = await db.outPass.findUnique({ where: { id } });
-      const result = await this.service.rejectOutpass(id);
+      const result = await this.service.rejectOutpass(id, req.user);
       await logAudit({
         module: "OUTPASS",
         recordId: id,

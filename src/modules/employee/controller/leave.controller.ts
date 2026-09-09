@@ -46,7 +46,7 @@ export class LeaveController {
       const id = String(req.params.id);
       const role = req.user?.role || "UNKNOWN";
       const franchiseId = req.user?.franchiseId || undefined;
-      const result = await this.service.updateLeaveStatus(id, "Approved", role, franchiseId);
+      const result = await this.service.updateLeaveStatus(id, "Approved", role, franchiseId, req.user?.id || "");
 
       await logAudit({
         module: "LEAVE",
@@ -71,7 +71,7 @@ export class LeaveController {
       const id = String(req.params.id);
       const role = req.user?.role || "UNKNOWN";
       const franchiseId = req.user?.franchiseId || undefined;
-      const result = await this.service.updateLeaveStatus(id, "Rejected", role, franchiseId);
+      const result = await this.service.updateLeaveStatus(id, "Rejected", role, franchiseId, req.user?.id || "");
 
       await logAudit({
         module: "LEAVE",

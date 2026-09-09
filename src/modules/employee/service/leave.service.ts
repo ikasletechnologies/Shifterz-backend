@@ -40,9 +40,16 @@ export class LeaveService {
     });
   }
 
-  async updateLeaveStatus(id: string, status: string, userRole: string, userFranchiseId?: string) {
+  // D-15 — self-approval is never allowed, regardless of role or franchise
+  // match: submitting one's own leave request does not grant approval
+  // authority over it.
+  async updateLeaveStatus(id: string, status: string, userRole: string, userFranchiseId: string | undefined, userId: string) {
     const leave = await db.leaveRequest.findUnique({ where: { id } });
     if (!leave) throw new NotFoundError("Leave request not found");
+
+    if (leave.employeeId === userId) {
+      throw new ValidationError("You cannot approve or reject your own leave request.");
+    }
 
     // Franchise admins can only approve their own employees' leaves
     if (userRole !== "SUPER_ADMIN" && userRole !== "HQ_USER" && leave.franchiseId !== userFranchiseId) {

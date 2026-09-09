@@ -1,12 +1,14 @@
 import { db } from '../../../lib/db.js';
 
+type FranchiseScopeWhere = { franchiseId?: string | null };
+
 export class LeadRepository {
   async findAll(tenantFilter: any) {
     return db.lead.findMany({ where: tenantFilter, orderBy: { date: "desc" } });
   }
 
-  async findById(id: string) {
-    return db.lead.findUnique({ where: { id } });
+  async findById(id: string, scopeWhere: FranchiseScopeWhere = {}) {
+    return db.lead.findFirst({ where: { id, ...scopeWhere } });
   }
 
   async create(data: any) {

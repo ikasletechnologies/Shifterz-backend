@@ -1,10 +1,15 @@
 import type { Response, NextFunction } from 'express';
 import { ReportService } from '../service/report.service.js';
+import { DashboardWidgetService } from '../service/dashboardWidget.service.js';
 import type { AuthRequest } from '../../../middleware/auth.middleware.js';
 import { logAudit } from '../../../shared/services/audit.service.js';
+import { resolveDataScope } from '../../../shared/scope/dataScope.js';
 
 export class ReportController {
-  constructor(private readonly service: ReportService = new ReportService()) {}
+  constructor(
+    private readonly service: ReportService = new ReportService(),
+    private readonly widgetService: DashboardWidgetService = new DashboardWidgetService()
+  ) {}
 
   private async auditExport(req: AuthRequest, reportName: string, queryParams: any) {
     if (!req.user) return;
@@ -20,13 +25,26 @@ export class ReportController {
     });
   }
 
+  // GST-11 — delegates to the single canonical scope rule (Phase 1A) instead
+  // of reimplementing the SUPER_ADMIN/HQ_USER-unrestricted check locally, so
+  // this can never drift from what every other module already enforces.
   private resolveScope(req: AuthRequest): { franchiseId?: string } {
-    const userRole = req.user?.role || 'UNKNOWN';
-    let franchiseId = req.user?.franchiseId || undefined;
-    if (userRole === 'SUPER_ADMIN' || userRole === 'HQ_USER') {
-      franchiseId = req.query.franchiseId ? String(req.query.franchiseId) : undefined;
+    const scope = resolveDataScope({ role: req.user?.role, franchiseId: req.user?.franchiseId ?? null });
+    if (scope.unrestricted) {
+      return { franchiseId: req.query.franchiseId ? String(req.query.franchiseId) : undefined };
     }
-    return { franchiseId };
+    return { franchiseId: scope.franchiseId ?? undefined };
+  }
+
+  // REP-01C (D-REP6) — "authorized HQ opt-in": the caller must be the same
+  // unrestricted (SUPER_ADMIN/HQ_USER) tier resolveScope() already grants a
+  // cross-franchise view to, matching D-REP6's actual wording rather than
+  // inventing a separate action for it. A franchise-scoped caller passing
+  // ?includeDeleted=true is silently ignored (treated as false), not
+  // errored — the endpoint still works, just without the opt-in.
+  private canIncludeDeleted(req: AuthRequest, query: Record<string, string>): boolean {
+    const scope = resolveDataScope({ role: req.user?.role, franchiseId: req.user?.franchiseId ?? null });
+    return scope.unrestricted && query.includeDeleted === 'true';
   }
 
   // ─── Existing ERP Summary ─────────────────────────────────────────────────
@@ -39,6 +57,43 @@ export class ReportController {
     } catch (error) {
       next(error);
     }
+  };
+
+  // ─── Dashboard Widget Configuration (D-REP5) ─────────────────────────────────
+
+  getDashboardWidgetConfig = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const dashboardType = String(req.query.dashboardType || '');
+      if (!dashboardType) {
+        res.status(400).json({ error: 'Query param "dashboardType" is required.' });
+        return;
+      }
+      const config = await this.widgetService.getConfig(dashboardType);
+      res.json({ dashboardType, widgets: config });
+    } catch (error) { next(error); }
+  };
+
+  updateDashboardWidgetConfig = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const { dashboardType, widgets } = req.body as { dashboardType?: string; widgets?: { widgetKey: string; visible: boolean; order: number }[] };
+      if (!dashboardType || !Array.isArray(widgets)) {
+        res.status(400).json({ error: 'Body must include "dashboardType" (string) and "widgets" (array of {widgetKey, visible, order}).' });
+        return;
+      }
+      const updatedBy = req.user?.username || req.user?.name || req.user?.id || 'unknown';
+      const config = await this.widgetService.updateConfig(dashboardType, widgets, updatedBy);
+      await logAudit({
+        module: 'Dashboard Widget Config',
+        recordId: dashboardType,
+        action: 'UPDATE',
+        userId: updatedBy,
+        branchId: req.user?.franchiseId || null,
+        ipAddress: req.ip || String(req.headers['x-forwarded-for'] || ''),
+        device: req.headers['user-agent'] || 'Unknown Device',
+        newValue: { dashboardType, widgets },
+      });
+      res.json({ dashboardType, widgets: config });
+    } catch (error) { next(error); }
   };
 
   // ─── Billing Reports (§13.13) ───────────────────────────────────────────────
@@ -97,12 +152,39 @@ export class ReportController {
     } catch (error) { next(error); }
   };
 
+  getGstr1Report = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const { franchiseId } = this.resolveScope(req);
+      const { from, to } = req.query as Record<string, string>;
+      const data = await this.service.getGstr1Report(franchiseId, from, to);
+      res.json(data);
+    } catch (error) { next(error); }
+  };
+
+  getGstr3bReport = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const { franchiseId } = this.resolveScope(req);
+      const { from, to } = req.query as Record<string, string>;
+      const data = await this.service.getGstr3bReport(franchiseId, from, to);
+      res.json(data);
+    } catch (error) { next(error); }
+  };
+
+  getGstr2bReport = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const { franchiseId } = this.resolveScope(req);
+      const { from, to } = req.query as Record<string, string>;
+      const data = await this.service.getGstr2bReport(franchiseId, from, to);
+      res.json(data);
+    } catch (error) { next(error); }
+  };
+
   exportBillingCsv = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const { franchiseId } = this.resolveScope(req);
       const { type, from, to } = req.query as Record<string, string>;
       if (!type) {
-        res.status(400).json({ error: 'Query param "type" is required. Valid types: register, daily-sales, monthly-sales, customer-wise, franchise-wise, gst-summary' });
+        res.status(400).json({ error: 'Query param "type" is required. Valid types: register, daily-sales, monthly-sales, customer-wise, franchise-wise, gst-summary, gstr1, gstr3b, gstr2b' });
         return;
       }
       const { csv, filename } = await this.service.exportBillingCsv(type, franchiseId, from, to);
@@ -230,12 +312,39 @@ export class ReportController {
     } catch (error) { next(error); }
   };
 
+  // REP-01C (§16.5) — the three previously-missing Operational Reports.
+  getJobCardRegisterReport = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const { franchiseId } = this.resolveScope(req);
+      const query = req.query as Record<string, string>;
+      const { from, to } = query;
+      const data = await this.service.getJobCardRegisterReport(franchiseId, from, to, this.canIncludeDeleted(req, query));
+      res.json(data);
+    } catch (error) { next(error); }
+  };
+
+  getWorkshopStatusReport = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const { franchiseId } = this.resolveScope(req);
+      const data = await this.service.getWorkshopStatusReport(franchiseId);
+      res.json(data);
+    } catch (error) { next(error); }
+  };
+
+  getVehicleLiveStatusReport = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const { franchiseId } = this.resolveScope(req);
+      const data = await this.service.getVehicleLiveStatusReport(franchiseId);
+      res.json(data);
+    } catch (error) { next(error); }
+  };
+
   exportWorkshopCsv = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const { franchiseId } = this.resolveScope(req);
       const { type, from, to } = req.query as Record<string, string>;
       if (!type) {
-        res.status(400).json({ error: 'Query param "type" is required. Valid types: progress, workload, completed, pending, materials, delays' });
+        res.status(400).json({ error: 'Query param "type" is required. Valid types: progress, workload, completed, pending, materials, delays, job-card-register, vehicle-live-status' });
         return;
       }
       const { csv, filename } = await this.service.exportWorkshopCsv(type, franchiseId, from, to);
@@ -341,7 +450,7 @@ export class ReportController {
     } catch (error) { next(error); }
   };
 
-  // ─── HQ Summary (§16.3 & §16.4) ──────────────────────────────────────────────
+  // ─── HQ Summary (§16.3) ──────────────────────────────────────────────────────
   getHQSummary = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const { franchiseId } = this.resolveScope(req);
@@ -350,12 +459,34 @@ export class ReportController {
     } catch (error) { next(error); }
   };
 
+  // ─── Franchise Dashboard (§16.4) ─────────────────────────────────────────────
+  // REP-01C (D-REP3) — canonical franchise dashboard. resolveScope() already
+  // gives the right answer for both cases: a franchise-scoped actor's own
+  // franchiseId always wins (a client-supplied ?franchiseId= is ignored for
+  // them, same as every other report), while an unrestricted HQ actor may
+  // pass ?franchiseId= to inspect a specific franchise. Unlike getHQSummary
+  // (which treats "no franchiseId" as "all franchises"), a franchise
+  // dashboard is inherently about exactly one franchise, so an HQ actor
+  // must supply one.
+  getFranchiseDashboard = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const { franchiseId } = this.resolveScope(req);
+      if (!franchiseId) {
+        res.status(400).json({ error: 'franchiseId is required to view a franchise dashboard.' });
+        return;
+      }
+      const data = await this.service.getFranchiseDashboardReport(franchiseId);
+      res.json(data);
+    } catch (error) { next(error); }
+  };
+
   // ─── CRM Reports (§16.6) ─────────────────────────────────────────────────────
   getLeadRegisterReport = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const { franchiseId } = this.resolveScope(req);
-      const { from, to } = req.query as Record<string, string>;
-      const data = await this.service.getLeadRegisterReport(franchiseId, from, to);
+      const query = req.query as Record<string, string>;
+      const { from, to } = query;
+      const data = await this.service.getLeadRegisterReport(franchiseId, from, to, this.canIncludeDeleted(req, query));
       res.json(data);
     } catch (error) { next(error); }
   };
@@ -396,6 +527,24 @@ export class ReportController {
     } catch (error) { next(error); }
   };
 
+  // REP-01C (§16.6) — previously-missing CRM reports.
+  getReferralReport = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const { franchiseId } = this.resolveScope(req);
+      const { from, to } = req.query as Record<string, string>;
+      const data = await this.service.getReferralReport(franchiseId, from, to);
+      res.json(data);
+    } catch (error) { next(error); }
+  };
+
+  getServiceDueFollowUpReport = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const { franchiseId } = this.resolveScope(req);
+      const data = await this.service.getServiceDueFollowUpReport(franchiseId);
+      res.json(data);
+    } catch (error) { next(error); }
+  };
+
   exportCrmCsv = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const { franchiseId } = this.resolveScope(req);
@@ -412,7 +561,8 @@ export class ReportController {
   getCustomerRegisterReport = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const { franchiseId } = this.resolveScope(req);
-      const data = await this.service.getCustomerRegisterReport(franchiseId);
+      const query = req.query as Record<string, string>;
+      const data = await this.service.getCustomerRegisterReport(franchiseId, this.canIncludeDeleted(req, query));
       res.json(data);
     } catch (error) { next(error); }
   };
@@ -479,6 +629,27 @@ export class ReportController {
       const { franchiseId } = this.resolveScope(req);
       const { from, to } = req.query as Record<string, string>;
       const data = await this.service.getRevenueContributionReport(franchiseId, from, to);
+      res.json(data);
+    } catch (error) { next(error); }
+  };
+
+  // REP-01C — canonical Leave Report (§16.8's missing report).
+  getLeaveReport = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const { franchiseId } = this.resolveScope(req);
+      const { from, to } = req.query as Record<string, string>;
+      const data = await this.service.getLeaveReport(franchiseId, from, to);
+      res.json(data);
+    } catch (error) { next(error); }
+  };
+
+  // REP-01C — canonical Employee Performance Report (§16.8's missing
+  // report), consolidating the hq.ts/leadReport.service.ts duplicates.
+  getEmployeePerformanceReport = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const { franchiseId } = this.resolveScope(req);
+      const { timeframe } = req.query as Record<string, string>;
+      const data = await this.service.getEmployeePerformanceReport(franchiseId, timeframe);
       res.json(data);
     } catch (error) { next(error); }
   };
@@ -580,7 +751,35 @@ export class ReportController {
   getStockLedgerReport = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const { franchiseId } = this.resolveScope(req);
-      const data = await this.service.getStockLedgerReport(franchiseId);
+      const { from, to } = req.query as Record<string, string>;
+      const data = await this.service.getStockLedgerReport(franchiseId, from, to);
+      res.json(data);
+    } catch (error) { next(error); }
+  };
+
+  getStockMovementReport = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const { franchiseId } = this.resolveScope(req);
+      const { from, to } = req.query as Record<string, string>;
+      const data = await this.service.getStockMovementReport(franchiseId, from, to);
+      res.json(data);
+    } catch (error) { next(error); }
+  };
+
+  getStockRequestReport = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const { franchiseId } = this.resolveScope(req);
+      const { from, to } = req.query as Record<string, string>;
+      const data = await this.service.getStockRequestReport(franchiseId, from, to);
+      res.json(data);
+    } catch (error) { next(error); }
+  };
+
+  getDispatchReport = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const { franchiseId } = this.resolveScope(req);
+      const { from, to } = req.query as Record<string, string>;
+      const data = await this.service.getDispatchReport(franchiseId, from, to);
       res.json(data);
     } catch (error) { next(error); }
   };
@@ -588,9 +787,9 @@ export class ReportController {
   exportInventoryCsv = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const { franchiseId } = this.resolveScope(req);
-      const { type = 'register' } = req.query as Record<string, string>;
-      const { csv, filename } = await this.service.exportInventoryCsv(type, franchiseId);
-      await this.auditExport(req, 'Inventory', { type, franchiseId });
+      const { type = 'register', from, to } = req.query as Record<string, string>;
+      const { csv, filename } = await this.service.exportInventoryCsv(type, franchiseId, from, to);
+      await this.auditExport(req, 'Inventory', { type, franchiseId, from, to });
       res.setHeader('Content-Type', 'text/csv');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
       res.send(csv);

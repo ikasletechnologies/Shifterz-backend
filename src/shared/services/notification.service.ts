@@ -356,7 +356,8 @@ export async function notifyWorkCompletion(opts: {
  * Sweep: Upcoming Delivery / Delayed Jobs
  * Not event-triggered — meant to be invoked periodically (e.g. by an external
  * scheduler hitting a controller endpoint), same convention as
- * dispatchCustomerReminders below.
+ * dispatchQcAlerts below and CustomerService.dispatchCustomerReminders
+ * (the live implementation of that sweep lives there, not in this file).
  * - Jobs due within the next 2 hours (not yet completed) → notify assigned employee.
  * - Jobs already past their estimated completion (not yet completed) → notify managers.
  */
@@ -555,56 +556,4 @@ export async function dispatchQcAlerts() {
   }
 
   return { highFailureFranchises, delayedCount, multiReworkCount };
-}
-
-// ─── Customer Lifecycle Reminders (existing - preserved) ─────────────────────
-
-export async function dispatchCustomerReminders() {
-  const now = new Date();
-  const today = now.toISOString().slice(0, 10);
-
-  // Service Due
-  const dueReminders = await db.serviceReminder.findMany({
-    where: { scheduledDate: { lte: now }, status: 'Pending', isDeleted: false },
-    include: { customer: true },
-  });
-  for (const r of dueReminders) {
-    const c = r.customer;
-    const msg = `Dear ${c.name}, your vehicle ${r.vehicleNo} is due for ${r.reminderType}. Please book your appointment.`;
-    if (c.phone) await sendWhatsApp(c.phone, msg).catch(console.error);
-    if (c.email) await sendEmail(c.email, `Service Due – ${r.vehicleNo}`, msg).catch(console.error);
-    await db.serviceReminder.update({ where: { id: r.id }, data: { status: 'Sent' } }).catch(console.error);
-  }
-
-  // Warranty Expiry (7 days ahead)
-  const warnDate = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-  const expiringWarranties = await db.warranty.findMany({
-    where: { expiryDate: { gte: now, lte: warnDate }, status: 'Active', isDeleted: false },
-    include: { customer: true },
-  });
-  for (const w of expiringWarranties) {
-    const c = w.customer;
-    const expStr = w.expiryDate.toLocaleDateString('en-IN');
-    const msg = `Dear ${c.name}, your warranty for ${w.itemName} (Vehicle: ${w.vehicleNo}) expires on ${expStr}. Please contact us.`;
-    if (c.phone) await sendWhatsApp(c.phone, msg).catch(console.error);
-    if (c.email) await sendEmail(c.email, `Warranty Expiring Soon – ${w.vehicleNo}`, msg).catch(console.error);
-  }
-
-  // Birthdays
-  const [mm, dd] = [now.getMonth() + 1, now.getDate()];
-  const allCustomers = await db.customer.findMany({
-    where: { isDeleted: false, dob: { not: null } },
-    select: { name: true, phone: true, email: true, dob: true },
-  });
-  for (const c of allCustomers) {
-    if (!c.dob) continue;
-    const d = new Date(c.dob);
-    if (d.getMonth() + 1 === mm && d.getDate() === dd) {
-      const msg = `Happy Birthday ${c.name}! 🎂 Wishing you a wonderful day. Thank you for being a valued customer.`;
-      if (c.phone) await sendWhatsApp(c.phone, msg).catch(console.error);
-      if (c.email) await sendEmail(c.email, 'Happy Birthday!', msg).catch(console.error);
-    }
-  }
-
-  return { dispatched: dueReminders.length + expiringWarranties.length };
 }

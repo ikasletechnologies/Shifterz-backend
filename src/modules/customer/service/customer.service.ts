@@ -12,8 +12,15 @@ import type {
 import { generateUid } from '../../../shared/utils/idGenerator.js';
 import { db } from '../../../lib/db.js';
 import { sendEmail, sendWhatsApp, notifyManagers, sendNotification } from '../../../shared/services/notification.service.js';
+import { resolveDataScope, isWithinScope, type ScopeActor } from '../../../shared/scope/dataScope.js';
+import { WarrantyRepository } from '../../warranty/repository/warranty.repository.js';
+import { NotFoundError } from '../../../shared/errors/NotFoundError.js';
+import { ReportService } from '../../report/service/report.service.js';
 
 export class CustomerService {
+  private readonly warrantyRepository = new WarrantyRepository();
+  private readonly reportService = new ReportService();
+
   constructor(private readonly repository: CustomerRepository = new CustomerRepository()) {}
 
   async getCustomers(tenantFilter: any) {
@@ -77,15 +84,34 @@ export class CustomerService {
     return this.repository.deleteVehicle(vehicleId);
   }
 
-  // Warranty Management
-  async getWarranties(customerId: string) {
-    await this.getCustomerById(customerId);
+  // WTY-01A (Fix 2) — this path had no franchise scoping at all: any
+  // authenticated user could read or create warranties for any customer,
+  // regardless of franchise. getCustomerById itself isn't actor-aware (used
+  // broadly elsewhere in this file), so scope is checked narrowly here
+  // against the fetched customer's own franchiseId, without changing that
+  // shared method's signature. A 404 (not 403) is returned for an
+  // out-of-scope customer, matching this codebase's established
+  // don't-confirm-existence convention.
+  async getWarranties(customerId: string, actor?: ScopeActor) {
+    const customer = await this.getCustomerById(customerId);
+    if (!isWithinScope(resolveDataScope(actor), customer.franchiseId)) {
+      throw new NotFoundError(`Customer with ID ${customerId} not found`);
+    }
     return this.repository.getWarranties(customerId);
   }
 
-  async addWarranty(customerId: string, data: CreateWarrantyDTO) {
-    await this.getCustomerById(customerId);
-    return this.repository.addWarranty(customerId, data);
+  // WTY-01A (Fix 1) — this path used to create a Warranty with no
+  // warrantyNo at all. Now reuses the exact same allocator
+  // (WarrantyRepository.allocateWarrantyNo) WarrantyService.
+  // generateFromInvoice already uses, rather than a second numbering
+  // mechanism.
+  async addWarranty(customerId: string, data: CreateWarrantyDTO, actor?: ScopeActor) {
+    const customer = await this.getCustomerById(customerId);
+    if (!isWithinScope(resolveDataScope(actor), customer.franchiseId)) {
+      throw new NotFoundError(`Customer with ID ${customerId} not found`);
+    }
+    const warrantyNo = await this.warrantyRepository.allocateWarrantyNo();
+    return this.repository.addWarranty(customerId, data, warrantyNo);
   }
 
   // Service Reminders
@@ -694,31 +720,37 @@ export class CustomerService {
         }));
         return helperToCSV(data, ['Warranty ID', 'Customer Name', 'Vehicle No', 'Item Name', 'Start Date', 'Expiry Date', 'Status', 'Duration (Days)']);
       }
+      // REP-01C (D-REP1/D-REP2) — these two cases previously queried
+      // db.serviceReminder/db.referral directly with NO franchiseId filter
+      // at all (a real cross-franchise data leak on export, unlike most of
+      // this switch which at least spreads ...tenantFilter). They now
+      // delegate to the canonical, correctly-scoped
+      // ReportService.getServiceDueFollowUpReport/getReferralReport (§16.6)
+      // added this phase, and adapt the result back into this endpoint's
+      // existing human-readable CSV column shape so the response contract
+      // is unchanged for any existing consumer.
       case 'service_due': {
-        const list = await db.serviceReminder.findMany({
-          where: { isDeleted: false },
-          include: { customer: true }
-        });
-        const data = list.map(sr => ({
+        const franchiseId = tenantFilter?.franchiseId as string | undefined;
+        const rows = await this.reportService.getServiceDueFollowUpReport(franchiseId);
+        const data = rows.map(sr => ({
           'Reminder ID': sr.id,
-          'Customer Name': sr.customer.name,
+          'Customer Name': sr.customerName,
           'Vehicle No': sr.vehicleNo,
           'Reminder Type': sr.reminderType,
-          'Scheduled Date': sr.scheduledDate.toISOString(),
+          'Scheduled Date': sr.scheduledDate,
           'Status': sr.status,
-          'Notes': sr.notes || ''
+          'Notes': sr.notes
         }));
         return helperToCSV(data, ['Reminder ID', 'Customer Name', 'Vehicle No', 'Reminder Type', 'Scheduled Date', 'Status', 'Notes']);
       }
       case 'referral_report': {
-        const list = await db.referral.findMany({
-          where: { isDeleted: false }
-        });
-        const data = list.map(r => ({
+        const franchiseId = tenantFilter?.franchiseId as string | undefined;
+        const rows = await this.reportService.getReferralReport(franchiseId);
+        const data = rows.map(r => ({
           'Referral ID': r.id,
           'Referring Customer': r.referringCustomer,
           'Referred Name': r.referredName,
-          'Referral Date': r.referralDate.toISOString(),
+          'Referral Date': r.referralDate,
           'Status': r.status,
           'Reward Points': r.rewardPointsApplied
         }));
