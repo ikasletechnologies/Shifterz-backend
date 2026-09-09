@@ -81,6 +81,50 @@ export class EmployeeService {
     });
   }
 
+  // EPB 2.3 licensing — the single canonical license-limit check (1 Super
+  // Admin, 6 HQ users, 1 Franchise Admin + 6 users per franchise). Every
+  // employee-creation path, direct or via an approved transfer request, must
+  // call this rather than re-deriving its own count/limit logic.
+  async assertLicenseCapacity(role: string, franchiseId: string | null): Promise<void> {
+    let license = null;
+    if (franchiseId) {
+      license = await db.license.findFirst({
+        where: { organizationId: franchiseId, status: "Active" }
+      });
+    }
+
+    const limitFranchiseUsers = license ? license.maxFranchiseUsers : 6;
+    const limitFranchiseAdmins = license ? license.maxFranchiseAdmins : 1;
+    const limitHQUsers = license ? license.maxHQUsers : 6;
+    const limitSuperAdmins = license ? license.maxSuperAdmins : 1;
+
+    const roleToCheck = role || "EMPLOYEE";
+
+    if (roleToCheck === "SUPER_ADMIN") {
+      const count = await db.employee.count({ where: { role: "SUPER_ADMIN", isDeleted: false } });
+      if (count >= limitSuperAdmins) {
+        throw new ApiError(403, `License limit reached. Maximum ${limitSuperAdmins} Super Administrator allowed.`);
+      }
+    } else if (roleToCheck === "HQ_USER") {
+      const count = await db.employee.count({ where: { role: "HQ_USER", isDeleted: false } });
+      if (count >= limitHQUsers) {
+        throw new ApiError(403, `License limit reached. Maximum ${limitHQUsers} HQ Users allowed.`);
+      }
+    } else if (franchiseId) {
+      if (roleToCheck === "FRANCHISE_ADMIN") {
+        const count = await db.employee.count({ where: { franchiseId, role: "FRANCHISE_ADMIN", isDeleted: false } });
+        if (count >= limitFranchiseAdmins) {
+          throw new ApiError(403, `License limit reached. Maximum ${limitFranchiseAdmins} Franchise Administrator allowed.`);
+        }
+      } else {
+        const count = await db.employee.count({ where: { franchiseId, isDeleted: false } });
+        if (count >= limitFranchiseUsers) {
+          throw new ApiError(403, `License limit reached. Maximum ${limitFranchiseUsers} users allowed per franchise.`);
+        }
+      }
+    }
+  }
+
   async createEmployee(data: CreateEmployeeDTO, userRole: string, userFranchiseId?: string, isTechnicianRoute = false) {
     let franchiseId: string | null = data.franchiseId || null;
 
@@ -109,19 +153,6 @@ export class EmployeeService {
       }
     }
 
-    // Dynamic licensing enforcement
-    let license = null;
-    if (franchiseId) {
-      license = await db.license.findFirst({
-        where: { organizationId: franchiseId, status: "Active" }
-      });
-    }
-
-    const limitFranchiseUsers = license ? license.maxFranchiseUsers : 6;
-    const limitFranchiseAdmins = license ? license.maxFranchiseAdmins : 1;
-    const limitHQUsers = license ? license.maxHQUsers : 6;
-    const limitSuperAdmins = license ? license.maxSuperAdmins : 1;
-
     const roleToCheck = data.role || (isTechnicianRoute ? "TECHNICIAN" : "EMPLOYEE");
 
     // Phase 0.1 — only an existing Super Administrator may create another
@@ -132,29 +163,10 @@ export class EmployeeService {
       throw new ApiError(403, "Only a Super Administrator can create a Super Administrator account.");
     }
 
-    if (roleToCheck === "SUPER_ADMIN") {
-      const count = await db.employee.count({ where: { role: "SUPER_ADMIN", isDeleted: false } });
-      if (count >= limitSuperAdmins) {
-        throw new ApiError(403, `License limit reached. Maximum ${limitSuperAdmins} Super Administrator allowed.`);
-      }
-    } else if (roleToCheck === "HQ_USER") {
-      const count = await db.employee.count({ where: { role: "HQ_USER", isDeleted: false } });
-      if (count >= limitHQUsers) {
-        throw new ApiError(403, `License limit reached. Maximum ${limitHQUsers} HQ Users allowed.`);
-      }
-    } else if (franchiseId) {
-      if (roleToCheck === "FRANCHISE_ADMIN") {
-        const count = await db.employee.count({ where: { franchiseId, role: "FRANCHISE_ADMIN", isDeleted: false } });
-        if (count >= limitFranchiseAdmins) {
-          throw new ApiError(403, `License limit reached. Maximum ${limitFranchiseAdmins} Franchise Administrator allowed.`);
-        }
-      } else {
-        const count = await db.employee.count({ where: { franchiseId, isDeleted: false } });
-        if (count >= limitFranchiseUsers) {
-          throw new ApiError(403, `License limit reached. Maximum ${limitFranchiseUsers} users allowed per franchise.`);
-        }
-      }
-    }
+    // EPB 2.3 — single canonical license-limit check, also reused by
+    // TransferService.approveTransfer so employee creation via an approved
+    // transfer request can't bypass the same caps a direct create goes through.
+    await this.assertLicenseCapacity(roleToCheck, franchiseId);
 
     const rawPassword = data.password || (isTechnicianRoute ? "tech123" : null);
     const hashedPassword = rawPassword ? await bcrypt.hash(rawPassword, 10) : null;

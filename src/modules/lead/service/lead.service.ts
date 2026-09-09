@@ -234,12 +234,18 @@ export class LeadService {
         franchiseId,
       });
     } else if (!customer.convertedLeadId) {
-      // Existing customer by phone — update the back-link if not already set
+      // Existing customer by phone — update the back-link if not already set.
+      // Re-linking must also un-hide the record: this phone match can land on
+      // a customer that was soft-deleted (e.g. the zero-visit stub cleanup
+      // below), and relinking it to a real conversion should make it visible
+      // again rather than leaving an orphaned, invisible "deleted" customer.
       customer = await db.customer.update({
         where: { id: customer.id },
         data: {
           convertedLeadId: lead.id,
           convertedAt: conversionTime,
+          isDeleted: false,
+          deletedAt: null,
           // Enrich any missing fields
           vehicleMake: customer.vehicleMake ?? lead.vehicleMake ?? null,
           vehicleModel: customer.vehicleModel ?? lead.vehicleModel ?? null,

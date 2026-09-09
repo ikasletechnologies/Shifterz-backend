@@ -152,11 +152,10 @@ export class VehicleCheckinRepository {
 
   async delete(id: string) {
     try {
-      await db.carIn.updateMany({
+      return await db.carIn.update({
         where: { id },
         data: { isDeleted: true, deletedAt: new Date() },
       });
-      return await db.carIn.delete({ where: { id } }).catch(() => null);
     } catch (err: any) {
       if (err.code === 'P2025') return null;
       throw err;
@@ -205,12 +204,10 @@ export class VehicleCheckinRepository {
         }
       }
 
-      await db.job.updateMany({
+      return await db.job.update({
         where: { id: targetJobId },
         data: { isDeleted: true, deletedAt: new Date() },
       });
-
-      return await db.job.delete({ where: { id: targetJobId } }).catch(() => null);
     } catch (err: any) {
       if (err.code === 'P2025') {
         logger.warn(`Job card with ID ${id} not found during deleteJobCard operation.`);

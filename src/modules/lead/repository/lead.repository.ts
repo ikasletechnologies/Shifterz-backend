@@ -38,6 +38,9 @@ export class LeadRepository {
   }
 
   async deleteCustomer(id: string) {
-    return db.customer.delete({ where: { id } });
+    return db.customer.update({
+      where: { id },
+      data: { isDeleted: true, deletedAt: new Date() },
+    });
   }
 }

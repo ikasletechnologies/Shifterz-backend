@@ -5,9 +5,64 @@ import { db } from '../../../lib/db.js';
 import { ValidationError } from '../../../shared/errors/ValidationError.js';
 import { NotFoundError } from '../../../shared/errors/NotFoundError.js';
 import { resolveDataScope, scopeWhere, type ScopeActor } from '../../../shared/scope/dataScope.js';
+import { assertJobQcPassed, assertInvoicePaidOrCredit } from './deliveryGate.helper.js';
 
 export class OutpassService {
   constructor(private readonly repository: OutpassRepository = new OutpassRepository()) {}
+
+  private async resolveJobForOutpass(
+    jobCardId: string | null | undefined,
+    carInId: string | null | undefined,
+    normVeh: string
+  ) {
+    if (jobCardId) {
+      return db.job.findUnique({ where: { id: jobCardId } });
+    }
+    if (carInId) {
+      const carIn = await db.carIn.findUnique({ where: { id: carInId } });
+      if (carIn && carIn.jobCardId) {
+        return db.job.findUnique({ where: { id: carIn.jobCardId } });
+      }
+      return null;
+    }
+    if (normVeh && normVeh !== "NA") {
+      const jobs = await db.job.findMany({
+        where: { isDeleted: false },
+        orderBy: { createdAt: "desc" },
+      });
+      return jobs.find(j => (j.vehicle || "").replace(/[^A-Z0-9]/g, "").toUpperCase() === normVeh) || null;
+    }
+    return null;
+  }
+
+  private async resolveInvoiceForOutpass(invoiceId: string | null | undefined, normVeh: string) {
+    if (invoiceId) {
+      const invoice = await db.invoice.findUnique({ where: { id: invoiceId } });
+      if (invoice) return invoice;
+    }
+    if (normVeh && normVeh !== "NA") {
+      const invoices = await db.invoice.findMany({
+        where: { isDeleted: false, status: { not: "Cancelled" } },
+        orderBy: { createdAt: "desc" },
+      });
+      return invoices.find(inv => (inv.vehicle || "").replace(/[^A-Z0-9]/g, "").toUpperCase() === normVeh) || null;
+    }
+    return null;
+  }
+
+  // EPB 2.10 — single authoritative delivery gate, backed by the pure checks
+  // in deliveryGate.helper.ts. Called at both createOutpass (request time)
+  // and approveOutpass (release time, against fresh state) so neither path
+  // can skip it.
+  private async assertDeliveryPrerequisites(job: any, invoice: any): Promise<void> {
+    assertJobQcPassed(job);
+
+    const totalPaid = invoice
+      ? (await db.payment.findMany({ where: { invoiceId: invoice.id, isDeleted: false } }))
+          .reduce((sum, p) => sum + Number(p.amount || 0), 0)
+      : 0;
+    assertInvoicePaidOrCredit(invoice, totalPaid);
+  }
 
   async getAllOutpasses(userRole?: string, franchiseId?: string) {
     // Deduplicate any existing duplicate OutPass records (same invoiceId or same normalized vehicle)
@@ -92,78 +147,16 @@ export class OutpassService {
     }
 
     // 1. Find Job Card for vehicle
-    let job: any = null;
-    if (data.jobCardId) {
-      job = await db.job.findUnique({ where: { id: data.jobCardId } });
-    } else if (data.carInId) {
-      const carIn = await db.carIn.findUnique({ where: { id: data.carInId } });
-      if (carIn && carIn.jobCardId) {
-        job = await db.job.findUnique({ where: { id: carIn.jobCardId } });
-      }
-    } else if (normVeh && normVeh !== "NA") {
-      const jobs = await db.job.findMany({
-        where: { isDeleted: false },
-        orderBy: { createdAt: "desc" },
-      });
-      job = jobs.find(j => (j.vehicle || "").replace(/[^A-Z0-9]/g, "").toUpperCase() === normVeh) || null;
-    }
+    const job = await this.resolveJobForOutpass(data.jobCardId, data.carInId, normVeh);
 
-    // Outpass Verification Rule 1 & 2: Job Completed / QC Passed
-    if (job) {
-      const statusUpper = (job.status || "").toUpperCase();
-      const isJobCompleteOrBilled =
-        statusUpper.includes("COMPLETED") ||
-        statusUpper.includes("QC") ||
-        statusUpper.includes("BILLING") ||
-        statusUpper.includes("PAID") ||
-        statusUpper.includes("INVOICED") ||
-        statusUpper.includes("DELIVERED") ||
-        statusUpper.includes("OUT") ||
-        job.passedAt !== null;
+    // 2. Find Invoice for vehicle
+    const invoice = await this.resolveInvoiceForOutpass(data.invoiceId, normVeh);
 
-      if (!isJobCompleteOrBilled) {
-        throw new ValidationError(
-          `Cannot generate Outpass: Job Card is not completed (current status: "${job.status}").`
-        );
-      }
-    }
-
-    // Outpass Verification Rule 3: Invoice Lookup
-    let invoice: any = null;
-    if (data.invoiceId) {
-      invoice = await db.invoice.findUnique({ where: { id: data.invoiceId } });
-    }
-    if (!invoice && normVeh && normVeh !== "NA") {
-      const invoices = await db.invoice.findMany({
-        where: { isDeleted: false, status: { not: "Cancelled" } },
-        orderBy: { createdAt: "desc" },
-      });
-      invoice = invoices.find(inv => (inv.vehicle || "").replace(/[^A-Z0-9]/g, "").toUpperCase() === normVeh) || null;
-    }
-
-    // Outpass Verification Rule 4: Payment Completed or Approved Credit
-    let isCreditOrPaid = true;
-    if (invoice) {
-      const payments = await db.payment.findMany({
-        where: { invoiceId: invoice.id, isDeleted: false },
-      });
-      const totalPaid = payments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
-      const invoiceAmount = (invoice.amount || 0) + (invoice.gst || 0) - (invoice.discount || 0);
-      const statusUpper = (invoice.status || "").toUpperCase();
-      isCreditOrPaid =
-        statusUpper.includes("CREDIT") ||
-        statusUpper.includes("PAID") ||
-        statusUpper.includes("COMPLETED") ||
-        statusUpper.includes("DONE") ||
-        (invoiceAmount > 0 && totalPaid >= invoiceAmount - 1) ||
-        (totalPaid > 0 && totalPaid >= invoiceAmount);
-
-      if (!isCreditOrPaid) {
-        throw new ValidationError(
-          `Cannot generate Outpass: Payment incomplete. Invoiced: ₹${invoiceAmount.toFixed(2)}, Paid: ₹${totalPaid.toFixed(2)}.`
-        );
-      }
-    }
+    // Outpass Verification Rules 1-4: Job found + QC Passed + Invoice exists
+    // + Payment complete/approved credit. EPB 2.10 — a vehicle may only be
+    // released once ALL of these hold; this is the sole authoritative gate
+    // and is re-run again in approveOutpass() immediately before checkout.
+    await this.assertDeliveryPrerequisites(job, invoice);
 
     // Outpass Verification Rule 5: Customer Confirmation
     if (data.customerConfirmation === false) {
@@ -245,6 +238,17 @@ export class OutpassService {
     const scope = resolveDataScope(actor);
     const existing = await this.repository.findById(id, scopeWhere(scope));
     if (!existing) throw new NotFoundError("Outpass not found");
+
+    // Re-run the full delivery gate against CURRENT state immediately before
+    // release. createOutpass's checks are only a snapshot at request time —
+    // this is the actual checkout moment, so it must not trust that nothing
+    // changed (or was wrong) since then.
+    const normVeh = (existing.vehicle || "").replace(/[^A-Z0-9]/g, "").toUpperCase();
+    const job = existing.jobCardId
+      ? await db.job.findUnique({ where: { id: existing.jobCardId } })
+      : await this.resolveJobForOutpass(null, existing.carInId || null, normVeh);
+    const invoice = await this.resolveInvoiceForOutpass(existing.invoiceId, normVeh);
+    await this.assertDeliveryPrerequisites(job, invoice);
 
     const updated = await db.outPass.update({
       where: { id },

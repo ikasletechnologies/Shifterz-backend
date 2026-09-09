@@ -243,12 +243,10 @@ export class JobCardRepository {
         }
       }
 
-      await db.job.updateMany({
+      return await db.job.update({
         where: { id: targetJobId },
         data: { isDeleted: true, deletedAt: new Date().toISOString() },
       });
-
-      return await db.job.delete({ where: { id: targetJobId } }).catch(() => null);
     } catch (err: any) {
       if (err.code === 'P2025') {
         throw new NotFoundError(`Job card with ID '${id}' not found.`);

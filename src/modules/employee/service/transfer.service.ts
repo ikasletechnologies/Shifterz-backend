@@ -1,4 +1,5 @@
 import { TransferRepository } from '../repository/transfer.repository.js';
+import { EmployeeService } from './employee.service.js';
 import type { CreateTransferDTO, UpdateTransferDTO } from '../validation/transfer.validation.js';
 import { ApiError } from '../../../shared/errors/ApiError.js';
 import { NotFoundError } from '../../../shared/errors/NotFoundError.js';
@@ -6,7 +7,10 @@ import { generateUid } from '../../../shared/utils/idGenerator.js';
 import bcrypt from 'bcrypt';
 
 export class TransferService {
-  constructor(private readonly repository: TransferRepository = new TransferRepository()) {}
+  constructor(
+    private readonly repository: TransferRepository = new TransferRepository(),
+    private readonly employeeService: EmployeeService = new EmployeeService()
+  ) {}
 
   async getAllTransfers() {
     const requests = await this.repository.findAll();
@@ -49,31 +53,44 @@ export class TransferService {
     if (request.status !== "Pending") throw new ApiError(400, `Request already ${request.status.toLowerCase()}`);
     if (userRole !== "SUPER_ADMIN" && userRole !== "HQ_USER") throw new ApiError(403, "Only HQ can approve member transfers");
 
-    await this.repository.updateRequestStatus(id, "Approved");
-
+    // Do the license check (and the actual provisioning) BEFORE flipping the
+    // request to "Approved" — a cap rejection must leave the request
+    // "Pending" so it can be retried/inspected, not stuck "Approved" with no
+    // employee ever created and no way to re-run this (retry requires status
+    // === "Pending").
+    let createdEmployee: any = null;
     if (request.employeeId) {
       // Existing employee
       await this.repository.updateEmployeeFranchise(request.employeeId, request.toFranchiseId);
     } else {
-      // New member creation
+      // New member creation — EPB 2.3: this is still employee creation, so it
+      // must clear the same license cap a direct create request would.
+      const role = request.role || "TECHNICIAN";
+      const franchiseId = request.toFranchiseId || null;
+      await this.employeeService.assertLicenseCapacity(role, franchiseId);
+
       const empId = `EMP${Date.now().toString().slice(-6)}`;
       const rawPassword = request.password || "pass123";
       const hashedPassword = await bcrypt.hash(rawPassword, 10);
       const normalizedUsername = request.username ? String(request.username).trim().toLowerCase() : null;
 
-      await this.repository.createEmployeeFromTransfer({
+      const newEmployee = await this.repository.createEmployeeFromTransfer({
         empId,
         name: request.newMemberName || "New Member",
         phone: request.newMemberPhone || null,
         email: request.newMemberEmail || null,
         username: normalizedUsername,
         password: hashedPassword,
-        role: request.role || "TECHNICIAN",
-        franchiseId: request.toFranchiseId || null
+        role,
+        franchiseId
       });
+      const { password, ...rest } = newEmployee as any;
+      createdEmployee = rest;
     }
 
-    return { success: true, message: "Request approved and user provisioned." };
+    await this.repository.updateRequestStatus(id, "Approved");
+
+    return { success: true, message: "Request approved and user provisioned.", employee: createdEmployee };
   }
 
   async rejectTransfer(id: string, userRole: string) {

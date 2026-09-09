@@ -1,6 +1,7 @@
 import type { Response, NextFunction } from 'express';
 import { TransferService } from '../service/transfer.service.js';
 import type { AuthRequest } from '../../../middleware/auth.middleware.js';
+import { logAudit } from '../../../shared/services/audit.service.js';
 
 export class TransferController {
   constructor(private readonly service: TransferService = new TransferService()) {}
@@ -30,6 +31,23 @@ export class TransferController {
       const id = String(req.params.id);
       const role = req.user?.role || "UNKNOWN";
       const result = await this.service.approveTransfer(id, role);
+      // EPB 2.13 — the "new member" branch provisions an Employee, same as
+      // EmployeeController.createEmployee's CREATE audit entry below; that
+      // path must not go unaudited just because it was reached via transfer
+      // approval rather than a direct create request.
+      if (result.employee) {
+        await logAudit({
+          module: "EMPLOYEE",
+          recordId: result.employee.id,
+          action: "CREATE_FROM_TRANSFER",
+          userId: req.user?.id || "unknown",
+          branchId: result.employee.franchiseId || null,
+          oldValue: null,
+          newValue: result.employee,
+          ipAddress: req.ip,
+          device: req.headers['user-agent'],
+        });
+      }
       res.json(result);
     } catch (error) {
       next(error);
