@@ -151,21 +151,11 @@ app.get("/health", (req, res) => {
   res.json({ status: "healthy", timestamp: new Date() });
 });
 
-import { exec } from "child_process";
+
 
 // Start Server
-app.listen(PORT, async () => {
+app.listen(PORT, () => {
   logger.info(`Shifterz backend running on port ${PORT}`);
-
-  // Automigrate & regenerate Prisma client on startup
-  logger.info("[Auto-Migration] Running npx prisma db push...");
-  exec("npx prisma db push", (err, stdout, stderr) => {
-    if (err) {
-      logger.error(`[Auto-Migration] Failed to migrate database: ${err.message}`);
-    } else {
-      logger.info(`[Auto-Migration] Database migrated and generated successfully: ${stdout}`);
-    }
-  });
 });
 
 // Restart trigger
