@@ -9,6 +9,10 @@ import {
   notifyVehicleReady,
   notifyEstimatedDeliveryUpdate,
 } from '../../../shared/services/notification.service.js';
+// EPB 2.10 — the same authoritative job/QC/invoice/payment gate outpass.service.ts
+// uses, so this checkout path and outpass approval can never independently
+// drift into two different rule sets for "may this vehicle leave."
+import { assertJobQcPassed, assertInvoicePaidOrCredit } from '../../outpass/service/deliveryGate.helper.js';
 
 function safeIsoDate(input?: string | Date | null): string {
   if (!input) return new Date().toISOString();
@@ -219,19 +223,10 @@ export class VehicleCheckinService {
       throw new ValidationError("No Job Card associated with this check-in.");
     }
     const job = await db.job.findUnique({ where: { id: car.jobCardId } });
-    if (!job) {
-      throw new ValidationError("Associated Job Card not found.");
-    }
-    const isJobCompleted = job.status === "Completed" || job.status === "QC Passed" || job.status === "Ready For Billing" || job.status === "Delivered" || job.status === "Out" || job.status === "Work Completed";
-    if (!isJobCompleted) {
-      throw new ValidationError(`Job is not completed. Current status: ${job.status}`);
-    }
 
-    // 2. QC Approval Check
-    const hasQcPassed = job.passedAt !== null || job.status === "QC Passed" || job.status === "Ready For Billing" || job.status === "Delivered" || job.status === "Out";
-    if (!hasQcPassed) {
-      throw new ValidationError("Quality Control has not approved/passed this job.");
-    }
+    // 2. Job complete + QC actually passed (job.passedAt is the sole
+    // authoritative signal — see deliveryGate.helper.ts).
+    assertJobQcPassed(job, "check out");
 
     // 3. Invoice Generated Check
     let invoice = await db.invoice.findFirst({
@@ -246,18 +241,30 @@ export class VehicleCheckinService {
     }
 
     // 4. Payment Completed or Approved Credit Check
-    if (invoice) {
-      const payments = await db.payment.findMany({
-        where: { invoiceId: invoice.id, isDeleted: false }
-      });
-      const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
-      const invoiceAmount = invoice.amount + invoice.gst - invoice.discount;
-      const isCreditApproved = invoice.status === "Approved Credit" || invoice.status === "Paid";
-      if (totalPaid < invoiceAmount && !isCreditApproved) {
-        throw new ValidationError(`Payment incomplete. Invoiced: ₹${invoiceAmount}, Paid: ₹${totalPaid}. Approved credit is required for outstanding balance.`);
-      }
-    }
+    const payments = invoice
+      ? await db.payment.findMany({ where: { invoiceId: invoice.id, isDeleted: false } })
+      : [];
+    const totalPaid = payments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+    assertInvoicePaidOrCredit(invoice, totalPaid, "check out");
 
+    // 5. Outpass Generated + Approved Check — EPB 2.10's fifth condition.
+    // This was previously missing entirely: a vehicle could be checked out
+    // here without an OutPass ever being created or approved, bypassing the
+    // one check that IS enforced on the separate /outpass/:id/approve path.
+    // "Delivered" is OutPass's actual on-approval status value (set by
+    // OutpassService.approveOutpass), matching by carInId or jobCardId.
+    const outpass = await db.outPass.findFirst({
+      where: {
+        isDeleted: false,
+        OR: [{ carInId: car.id }, ...(car.jobCardId ? [{ jobCardId: car.jobCardId }] : [])],
+      },
+      orderBy: { outTime: "desc" },
+    });
+    if (!outpass || outpass.status !== "Delivered" || !outpass.issued) {
+      throw new ValidationError(
+        `Cannot check out: no approved Outpass exists for this vehicle (current outpass status: "${outpass?.status ?? "none"}"). Generate and approve an Outpass first.`
+      );
+    }
 
 
     const updatedCar = await this.repository.checkout(id, now, {
