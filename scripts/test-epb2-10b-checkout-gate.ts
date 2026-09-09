@@ -133,6 +133,58 @@ await (async () => {
     outpassFixture = outpass({ status: 'Delivered', issued: true });
     await assertSucceeds('approved credit (zero cash paid) + approved outpass -> checkout succeeds', () => service.checkout('CAR-1', {} as any));
 
+    console.log('\n--- VehicleCheckinService.getDeliveryReadiness() (UI-1 checklist source) ---');
+
+    // Same 6 fixture states as above, each re-checked against the read-only
+    // endpoint: its `canCheckout` must agree with what checkout() itself
+    // would actually do for the identical state (the whole point of this
+    // endpoint — it must never tell the UI "ok to check out" when
+    // checkout() would reject, or vice versa).
+    async function assertReadinessAgreesWithCheckout(name: string) {
+      let checkoutSucceeded = true;
+      try { await service.checkout('CAR-1', {} as any); } catch { checkoutSucceeded = false; }
+      const readiness = await service.getDeliveryReadiness('CAR-1');
+      assertTrue(`${name}: readiness.canCheckout agrees with checkout()'s actual outcome`, readiness.canCheckout === checkoutSucceeded);
+    }
+
+    jobFixture = { status: 'QC Pending', passedAt: null };
+    invoiceFixture = null; paymentsFixture = []; outpassFixture = null;
+    let readiness = await service.getDeliveryReadiness('CAR-1');
+    assertTrue('readiness: QC Pending -> qcPassed false', readiness.conditions.qcPassed === false);
+    assertTrue('readiness: no invoice -> invoiceGenerated false', readiness.conditions.invoiceGenerated === false);
+    assertTrue('readiness: no outpass -> outpassApproved false', readiness.conditions.outpassApproved === false);
+    assertTrue('readiness: canCheckout is false when nothing is met', readiness.canCheckout === false);
+    assertTrue('readiness: blockingReasons lists all 3 unmet conditions (QC, invoice/payment, outpass)', readiness.blockingReasons.length === 3);
+    await assertReadinessAgreesWithCheckout('QC Pending, nothing else set');
+
+    jobFixture = { status: 'Ready For Billing', passedAt: new Date() };
+    invoiceFixture = invoice({ status: 'Issued' });
+    paymentsFixture = [];
+    outpassFixture = null;
+    readiness = await service.getDeliveryReadiness('CAR-1');
+    assertTrue('readiness: QC Passed -> qcPassed true', readiness.conditions.qcPassed === true);
+    assertTrue('readiness: invoice exists -> invoiceGenerated true', readiness.conditions.invoiceGenerated === true);
+    assertTrue('readiness: unpaid invoice -> paymentComplete false', readiness.conditions.paymentComplete === false);
+    await assertReadinessAgreesWithCheckout('QC passed, invoice exists but unpaid, no outpass');
+
+    paymentsFixture = [{ amount: 1180 }];
+    readiness = await service.getDeliveryReadiness('CAR-1');
+    assertTrue('readiness: fully paid -> paymentComplete true', readiness.conditions.paymentComplete === true);
+    assertTrue('readiness: still no outpass -> outpassApproved false', readiness.conditions.outpassApproved === false);
+    assertTrue('readiness: canCheckout false (outpass still missing) even though job/QC/invoice/payment are all met', readiness.canCheckout === false);
+    await assertReadinessAgreesWithCheckout('everything met except outpass');
+
+    outpassFixture = outpass({ status: 'Pending', issued: false });
+    readiness = await service.getDeliveryReadiness('CAR-1');
+    assertTrue('readiness: Pending (not yet approved) outpass -> outpassApproved false', readiness.conditions.outpassApproved === false);
+    await assertReadinessAgreesWithCheckout('outpass exists but only Pending');
+
+    outpassFixture = outpass({ status: 'Delivered', issued: true });
+    readiness = await service.getDeliveryReadiness('CAR-1');
+    assertTrue('readiness: approved (Delivered+issued) outpass -> outpassApproved true', readiness.conditions.outpassApproved === true);
+    assertTrue('readiness: all 5 conditions met -> canCheckout true', readiness.canCheckout === true && readiness.blockingReasons.length === 0);
+    await assertReadinessAgreesWithCheckout('all 5 conditions met');
+
     // Structural: confirm the fix reuses the shared helper rather than a
     // second, independent implementation of the same rule.
     const fs = await import('node:fs');

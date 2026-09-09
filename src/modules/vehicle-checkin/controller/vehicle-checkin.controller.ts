@@ -71,6 +71,16 @@ export class VehicleCheckinController {
     }
   };
 
+  getDeliveryReadiness = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const id = String(req.params.id);
+      const result = await this.service.getDeliveryReadiness(id);
+      res.json(result);
+    } catch (error) {
+      next(error);
+    }
+  };
+
   checkout = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const id = String(req.params.id);

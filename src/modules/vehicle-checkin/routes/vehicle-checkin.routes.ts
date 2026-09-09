@@ -12,5 +12,6 @@ vehicleCheckinRouter.use(authenticate);
 vehicleCheckinRouter.get('/', controller.getAll);
 vehicleCheckinRouter.post('/', validate(createCheckinSchema), controller.create);
 vehicleCheckinRouter.put('/:id', validate(updateCheckinSchema), controller.update);
+vehicleCheckinRouter.get('/:id/delivery-readiness', controller.getDeliveryReadiness);
 vehicleCheckinRouter.put('/:id/checkout', validate(checkoutSchema), controller.checkout);
 vehicleCheckinRouter.delete('/:id', controller.delete);

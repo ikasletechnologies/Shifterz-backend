@@ -13,6 +13,7 @@ import {
 // uses, so this checkout path and outpass approval can never independently
 // drift into two different rule sets for "may this vehicle leave."
 import { assertJobQcPassed, assertInvoicePaidOrCredit } from '../../outpass/service/deliveryGate.helper.js';
+import { COMPLETED_JOB_STATUSES } from '../../../shared/constants/jobStatus.constants.js';
 
 function safeIsoDate(input?: string | Date | null): string {
   if (!input) return new Date().toISOString();
@@ -209,6 +210,92 @@ export class VehicleCheckinService {
     }
 
     return updated;
+  }
+
+  // EPB 2.10 (UI-1) — read-only breakdown of the same 5 delivery
+  // conditions checkout() enforces, so the UI can show a live checklist
+  // ("Job Completed / QC Passed / Invoice Generated / Payment or Credit /
+  // Outpass Approved") without re-deriving the rule itself. `canCheckout`/
+  // `blockingReasons` are built by calling the exact same assert functions
+  // checkout() calls — catching what they throw rather than recomputing the
+  // pass/fail logic a second time — so this can never silently diverge from
+  // what checkout() will actually allow. The individual boolean fields
+  // (jobComplete, qcPassed, ...) are informational detail for the checklist
+  // UI only.
+  async getDeliveryReadiness(id: string) {
+    const car = await this.repository.findById(id);
+    if (!car) {
+      throw new NotFoundError("Car entry not found");
+    }
+
+    const job = car.jobCardId ? await db.job.findUnique({ where: { id: car.jobCardId } }) : null;
+
+    let invoice = await db.invoice.findFirst({
+      where: { vehicle: car.vehicle, isDeleted: false, status: { not: "Cancelled" } },
+      orderBy: { createdAt: "desc" }
+    });
+    if (!invoice && car.jobCardId) {
+      invoice = await db.invoice.findFirst({
+        where: { jobId: car.jobCardId, isDeleted: false, status: { not: "Cancelled" } },
+        orderBy: { createdAt: "desc" }
+      });
+    }
+
+    const payments = invoice
+      ? await db.payment.findMany({ where: { invoiceId: invoice.id, isDeleted: false } })
+      : [];
+    const totalPaid = payments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+    const invoiceAmount = invoice ? (invoice.amount || 0) + (invoice.gst || 0) - (invoice.discount || 0) : 0;
+
+    const outpass = await db.outPass.findFirst({
+      where: {
+        isDeleted: false,
+        OR: [{ carInId: car.id }, ...(car.jobCardId ? [{ jobCardId: car.jobCardId }] : [])],
+      },
+      orderBy: { outTime: "desc" },
+    });
+
+    const jobComplete = !!job && COMPLETED_JOB_STATUSES.includes(job.status);
+    const qcPassed = !!job?.passedAt;
+    const invoiceGenerated = !!invoice;
+    const paymentComplete =
+      !!invoice &&
+      (invoice.status === "Approved Credit" ||
+        invoice.status === "Paid" ||
+        (invoiceAmount > 0 && totalPaid >= invoiceAmount - 1));
+    const outpassApproved = !!outpass && outpass.status === "Delivered" && !!outpass.issued;
+
+    const blockingReasons: string[] = [];
+    try {
+      assertJobQcPassed(job, "check out");
+    } catch (e: any) {
+      blockingReasons.push(e.message);
+    }
+    try {
+      assertInvoicePaidOrCredit(invoice, totalPaid, "check out");
+    } catch (e: any) {
+      blockingReasons.push(e.message);
+    }
+    if (!outpassApproved) {
+      blockingReasons.push(
+        `Cannot check out this vehicle: no approved Outpass exists (current outpass status: "${outpass?.status ?? "none"}").`
+      );
+    }
+
+    return {
+      conditions: { jobComplete, qcPassed, invoiceGenerated, paymentComplete, outpassApproved },
+      details: {
+        jobStatus: job?.status ?? null,
+        invoiceId: invoice?.id ?? null,
+        invoiceStatus: invoice?.status ?? null,
+        invoiceAmount: invoice ? invoiceAmount : null,
+        totalPaid: invoice ? totalPaid : null,
+        outpassId: outpass?.id ?? null,
+        outpassStatus: outpass?.status ?? null,
+      },
+      canCheckout: blockingReasons.length === 0,
+      blockingReasons,
+    };
   }
 
   async checkout(id: string, data: CheckoutDTO) {
