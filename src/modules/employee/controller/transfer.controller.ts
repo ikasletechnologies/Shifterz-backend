@@ -1,7 +1,8 @@
 import type { Response, NextFunction } from 'express';
 import { TransferService } from '../service/transfer.service.js';
 import type { AuthRequest } from '../../../middleware/auth.middleware.js';
-import { logAudit } from '../../../shared/services/audit.service.js';
+import { logAudit, redactSensitive } from '../../../shared/services/audit.service.js';
+import { db } from '../../../lib/db.js';
 
 export class TransferController {
   constructor(private readonly service: TransferService = new TransferService()) {}
@@ -30,10 +31,29 @@ export class TransferController {
     try {
       const id = String(req.params.id);
       const role = req.user?.role || "UNKNOWN";
+      // EPB 2.13 — the request itself (a MemberTransferRequest row) may
+      // carry a plaintext password field for a not-yet-provisioned new
+      // member; redactSensitive strips it before either value reaches the
+      // audit log.
+      const oldValue = await db.memberTransferRequest.findUnique({ where: { id } });
       const result = await this.service.approveTransfer(id, role);
-      // EPB 2.13 — the "new member" branch provisions an Employee, same as
-      // EmployeeController.createEmployee's CREATE audit entry below; that
-      // path must not go unaudited just because it was reached via transfer
+      const newValue = await db.memberTransferRequest.findUnique({ where: { id } });
+
+      await logAudit({
+        module: "MEMBER_TRANSFER",
+        recordId: id,
+        action: "APPROVE",
+        userId: req.user?.id || "unknown",
+        branchId: oldValue?.toFranchiseId || null,
+        oldValue: redactSensitive(oldValue),
+        newValue: redactSensitive({ ...newValue, provisionedEmployeeId: result.employee?.id ?? null }),
+        ipAddress: req.ip,
+        device: req.headers['user-agent'],
+      });
+
+      // The "new member" branch also provisions an Employee, same as
+      // EmployeeController.createEmployee's CREATE audit entry; that path
+      // must not go unaudited just because it was reached via transfer
       // approval rather than a direct create request.
       if (result.employee) {
         await logAudit({
@@ -43,7 +63,7 @@ export class TransferController {
           userId: req.user?.id || "unknown",
           branchId: result.employee.franchiseId || null,
           oldValue: null,
-          newValue: result.employee,
+          newValue: redactSensitive(result.employee),
           ipAddress: req.ip,
           device: req.headers['user-agent'],
         });
@@ -58,7 +78,21 @@ export class TransferController {
     try {
       const id = String(req.params.id);
       const role = req.user?.role || "UNKNOWN";
+      const oldValue = await db.memberTransferRequest.findUnique({ where: { id } });
       const result = await this.service.rejectTransfer(id, role);
+      const newValue = await db.memberTransferRequest.findUnique({ where: { id } });
+
+      await logAudit({
+        module: "MEMBER_TRANSFER",
+        recordId: id,
+        action: "REJECT",
+        userId: req.user?.id || "unknown",
+        branchId: oldValue?.toFranchiseId || null,
+        oldValue: redactSensitive(oldValue),
+        newValue: redactSensitive(newValue),
+        ipAddress: req.ip,
+        device: req.headers['user-agent'],
+      });
       res.json(result);
     } catch (error) {
       next(error);

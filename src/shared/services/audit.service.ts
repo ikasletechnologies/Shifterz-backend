@@ -1,6 +1,26 @@
 import { db } from '../../lib/db.js';
 import type { Prisma } from '@prisma/client';
 
+// EPB 2.13 — audit entries must never carry a secret/credential in
+// plaintext (e.g. MemberTransferRequest.password, a raw new-member password
+// captured before it's hashed). Applied to oldValue/newValue before they
+// reach logAudit, not a change to logAudit itself.
+const SENSITIVE_KEY_PATTERN = /password|secret|token|apikey|api_key|privatekey|private_key|credential/i;
+
+export function redactSensitive<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((v) => redactSensitive(v)) as unknown as T;
+  }
+  if (value && typeof value === 'object' && !(value instanceof Date)) {
+    const result: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+      result[key] = SENSITIVE_KEY_PATTERN.test(key) ? '[REDACTED]' : redactSensitive(val);
+    }
+    return result as T;
+  }
+  return value;
+}
+
 interface AuditLogOptions {
   module: string;
   recordId: string;

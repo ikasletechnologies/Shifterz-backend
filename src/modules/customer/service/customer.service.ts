@@ -658,11 +658,11 @@ export class CustomerService {
       }
       case 'customer_visit': {
         const list = await db.job.findMany({
-          where: { isDeleted: false },
+          where: { ...tenantFilter, isDeleted: false },
           orderBy: { createdAt: 'desc' }
         });
         const carIns = await db.carIn.findMany({
-          where: { isDeleted: false },
+          where: { ...tenantFilter, isDeleted: false },
           select: { jobCardId: true, phone: true }
         });
         const carInMap = new Map(carIns.map(c => [c.jobCardId, c.phone]));
@@ -680,10 +680,10 @@ export class CustomerService {
       }
       case 'service_history': {
         const list = await db.job.findMany({
-          where: { isDeleted: false }
+          where: { ...tenantFilter, isDeleted: false }
         });
         const invoices = await db.invoice.findMany({
-          where: { type: 'Invoice', isDeleted: false }
+          where: { ...tenantFilter, type: 'Invoice', isDeleted: false }
         });
 
         const data = list.map(j => {
@@ -704,8 +704,10 @@ export class CustomerService {
         return helperToCSV(data, ['Job ID', 'Vehicle', 'Service', 'Technician', 'Invoice ID', 'Payment Status', 'Date']);
       }
       case 'warranty_report': {
+        // Warranty has no franchiseId of its own — scope via the owning
+        // customer, same pattern already used by vehicle_register above.
         const list = await db.warranty.findMany({
-          where: { isDeleted: false },
+          where: { isDeleted: false, customer: { ...tenantFilter, isDeleted: false } },
           include: { customer: true }
         });
         const data = list.map(w => ({

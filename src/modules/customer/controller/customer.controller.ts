@@ -2,6 +2,7 @@ import type { Response, NextFunction } from 'express';
 import { CustomerService } from '../service/customer.service.js';
 import type { AuthRequest } from '../../../middleware/auth.middleware.js';
 import { logAudit } from '../../../shared/services/audit.service.js';
+import { resolveDataScope, scopeWhere } from '../../../shared/scope/dataScope.js';
 
 export class CustomerController {
   constructor(private readonly service: CustomerService = new CustomerService()) {}
@@ -250,7 +251,12 @@ export class CustomerController {
   // Reports
   getReportsSummary = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const tenantFilter = this.getTenantFilter(req);
+      // EPB 2.4 — the canonical scope resolver, not the local getTenantFilter
+      // helper: that helper treats a franchise-role user with no franchiseId
+      // on their account as unrestricted (falls through to `{}`), which
+      // resolveDataScope/scopeWhere instead fails closed on (franchiseId:
+      // null, matching nothing rather than everything).
+      const tenantFilter = scopeWhere(resolveDataScope(req.user));
       const summary = await this.service.getReportsSummary(tenantFilter);
       res.json(summary);
     } catch (error) {
@@ -325,7 +331,8 @@ export class CustomerController {
   exportCSVReport = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const type = String(req.query.type || 'customer_register');
-      const tenantFilter = this.getTenantFilter(req);
+      // EPB 2.4 — same canonical scope resolver as getReportsSummary above.
+      const tenantFilter = scopeWhere(resolveDataScope(req.user));
       const csvContent = await this.service.getReportCSV(type, tenantFilter);
       res.setHeader('Content-Type', 'text/csv');
       res.setHeader('Content-Disposition', `attachment; filename=${type}_report.csv`);
