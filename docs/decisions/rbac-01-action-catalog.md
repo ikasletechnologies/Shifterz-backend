@@ -114,6 +114,12 @@ behavior, read/write/admin/approval class, and status.
 | `qc:templates:manage` | SUPER_ADMIN, HQ_USER (global), FRANCHISE_ADMIN (own franchise) | franchise-scoped — **now enforced on update/delete** via `assertWithinScope` (fixed during D-18 lock) | admin | **Partially enforced already**, identical status to D-17's `workflow:stages:manage`. |
 | `qc:templates:view` / `qc:templates:use` (candidate) | QUALITY_INSPECTOR + everyone with QC execution access | franchise-scoped (same as `getChecklistTemplate`) | read | **Deferred** — template *use* during actual QC execution is a separate action from *administering* the template; `getChecklistTemplate` currently has no role gate at all (any authenticated user), which is consistent with D-18's "operational roles may use" language, so likely correctly left ungated rather than needing a new action — confirm at RBAC-04. |
 
+### D-22 — QC Template Publish Authority
+
+| Action | Roles | Scope | Class | Status |
+|---|---|---|---|---|
+| `qc:templates:publish` | SUPER_ADMIN, HQ_USER (global), FRANCHISE_ADMIN (own franchise) | franchise-scoped — enforced via `QcTemplateVersionService.resolveOwnScope` (Phase 4B-2D-C) | admin | **Enforced on `POST /qc/template-versions/:id/publish`** (Phase 4B-2D-D). Direct extension of D-18's already-locked who/scope to the Draft-edit-vs-publish distinction the version model introduced — see D-22 in the decision register for the full reasoning. |
+
 ### D-19 — Cross-Franchise Vehicle History
 
 | Action | Roles | Scope | Class | Status |

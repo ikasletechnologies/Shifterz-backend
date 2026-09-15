@@ -12,6 +12,7 @@ import { isValidPaymentAmount } from "../modules/gst/service/purchaseValidation.
 import { RoleActionGrantService } from "../shared/rbac/roleActionGrant.service.js";
 import { setRoleActionsSchema } from "../shared/rbac/roleActionGrant.validation.js";
 import { generateUid } from "../shared/utils/idGenerator.js";
+import { sendNotification } from "../shared/services/notification.service.js";
 
 export const hqRouter = Router();
 
@@ -23,32 +24,43 @@ hqRouter.use(requireRole("SUPER_ADMIN", "HQ_USER"));
 // FRANCHISE MANAGEMENT (HQ Only)
 // ═══════════════════════════════════════════════════════════════
 
-// Create a new franchise (goes into Pending state; a License is auto-generated and also stays Pending until Super Admin approval)
+// ═══════════════════════════════════════════════════════════════
+// FRANCHISE ACTIVATION GOVERNANCE — EPB §3.5 / §3.12 rule 6 / §4.13 rule 2
+// ═══════════════════════════════════════════════════════════════
+//
+// "HQ shall not create franchise branches directly... HQ shall submit a
+// Franchise Activation Request... Once approved and activated by Ikasle,
+// the franchise shall become available within the ERP." Previously this
+// route created the Franchise AND its License as immediately "Active",
+// with no approval step of any kind — the opposite of what the EPB
+// requires. (A separate, parallel implementation at POST /api/franchise
+// created a Pending Approval record instead, but nothing anywhere ever
+// processed that record into a real franchise — a dead end, now retired;
+// see franchise.service.ts.)
+//
+// Interpretation, documented rather than silently assumed: this codebase
+// has no concept of "Ikasle Business Group" as an in-app identity — no
+// such role, login, or model exists anywhere in the schema, and inventing
+// one was explicitly out of scope for this fix. SUPER_ADMIN — the
+// system's singular, non-deletable, highest-trust identity (§3.4) — is
+// used as the sole approving actor below. HQ_USER may still SUBMIT a
+// request (POST /franchises), but only SUPER_ADMIN may APPROVE or REJECT
+// it (the two new endpoints following it) — a broader, lower-trust,
+// up-to-6-per-org role cannot self-approve its own submission. This is a
+// genuine requester/approver separation, not a rename of the same gate.
+
+// Submit a Franchise Activation Request. Creates the Franchise and its
+// linked License, both "Pending" — neither is usable (no login, no
+// operations) until a SUPER_ADMIN approves via POST /franchises/:id/approve.
+// No Franchise Admin is created here: the EPB's own Activation Request
+// field list (§3.5) has no admin-credential field — that's provisioned at
+// approval time instead (see /approve below).
 hqRouter.post("/franchises", async (req: Request, res: Response): Promise<void> => {
   try {
     const {
-      name, city, owner, phone, since, startDate, royaltyPct, royalty, adminPassword,
+      name, city, owner, phone, since, startDate, royaltyPct, royalty,
       businessName, gstNumber, email, address, state, pinCode
     } = req.body;
-    const adminUsername: string | undefined = req.body.adminUsername ? String(req.body.adminUsername).trim().toLowerCase() : undefined;
-
-    if (adminUsername) {
-      const existing = await db.employee.findFirst({
-        where: { username: adminUsername }
-      });
-      if (existing) {
-        if (existing.isDeleted) {
-          // Free up the username from the deleted account
-          await db.employee.update({
-            where: { id: existing.id },
-            data: { username: `del_${existing.id}_${existing.username}` }
-          });
-        } else {
-          res.status(400).json({ error: "Username is already taken by another employee/admin" });
-          return;
-        }
-      }
-    }
 
     // Generate a unique franchise ID (e.g. FRA001)
     const count = await db.franchise.count();
@@ -70,6 +82,8 @@ hqRouter.post("/franchises", async (req: Request, res: Response): Promise<void> 
     const expiryDate = new Date();
     expiryDate.setDate(expiryDate.getDate() + 365);
 
+    const authReq = req as AuthRequest;
+
     const { newFranchise, newLicense } = await db.$transaction(async (tx) => {
       const dateVal = since || startDate;
       const franchise = await tx.franchise.create({
@@ -83,23 +97,22 @@ hqRouter.post("/franchises", async (req: Request, res: Response): Promise<void> 
           revenue: 0,
           jobs: 0,
           royaltyPct: Number(royaltyPct !== undefined ? royaltyPct : royalty) || 10.0,
-          status: "Active",
+          status: "Pending",
           businessName,
           gstNumber,
           email,
           address,
           state,
           pinCode,
-          licenseStatus: "Active"
+          licenseStatus: "Pending"
         }
       });
 
-      // Create a linked License record in Pending state
       const license = await tx.license.create({
         data: {
           organizationId: id,
           licenseKey,
-          status: "Active",
+          status: "Pending",
           maxSuperAdmins: 1,
           maxHQUsers: 6,
           maxFranchiseAdmins: 1,
@@ -109,34 +122,182 @@ hqRouter.post("/franchises", async (req: Request, res: Response): Promise<void> 
         }
       });
 
-      if (adminUsername && adminPassword) {
-        const hashedPassword = await bcrypt.hash(adminPassword, 10);
-        const userId = `USR${Date.now().toString(36).toUpperCase()}`;
-        await tx.employee.create({
-          data: {
-            id: userId,
-            name: adminUsername,
-            username: adminUsername,
-            password: hashedPassword,
-            role: "FRANCHISE_ADMIN",
-            franchiseId: id
-          }
-        });
-      }
-
       return { newFranchise: franchise, newLicense: license };
     });
+
+    await logAudit({
+      module: "FRANCHISE",
+      recordId: id,
+      action: "CREATE",
+      userId: authReq.user?.id || "unknown",
+      branchId: id,
+      oldValue: null,
+      newValue: newFranchise,
+      ipAddress: req.ip,
+      device: req.headers["user-agent"] ? String(req.headers["user-agent"]) : null,
+    });
+
+    // EPB §3.10 — "New Franchise Requests" HQ notification. Previously
+    // fired only from the now-retired /api/franchise duplicate (see
+    // franchise.service.ts) — never from this, the live path — so it
+    // never actually reached anyone. Re-wired onto the real submission.
+    await sendNotification(
+      "HQ",
+      "New Franchise Request",
+      `Franchise activation request submitted for ${newFranchise.name} by ${authReq.user?.name || authReq.user?.id || "HQ"}.`
+    ).catch(console.error);
 
     res.json({
       ...newFranchise,
       startDate: newFranchise.since ? new Date(newFranchise.since).toISOString().split('T')[0] : "",
       royalty: newFranchise.royaltyPct,
-      totalEmployees: (adminUsername && adminPassword) ? 1 : 0,
+      totalEmployees: 0,
       licenseKey: newLicense.licenseKey,
       licenseStatus: newLicense.status,
     });
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    res.status(error.statusCode || 500).json({ error: error.message });
+  }
+});
+
+// Approve a pending Franchise Activation Request — SUPER_ADMIN only (see
+// the interpretation note above). Flips the Franchise and its License to
+// "Active" and, optionally in the same call, provisions the Franchise
+// Admin — reusing the exact canonical path (EmployeeService.createEmployee
+// -> assertLicenseCapacity -> approveRegistration) every other
+// employee-creation route in this codebase already goes through. If no
+// admin credentials are supplied here, one can still be attached later via
+// the existing PUT /franchises/:id "no existing admin" path.
+hqRouter.post("/franchises/:id/approve", requireRole("SUPER_ADMIN"), async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = String(req.params.id);
+    const authReq = req as AuthRequest;
+
+    const existing = await db.franchise.findUnique({ where: { id } });
+    if (!existing || existing.isDeleted) {
+      res.status(404).json({ error: "Franchise not found" });
+      return;
+    }
+    if (existing.status !== "Pending") {
+      res.status(400).json({ error: `Only a Pending franchise can be approved (current status: "${existing.status}").` });
+      return;
+    }
+
+    const adminUsername: string | undefined = req.body?.adminUsername ? String(req.body.adminUsername).trim().toLowerCase() : undefined;
+    const adminPassword: string | undefined = req.body?.adminPassword;
+
+    if (adminUsername) {
+      const existingUsername = await db.employee.findFirst({ where: { username: adminUsername, isDeleted: false } });
+      if (existingUsername) {
+        res.status(400).json({ error: "Username is already taken by another employee/admin" });
+        return;
+      }
+    }
+
+    const [approvedFranchise] = await db.$transaction([
+      db.franchise.update({ where: { id }, data: { status: "Active", licenseStatus: "Active" } }),
+      db.license.updateMany({ where: { organizationId: id }, data: { status: "Active" } }),
+    ]);
+
+    await logAudit({
+      module: "FRANCHISE",
+      recordId: id,
+      action: "APPROVE",
+      userId: authReq.user?.id || "unknown",
+      branchId: id,
+      oldValue: existing,
+      newValue: approvedFranchise,
+      ipAddress: req.ip,
+      device: req.headers["user-agent"] ? String(req.headers["user-agent"]) : null,
+    });
+
+    let createdAdmin: { id: string; username: string | null; role: string; franchiseId: string | null; status: string; approvalStatus: string } | null = null;
+    if (adminUsername && adminPassword) {
+      const employeeService = new EmployeeService();
+      const provisioned = await employeeService.createEmployee(
+        { name: adminUsername, username: adminUsername, password: adminPassword, role: "FRANCHISE_ADMIN", franchiseId: id },
+        authReq.user?.role || "UNKNOWN",
+        authReq.user?.franchiseId ?? undefined
+      );
+      createdAdmin = await employeeService.approveRegistration(provisioned.id, authReq.user?.role || "UNKNOWN");
+
+      await logAudit({
+        module: "EMPLOYEE",
+        recordId: createdAdmin.id,
+        action: "CREATE",
+        userId: authReq.user?.id || "unknown",
+        branchId: id,
+        oldValue: null,
+        newValue: {
+          id: createdAdmin.id,
+          username: createdAdmin.username,
+          role: createdAdmin.role,
+          franchiseId: createdAdmin.franchiseId,
+          status: createdAdmin.status,
+          approvalStatus: createdAdmin.approvalStatus,
+        },
+        ipAddress: req.ip,
+        device: req.headers["user-agent"] ? String(req.headers["user-agent"]) : null,
+      });
+    }
+
+    res.json({
+      ...approvedFranchise,
+      startDate: approvedFranchise.since ? new Date(approvedFranchise.since).toISOString().split('T')[0] : "",
+      royalty: approvedFranchise.royaltyPct,
+      totalEmployees: createdAdmin ? 1 : 0,
+      adminUsername: createdAdmin?.username || null,
+    });
+  } catch (error: any) {
+    res.status(error.statusCode || 500).json({ error: error.message });
+  }
+});
+
+// Reject a pending Franchise Activation Request — SUPER_ADMIN only. The
+// franchise/license rows are kept (status "Rejected", not deleted) so the
+// request remains visible for audit/history, consistent with how this
+// codebase already handles other Rejected statuses (e.g. InventoryRequest,
+// AdditionalWork) rather than removing the record.
+hqRouter.post("/franchises/:id/reject", requireRole("SUPER_ADMIN"), async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = String(req.params.id);
+    const authReq = req as AuthRequest;
+    const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+    if (!reason) {
+      res.status(400).json({ error: "A reason is required to reject a Franchise Activation Request." });
+      return;
+    }
+
+    const existing = await db.franchise.findUnique({ where: { id } });
+    if (!existing || existing.isDeleted) {
+      res.status(404).json({ error: "Franchise not found" });
+      return;
+    }
+    if (existing.status !== "Pending") {
+      res.status(400).json({ error: `Only a Pending franchise can be rejected (current status: "${existing.status}").` });
+      return;
+    }
+
+    const [rejectedFranchise] = await db.$transaction([
+      db.franchise.update({ where: { id }, data: { status: "Rejected", licenseStatus: "Rejected" } }),
+      db.license.updateMany({ where: { organizationId: id }, data: { status: "Rejected" } }),
+    ]);
+
+    await logAudit({
+      module: "FRANCHISE",
+      recordId: id,
+      action: "REJECT",
+      userId: authReq.user?.id || "unknown",
+      branchId: id,
+      oldValue: existing,
+      newValue: { ...rejectedFranchise, reason },
+      ipAddress: req.ip,
+      device: req.headers["user-agent"] ? String(req.headers["user-agent"]) : null,
+    });
+
+    res.json({ success: true, franchise: rejectedFranchise });
+  } catch (error: any) {
+    res.status(error.statusCode || 500).json({ error: error.message });
   }
 });
 
@@ -197,6 +358,43 @@ hqRouter.put("/franchises/:id", async (req: Request, res: Response): Promise<voi
       }
     }
 
+    const authReq = req as AuthRequest;
+
+    // EPB §3.5 governance gate — a Pending franchise's activation must go
+    // through POST /franchises/:id/approve (SUPER_ADMIN only) or /reject,
+    // not a direct status edit here (which HQ_USER can also reach). Every
+    // other field on a Pending franchise may still be corrected via this
+    // route; only the status transition itself is blocked.
+    const existingFranchise = await db.franchise.findUnique({ where: { id } });
+    if (!existingFranchise || existingFranchise.isDeleted) {
+      res.status(404).json({ error: "Franchise not found" });
+      return;
+    }
+    if (existingFranchise.status === "Pending" && status !== undefined && status !== "Pending") {
+      res.status(400).json({
+        error: 'This franchise is Pending activation. Use POST /franchises/:id/approve or /reject to change its status, not a direct update.',
+      });
+      return;
+    }
+    // Provisioning a Franchise Admin is also part of the approval act, not
+    // a plain field edit — a Pending franchise's admin (if any) should be
+    // created via /approve, so there's never an active-looking login tied
+    // to a franchise that hasn't actually been approved yet.
+    if (existingFranchise.status === "Pending" && (adminUsername || adminPassword)) {
+      res.status(400).json({
+        error: 'This franchise is Pending activation. Provision its Franchise Admin via POST /franchises/:id/approve instead.',
+      });
+      return;
+    }
+
+    // Resolved once, up front, so both the in-transaction "update the
+    // existing admin" branch and the post-transaction "create a new admin"
+    // branch (below) act on the same, consistent existence check rather
+    // than re-querying at two different points in time.
+    const existingAdminBefore = (adminUsername || adminPassword)
+      ? await db.employee.findFirst({ where: { franchiseId: id, role: "FRANCHISE_ADMIN", isDeleted: false } })
+      : null;
+
     const dateVal = since || startDate;
     const updated = await db.$transaction(async (tx) => {
       const franchise = await tx.franchise.update({
@@ -219,34 +417,65 @@ hqRouter.put("/franchises/:id", async (req: Request, res: Response): Promise<voi
         }
       });
 
-      if (adminUsername || adminPassword) {
-        const existingAdmin = await tx.employee.findFirst({
-          where: { franchiseId: id, role: "FRANCHISE_ADMIN", isDeleted: false }
-        });
-
-        if (existingAdmin) {
-          const adminUpdate: { username?: string; password?: string } = {};
-          if (adminUsername) adminUpdate.username = adminUsername;
-          if (adminPassword) adminUpdate.password = await bcrypt.hash(adminPassword, 10);
-          await tx.employee.update({ where: { id: existingAdmin.id }, data: adminUpdate });
-        } else if (adminUsername && adminPassword) {
-          const hashedPassword = await bcrypt.hash(adminPassword, 10);
-          const userId = `USR${Date.now().toString(36).toUpperCase()}`;
-          await tx.employee.create({
-            data: {
-              id: userId,
-              name: adminUsername,
-              username: adminUsername,
-              password: hashedPassword,
-              role: "FRANCHISE_ADMIN",
-              franchiseId: id
-            }
-          });
-        }
+      if (existingAdminBefore && (adminUsername || adminPassword)) {
+        const adminUpdate: { username?: string; password?: string } = {};
+        if (adminUsername) adminUpdate.username = adminUsername;
+        if (adminPassword) adminUpdate.password = await bcrypt.hash(adminPassword, 10);
+        await tx.employee.update({ where: { id: existingAdminBefore.id }, data: adminUpdate });
       }
 
       return franchise;
     });
+
+    await logAudit({
+      module: "FRANCHISE",
+      recordId: id,
+      action: "UPDATE",
+      userId: authReq.user?.id || "unknown",
+      branchId: id,
+      oldValue: existingFranchise,
+      newValue: updated,
+      ipAddress: req.ip,
+      device: req.headers["user-agent"] ? String(req.headers["user-agent"]) : null,
+    });
+
+    // EPB 2.3 (Finding A remediation) — this used to run a raw employee-
+    // creation Prisma call directly inside the transaction above whenever
+    // the franchise had no admin yet, bypassing the canonical
+    // EmployeeService.assertLicenseCapacity() check and writing no audit
+    // entry. Only reached when existingAdminBefore
+    // was null (an admin update, handled above, never falls through here).
+    // Runs after the transaction commits for the same reason as
+    // POST /hq/franchises — see that route's comment.
+    let createdAdmin: { id: string; username: string | null; role: string; franchiseId: string | null; status: string; approvalStatus: string } | null = null;
+    if (!existingAdminBefore && adminUsername && adminPassword) {
+      const employeeService = new EmployeeService();
+      const provisioned = await employeeService.createEmployee(
+        { name: adminUsername, username: adminUsername, password: adminPassword, role: "FRANCHISE_ADMIN", franchiseId: id },
+        authReq.user?.role || "UNKNOWN",
+        authReq.user?.franchiseId ?? undefined
+      );
+      createdAdmin = await employeeService.approveRegistration(provisioned.id, authReq.user?.role || "UNKNOWN");
+
+      await logAudit({
+        module: "EMPLOYEE",
+        recordId: createdAdmin.id,
+        action: "CREATE",
+        userId: authReq.user?.id || "unknown",
+        branchId: id,
+        oldValue: null,
+        newValue: {
+          id: createdAdmin.id,
+          username: createdAdmin.username,
+          role: createdAdmin.role,
+          franchiseId: createdAdmin.franchiseId,
+          status: createdAdmin.status,
+          approvalStatus: createdAdmin.approvalStatus,
+        },
+        ipAddress: req.ip,
+        device: req.headers["user-agent"] ? String(req.headers["user-agent"]) : null,
+      });
+    }
 
     const totalEmployees = await db.employee.count({
       where: { franchiseId: id, isDeleted: false }
@@ -264,7 +493,7 @@ hqRouter.put("/franchises/:id", async (req: Request, res: Response): Promise<voi
       adminUsername: admin?.username || null
     });
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    res.status(error.statusCode || 500).json({ error: error.message });
   }
 });
 
@@ -533,9 +762,14 @@ hqRouter.post("/licenses/activate", async (req: Request, res: Response): Promise
 // GLOBAL SERVICE MASTER (HQ Only)
 // ═══════════════════════════════════════════════════════════════
 
+// EPB §18 / §2.13 (Finding — Section 2 sweep, Gap 1) — create/update of this
+// master data previously had no audit entry at all (only the DELETE, from
+// the earlier Item #3 work, did). Reuses the same logAudit() every other
+// mutation in this file already calls — not a second audit mechanism.
 hqRouter.post("/services/master", async (req: Request, res: Response): Promise<void> => {
   try {
     const { code, name, category, standardPrice, estimatedTime, warranty, status, allowPriceEdit } = req.body;
+    const authReq = req as AuthRequest;
     const service = await db.serviceMaster.create({
       data: {
         code,
@@ -548,6 +782,19 @@ hqRouter.post("/services/master", async (req: Request, res: Response): Promise<v
         allowPriceEdit: allowPriceEdit !== undefined ? Boolean(allowPriceEdit) : false
       }
     });
+
+    await logAudit({
+      module: "SERVICE_MASTER",
+      recordId: service.id,
+      action: "CREATE",
+      userId: authReq.user?.id || "unknown",
+      branchId: authReq.user?.franchiseId || null,
+      oldValue: null,
+      newValue: service,
+      ipAddress: req.ip,
+      device: req.headers["user-agent"] ? String(req.headers["user-agent"]) : null,
+    });
+
     res.json(service);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -567,6 +814,12 @@ hqRouter.put("/services/master/:id", async (req: Request, res: Response): Promis
   try {
     const id = String(req.params.id);
     const { name, category, standardPrice, estimatedTime, warranty, status, allowPriceEdit } = req.body;
+    const authReq = req as AuthRequest;
+
+    // Pre-image captured before the mutation — same pattern used for every
+    // other UPDATE audit entry in this file (e.g. franchise UPDATE above).
+    const oldValue = await db.serviceMaster.findUnique({ where: { id } });
+
     const updated = await db.serviceMaster.update({
       where: { id },
       data: {
@@ -579,11 +832,83 @@ hqRouter.put("/services/master/:id", async (req: Request, res: Response): Promis
         allowPriceEdit: allowPriceEdit !== undefined ? Boolean(allowPriceEdit) : undefined
       }
     });
+
+    await logAudit({
+      module: "SERVICE_MASTER",
+      recordId: id,
+      action: "UPDATE",
+      userId: authReq.user?.id || "unknown",
+      branchId: authReq.user?.franchiseId || null,
+      oldValue,
+      newValue: updated,
+      ipAddress: req.ip,
+      device: req.headers["user-agent"] ? String(req.headers["user-agent"]) : null,
+    });
+
     res.json(updated);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
 });
+
+// EPB §18 (Finding D remediation) — "Services shall not be permanently
+// deleted if transactions exist."
+//
+// ServiceMaster has no enforced foreign key anywhere in this schema (unlike
+// most master data in this codebase — see InvoiceLine.serviceId's own
+// comment: "plain reference, not an enforced FK — matches how Job.services
+// already matches Service by name, not id"). Confirmed by inspection before
+// writing this check, not assumed: `db.serviceMaster.*` is used ONLY in this
+// file's own CRUD block — no other module reads or writes it. The service
+// line items Job/Invoice/Estimate actually select from at billing/job-card
+// time come from the separate `Service` model (src/modules/service/,
+// already soft-deletes) and are matched there by NAME
+// (billing.service.ts / gstInvoiceResolver.service.ts both do
+// `db.service.findFirst({ where: { name, ... } })`), not from ServiceMaster.
+//
+// So today, nothing in this codebase can make a ServiceMaster entry
+// "referenced by transactions" in practice. This check exists anyway,
+// matching the same loose name/id reference convention already established
+// in this schema, so (a) it correctly blocks the moment any future workflow
+// does start wiring ServiceMaster into Job/Invoice/Estimate line items, and
+// (b) a ServiceMaster entry sharing a name with actively-used data isn't
+// deleted out from under a historical record just because no FK enforces
+// the link. Deliberately scans ALL matching rows, not just non-deleted
+// ones — a soft-deleted Job/Invoice/Estimate is still a "historical
+// transaction" per EPB §18's own wording, not an erased one.
+export async function findServiceMasterReference(
+  serviceMaster: { id: string; code: string; name: string }
+): Promise<{ model: string; id: string } | null> {
+  const needle = serviceMaster.name.trim().toLowerCase();
+  const matchesName = (candidate: unknown) => typeof candidate === "string" && candidate.trim().toLowerCase() === needle;
+
+  const jobs = await db.job.findMany({ select: { id: true, service: true, services: true } });
+  for (const job of jobs) {
+    if (matchesName(job.service)) return { model: "Job", id: job.id };
+    const items = Array.isArray(job.services) ? (job.services as any[]) : [];
+    if (items.some((item) => matchesName(item?.name))) return { model: "Job", id: job.id };
+  }
+
+  const invoices = await db.invoice.findMany({ select: { id: true, items: true } });
+  for (const invoice of invoices) {
+    const items = Array.isArray(invoice.items) ? (invoice.items as any[]) : [];
+    if (items.some((item) => matchesName(item?.name))) return { model: "Invoice", id: invoice.id };
+  }
+
+  const invoiceLine = await db.invoiceLine.findFirst({
+    where: { OR: [{ serviceId: serviceMaster.id }, { serviceId: serviceMaster.code }] },
+    select: { id: true },
+  });
+  if (invoiceLine) return { model: "InvoiceLine", id: invoiceLine.id };
+
+  const estimates = await db.estimate.findMany({ select: { id: true, items: true } });
+  for (const estimate of estimates) {
+    const items = Array.isArray(estimate.items) ? (estimate.items as any[]) : [];
+    if (items.some((item) => matchesName(item?.name))) return { model: "Estimate", id: estimate.id };
+  }
+
+  return null;
+}
 
 // Item #3 (Phase 1B Step 3) — ServiceMaster has no isDeleted field, so this
 // remains a genuine hard delete for now (a proper soft-delete migration is a
@@ -601,12 +926,25 @@ hqRouter.delete("/services/master/:id", requireRole("SUPER_ADMIN"), async (req: 
     }
 
     const authReq = req as AuthRequest;
-    const result = await db.$transaction(async (tx) => {
-      const existing = await tx.serviceMaster.findUnique({ where: { id } });
-      if (!existing) {
-        throw new Error("Service Master entry not found");
-      }
 
+    const existing = await db.serviceMaster.findUnique({ where: { id } });
+    if (!existing) {
+      res.status(404).json({ error: "Service Master entry not found" });
+      return;
+    }
+
+    // EPB §18 — checked before the delete transaction opens, same ordering
+    // BillingService.deleteInvoice already uses for its own pre-delete
+    // reference check (linked-payment count).
+    const reference = await findServiceMasterReference(existing);
+    if (reference) {
+      res.status(400).json({
+        error: `Cannot permanently delete this Service Master entry: it is referenced by an existing ${reference.model} record (${reference.id}). Deactivate it (set status to Inactive) instead.`,
+      });
+      return;
+    }
+
+    const result = await db.$transaction(async (tx) => {
       await tx.auditLog.create({
         data: {
           module: "SERVICE_MASTER",
@@ -788,50 +1126,28 @@ hqRouter.delete("/deleted-records/:model/:id/permanent", requireRole("SUPER_ADMI
       return;
     }
 
+    // EPB 2.6 / 5.12 / 5.13 — this rule is unconditional (no HQ or
+    // SUPER_ADMIN exception exists anywhere in the spec): "Employee records
+    // shall not be permanently deleted." Previously this branch ran a real
+    // hard-delete Prisma call against the Employee table for any
+    // non-SUPER_ADMIN employee, which violated that rule outright. There is
+    // no "not yet enabled" framing here as with customers/jobs/inventory
+    // below — this path is permanently disabled by design, not pending a
+    // future safety policy. The existing soft-delete / deactivation
+    // endpoint (EmployeeController.deleteEmployee) is untouched and remains
+    // the only way to remove an employee from active use.
+    if (model === "employees") {
+      res.status(400).json({ error: "Employee records must never be permanently deleted (EPB 2.6 / 5.12). Use the existing deactivation/soft-delete endpoint instead." });
+      return;
+    }
+
     if (model === "customers" || model === "jobs" || model === "inventory") {
       res.status(400).json({ error: `Permanent deletion of ${model} is not yet enabled pending a dedicated safety policy for this model.` });
       return;
     }
 
-    if (model !== "employees") {
-      res.status(400).json({ error: "Invalid model name" });
-      return;
-    }
-
-    const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
-    if (!reason) {
-      res.status(400).json({ error: "A reason is required to permanently delete an employee record." });
-      return;
-    }
-
-    const result = await db.$transaction(async (tx) => {
-      const existing = await tx.employee.findUnique({ where: { id } });
-      if (!existing) {
-        throw new Error("Employee not found");
-      }
-      if (existing.role === "SUPER_ADMIN") {
-        throw new Error("A Super Administrator account can never be permanently deleted.");
-      }
-
-      await tx.auditLog.create({
-        data: {
-          module: "EMPLOYEES",
-          recordId: id,
-          action: "PERMANENT_DELETE",
-          userId: authReq.user?.id || "unknown",
-          branchId: existing.franchiseId,
-          oldValue: JSON.parse(JSON.stringify(existing)),
-          newValue: { reason },
-          ipAddress: req.ip,
-          device: req.headers['user-agent'] ? String(req.headers['user-agent']) : null,
-        },
-      });
-
-      return tx.employee.delete({ where: { id } });
-    });
-
-    const { password: _pw, ...deletedWithoutPassword } = result;
-    res.json({ success: true, deleted: deletedWithoutPassword });
+    res.status(400).json({ error: "Invalid model name" });
+    return;
   } catch (error: any) {
     const status = error.statusCode || (/not found/i.test(error.message) ? 404 : /Super Administrator/i.test(error.message) ? 403 : 500);
     res.status(status).json({ error: error.message });
@@ -913,16 +1229,14 @@ hqRouter.get("/reports/financial/export", async (req: AuthRequest, res: Response
 // FRANCHISE ACTIVATION REQUESTS (Ikasle/Super Admin Approval)
 // ═══════════════════════════════════════════════════════════════
 
-// List pending franchise requests (unified: both old Approval-table requests and new Pending franchises)
+// List pending Franchise Activation Requests. Previously unioned this with
+// db.approval rows from the old, separate /api/franchise creation path —
+// that path is retired (see franchise.service.ts) since nothing ever
+// processed those Approval rows into a real franchise; every Pending
+// request now genuinely is a Franchise record awaiting
+// POST /franchises/:id/approve or /reject.
 hqRouter.get("/franchise-requests", async (req: Request, res: Response): Promise<void> => {
   try {
-    // Old approval-table based requests (legacy)
-    const approvalList = await db.approval.findMany({
-      where: { module: "FRANCHISE", status: "Pending" },
-      orderBy: { createdAt: "desc" }
-    });
-
-    // New flow: pending Franchise records with their linked licenses
     const pendingFranchises = await db.franchise.findMany({
       where: { status: "Pending", isDeleted: false },
       orderBy: { since: "desc" }
@@ -959,8 +1273,7 @@ hqRouter.get("/franchise-requests", async (req: Request, res: Response): Promise
       };
     }));
 
-    // Return unified list with old approvals first, then new-style franchise requests
-    res.json([...approvalList, ...franchiseRequests]);
+    res.json(franchiseRequests);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }

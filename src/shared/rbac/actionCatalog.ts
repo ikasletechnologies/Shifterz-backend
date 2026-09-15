@@ -45,6 +45,10 @@ export const ACTION_CATALOG = [
   'workflow:stages:manage',
   // D-18
   'qc:templates:manage',
+  // D-22 — direct extension of D-18's already-locked who/scope to the
+  // Draft-edit-vs-publish distinction the Phase 4B-2D-C version model
+  // introduced; see docs/decisions/rbac-decisions.md.
+  'qc:templates:publish',
   // D-19
   'vehicles:history:view',
   // D-21

@@ -17,3 +17,7 @@ paymentsRouter.post('/', validate(createPaymentSchema), controller.createPayment
 // original-payment validation and franchise scope are unchanged.
 paymentsRouter.post('/refund', requireAction('payments:refund'), controller.createRefund);
 paymentsRouter.delete('/:id', controller.deletePayment);
+// EPB §3.10 — same convention as qcRouter's /dispatch-alerts and
+// workshopRouter's /dispatch-reminders (authenticated, no special role
+// gate — none of these three sweeps mutate anything, only read and notify).
+paymentsRouter.post('/dispatch-outstanding-alerts', controller.dispatchOutstandingAlerts);

@@ -1,9 +1,11 @@
+import { db } from '../../../lib/db.js';
 import { TransferRepository } from '../repository/transfer.repository.js';
 import { EmployeeService } from './employee.service.js';
 import type { CreateTransferDTO, UpdateTransferDTO } from '../validation/transfer.validation.js';
 import { ApiError } from '../../../shared/errors/ApiError.js';
 import { NotFoundError } from '../../../shared/errors/NotFoundError.js';
 import { generateUid } from '../../../shared/utils/idGenerator.js';
+import { sendNotification } from '../../../shared/services/notification.service.js';
 import bcrypt from 'bcrypt';
 
 export class TransferService {
@@ -44,7 +46,19 @@ export class TransferService {
 
   async createTransfer(data: CreateTransferDTO, username: string, role: string) {
     const requester = username || role || "Admin";
-    return this.repository.create(data, requester);
+    const request = await this.repository.create(data, requester);
+
+    // EPB §3.10 — "Pending Approvals" HQ notification. A member transfer
+    // request is exactly this: it sits Pending until SUPER_ADMIN/HQ_USER
+    // acts on it via approveTransfer/rejectTransfer below, and previously
+    // gave HQ no signal that one existed.
+    await sendNotification(
+      "HQ",
+      "Pending Approval — Member Transfer",
+      `${requester} submitted a member transfer request (${data.newMemberName || data.employeeId || "employee"}) awaiting HQ approval.`
+    ).catch(console.error);
+
+    return request;
   }
 
   async approveTransfer(id: string, userRole: string) {

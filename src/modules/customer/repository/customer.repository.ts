@@ -280,6 +280,7 @@ export class CustomerRepository {
     // 1. Find matching carIns to get candidate phones by jobCardId
     const matchingCarIns = await db.carIn.findMany({
       where: {
+        ...tenantFilter,
         OR: [
           { id: { contains: query, mode: 'insensitive' } },
           { jobCardId: { contains: query, mode: 'insensitive' } }
@@ -293,6 +294,7 @@ export class CustomerRepository {
     // 2. Find matching invoices to get candidate phones
     const matchingInvoices = await db.invoice.findMany({
       where: {
+        ...tenantFilter,
         id: { contains: query, mode: 'insensitive' },
         isDeleted: false
       },

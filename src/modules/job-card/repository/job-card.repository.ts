@@ -222,10 +222,6 @@ export class JobCardRepository {
     }
   }
 
-  async updateChecklist(id: string, checklist: any) {
-    return db.job.update({ where: { id }, data: { checklist } });
-  }
-
   async appendQcPhotos(id: string, urls: string[]) {
     const job = await db.job.findFirst({ where: { id } });
     const existing = job?.qcPhotos || [];

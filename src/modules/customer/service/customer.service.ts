@@ -9,7 +9,8 @@ import type {
   CreateComplaintDTO,
   CreateEstimateDTO
 } from '../validation/customer.validation.js';
-import { generateUid } from '../../../shared/utils/idGenerator.js';
+import { generateUid, generateSequentialId } from '../../../shared/utils/idGenerator.js';
+import { normalizeVehicleNo } from '../../../shared/utils/vehicleUtils.js';
 import { db } from '../../../lib/db.js';
 import { sendEmail, sendWhatsApp, notifyManagers, sendNotification } from '../../../shared/services/notification.service.js';
 import { resolveDataScope, isWithinScope, type ScopeActor } from '../../../shared/scope/dataScope.js';
@@ -35,9 +36,54 @@ export class CustomerService {
     return customer;
   }
 
+  private customerLocks: Record<string, Promise<any>> = {};
+
   async createCustomer(data: CreateCustomerDTO, franchiseId: string | null) {
-    const custId = generateUid("CUST");
-    return this.repository.create(custId, data, franchiseId);
+    const phone = data.phone?.trim() || "";
+    if (!phone) {
+      const custId = await generateSequentialId("CUS");
+      return this.repository.create(custId, data, franchiseId);
+    }
+
+    const lockKey = phone;
+    let resolver: () => void;
+    const currentLock = this.customerLocks[lockKey] || Promise.resolve();
+    const nextLock = new Promise<void>((resolve) => { resolver = resolve; });
+    this.customerLocks[lockKey] = nextLock;
+
+    try {
+      await currentLock;
+
+      const existing = await db.customer.findFirst({
+        where: { phone }
+      });
+
+      if (existing) {
+        // Un-delete if soft deleted, enrich missing details and return authoritative master record
+        return await db.customer.update({
+          where: { id: existing.id },
+          data: {
+            isDeleted: false,
+            deletedAt: null,
+            name: data.name || existing.name,
+            email: data.email || existing.email,
+            alternateNumber: data.alternateNumber || existing.alternateNumber,
+            address: data.address || existing.address,
+            gstNumber: data.gstNumber || existing.gstNumber,
+            city: data.city || existing.city,
+            state: data.state || existing.state,
+            pinCode: data.pinCode || existing.pinCode,
+          },
+          include: { vehicles: true }
+        });
+      }
+
+      const custId = await generateSequentialId("CUS");
+      return await this.repository.create(custId, data, franchiseId);
+    } finally {
+      resolver!();
+      delete this.customerLocks[lockKey];
+    }
   }
 
   async updateCustomer(id: string, data: UpdateCustomerDTO) {
@@ -58,12 +104,70 @@ export class CustomerService {
 
   async addVehicle(customerId: string, data: CreateVehicleDTO) {
     await this.getCustomerById(customerId);
-    // check if vehicle already exists (active)
-    const existing = await this.repository.findVehicleByNo(data.vehicleNo);
-    if (existing && !existing.isDeleted) {
-      throw new Error(`Vehicle ${data.vehicleNo} is already registered under another profile`);
+    const normVehNo = normalizeVehicleNo(data.vehicleNo);
+
+    // Check if vehicle already exists in system
+    const existing = await db.customerVehicle.findFirst({
+      where: { vehicleNo: normVehNo }
+    });
+
+    if (existing) {
+      if (existing.customerId === customerId) {
+        // Same vehicle + same owner: restore if soft-deleted, update details, and return
+        return db.customerVehicle.update({
+          where: { id: existing.id },
+          data: {
+            isDeleted: false,
+            deletedAt: null,
+            make: data.make || existing.make,
+            model: data.model || existing.model,
+            variant: data.variant || existing.variant,
+            odometer: data.odometer ? Math.max(existing.odometer || 0, data.odometer) : existing.odometer
+          }
+        });
+      } else {
+        // Ownership transfer: Re-link vehicle to new Customer, historical records for previous owner remain intact
+        return db.customerVehicle.update({
+          where: { id: existing.id },
+          data: {
+            customerId,
+            isDeleted: false,
+            deletedAt: null,
+            make: data.make || existing.make,
+            model: data.model || existing.model,
+            variant: data.variant || existing.variant,
+            odometer: data.odometer ? Math.max(existing.odometer || 0, data.odometer) : existing.odometer
+          }
+        });
+      }
     }
-    return this.repository.addVehicle(customerId, data);
+
+    return this.repository.addVehicle(customerId, {
+      ...data,
+      vehicleNo: normVehNo
+    });
+  }
+
+  async transferVehicleOwnership(vehicleNo: string, newCustomerId: string) {
+    const normVehNo = normalizeVehicleNo(vehicleNo);
+    await this.getCustomerById(newCustomerId);
+
+    const vehicle = await db.customerVehicle.findFirst({
+      where: { vehicleNo: normVehNo }
+    });
+
+    if (!vehicle) {
+      throw new NotFoundError(`Vehicle ${vehicleNo} not found`);
+    }
+
+    return db.customerVehicle.update({
+      where: { id: vehicle.id },
+      data: {
+        customerId: newCustomerId,
+        isDeleted: false,
+        deletedAt: null
+      }
+    });
   }
 
   async updateVehicle(customerId: string, vehicleId: string, data: UpdateVehicleDTO) {
@@ -72,7 +176,11 @@ export class CustomerService {
     if (!vehicle || vehicle.customerId !== customerId) {
       throw new Error(`Vehicle not found for this customer`);
     }
-    return this.repository.updateVehicle(vehicleId, data);
+    const updateData = { ...data };
+    if (updateData.vehicleNo) {
+      updateData.vehicleNo = normalizeVehicleNo(updateData.vehicleNo);
+    }
+    return this.repository.updateVehicle(vehicleId, updateData);
   }
 
   async deleteVehicle(customerId: string, vehicleId: string) {
@@ -84,14 +192,6 @@ export class CustomerService {
     return this.repository.deleteVehicle(vehicleId);
   }
 
-  // WTY-01A (Fix 2) — this path had no franchise scoping at all: any
-  // authenticated user could read or create warranties for any customer,
-  // regardless of franchise. getCustomerById itself isn't actor-aware (used
-  // broadly elsewhere in this file), so scope is checked narrowly here
-  // against the fetched customer's own franchiseId, without changing that
-  // shared method's signature. A 404 (not 403) is returned for an
-  // out-of-scope customer, matching this codebase's established
-  // don't-confirm-existence convention.
   async getWarranties(customerId: string, actor?: ScopeActor) {
     const customer = await this.getCustomerById(customerId);
     if (!isWithinScope(resolveDataScope(actor), customer.franchiseId)) {
@@ -100,18 +200,16 @@ export class CustomerService {
     return this.repository.getWarranties(customerId);
   }
 
-  // WTY-01A (Fix 1) — this path used to create a Warranty with no
-  // warrantyNo at all. Now reuses the exact same allocator
-  // (WarrantyRepository.allocateWarrantyNo) WarrantyService.
-  // generateFromInvoice already uses, rather than a second numbering
-  // mechanism.
   async addWarranty(customerId: string, data: CreateWarrantyDTO, actor?: ScopeActor) {
     const customer = await this.getCustomerById(customerId);
     if (!isWithinScope(resolveDataScope(actor), customer.franchiseId)) {
       throw new NotFoundError(`Customer with ID ${customerId} not found`);
     }
     const warrantyNo = await this.warrantyRepository.allocateWarrantyNo();
-    return this.repository.addWarranty(customerId, data, warrantyNo);
+    return this.repository.addWarranty(customerId, {
+      ...data,
+      vehicleNo: normalizeVehicleNo(data.vehicleNo)
+    }, warrantyNo);
   }
 
   // Service Reminders
@@ -122,7 +220,10 @@ export class CustomerService {
 
   async addReminder(customerId: string, data: CreateReminderDTO) {
     await this.getCustomerById(customerId);
-    return this.repository.addReminder(customerId, data);
+    return this.repository.addReminder(customerId, {
+      ...data,
+      vehicleNo: normalizeVehicleNo(data.vehicleNo)
+    });
   }
 
   // Referrals
@@ -135,7 +236,7 @@ export class CustomerService {
   async getCustomerHistory(customerId: string) {
     const customer = await this.getCustomerById(customerId);
 
-    // Fetch related records from different tables
+    // Fetch related records using relational IDs where available, falling back to phone
     const [
       jobs,
       invoices,
@@ -152,15 +253,30 @@ export class CustomerService {
       leadRecord
     ] = await Promise.all([
       db.job.findMany({
-        where: { phone: customer.phone, isDeleted: false },
+        where: {
+          customer: customer.name,
+          isDeleted: false
+        },
         orderBy: { createdAt: 'desc' }
       }),
       db.invoice.findMany({
-        where: { phone: customer.phone, isDeleted: false },
+        where: {
+          OR: [
+            { phone: customer.phone },
+            { client: customer.name }
+          ],
+          isDeleted: false
+        },
         orderBy: { date: 'desc' }
       }),
       db.payment.findMany({
-        where: { client: customer.name, isDeleted: false },
+        where: {
+          OR: [
+            { customerId: customer.id },
+            { client: customer.name }
+          ],
+          isDeleted: false
+        },
         orderBy: { date: 'desc' }
       }),
       customer.convertedLeadId ? db.leadFollowUp.findMany({

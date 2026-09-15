@@ -237,7 +237,13 @@ export class VehicleCheckinRepository {
     return db.outPass.create({ data });
   }
 
+  // EPB 21 — "Delivery history shall remain permanent." Previously a real
+  // deleteMany; now matches the soft-delete pattern already used for
+  // CarIn/Job in this same file.
   async deleteOutpassesByCarInId(carInId: string) {
-    return db.outPass.deleteMany({ where: { carInId } });
+    return db.outPass.updateMany({
+      where: { carInId, isDeleted: false },
+      data: { isDeleted: true, deletedAt: new Date() },
+    });
   }
 }

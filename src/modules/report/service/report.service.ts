@@ -1994,18 +1994,56 @@ export class ReportService {
         this.repository.getJobsForEmployeePerformance(emp.id, dateLimit),
       ]);
 
-      const jobsAssigned = jobs.length;
-      const jobsCompleted = jobs.filter(j => j.status === 'Delivered' || j.status === 'Completed' || j.status === 'QC Passed').length;
-      const jobsPending = jobs.filter(j => j.status === 'Pending' || j.status === 'In Progress').length;
-      const reworkCount = jobs.reduce((sum, j) => sum + j.reworkCount, 0);
-      const qcFails = jobs.filter(j => j.failedAt !== null).length;
+      // EPB §3.8/§12.7/§12.8 (Section 3 Finding 2B remediation) — a Quality
+      // Inspector is not a job's technicianId/serviceAdvisorId, so `jobs`
+      // above is structurally always empty for one; every metric below was
+      // silently 0 regardless of actual QC activity. QCInspection (one row
+      // per inspection attempt) is the real record of what a QI did, and is
+      // used instead — but only for this role, so technician/service-advisor
+      // attribution (the branch below) is completely unchanged.
+      //
+      // Semantics, deliberately distinct from the technician meaning of the
+      // same field names:
+      //   - assigned/completed/pending count INSPECTION ATTEMPTS (not
+      //     distinct jobs) — EPB §12.7 itself tracks "Number of QC Attempts"
+      //     as its own concept, and a job reworked three times represents
+      //     three times the inspection workload, not one.
+      //   - qcFailures counts the QI's own Failed decisions — a measure of
+      //     their inspection activity, not (unlike the technician meaning)
+      //     a quality complaint against them.
+      //   - reworkCount counts RE-inspections they performed
+      //     (attemptNumber > 1) — how many times they had to re-check
+      //     reworked items. It intentionally does NOT reuse Job.reworkCount
+      //     (which already correctly attributes the rework itself to the
+      //     technician who did the work) — a QI is not credited or blamed
+      //     for rework they didn't cause, only for the inspection effort of
+      //     re-checking it.
+      const isQualityInspector = emp.role === 'QUALITY_INSPECTOR';
+      let jobsAssigned: number, jobsCompleted: number, jobsPending: number, reworkCount: number, qcFails: number;
+      let jobIds: string[];
+
+      if (isQualityInspector) {
+        const qcInspections = await this.repository.getQCInspectionsForEmployeePerformance(emp.id, dateLimit);
+        jobsAssigned = qcInspections.length;
+        jobsCompleted = qcInspections.filter(q => q.result !== 'Pending').length;
+        jobsPending = qcInspections.filter(q => q.result === 'Pending').length;
+        qcFails = qcInspections.filter(q => q.result === 'Failed').length;
+        reworkCount = qcInspections.filter(q => q.attemptNumber > 1).length;
+        jobIds = jobs.map(j => j.id); // unchanged — a QI has no technician/service-advisor jobs to bill against
+      } else {
+        jobsAssigned = jobs.length;
+        jobsCompleted = jobs.filter(j => j.status === 'Delivered' || j.status === 'Completed' || j.status === 'QC Passed').length;
+        jobsPending = jobs.filter(j => j.status === 'Pending' || j.status === 'In Progress').length;
+        reworkCount = jobs.reduce((sum, j) => sum + j.reworkCount, 0);
+        qcFails = jobs.filter(j => j.failedAt !== null).length;
+        jobIds = jobs.map(j => j.id);
+      }
 
       const leads = await this.repository.getLeadsForEmployeePerformance(emp.name || '', dateLimit);
       const leadsAssigned = leads.length;
       const leadsConverted = leads.filter(l => l.status === 'Converted').length;
 
-      const jobIds = jobs.map(j => j.id);
-      const invoices = await this.repository.getInvoicesForEmployeePerformance(jobIds, jobs.map(j => j.customer), dateLimit);
+      const invoices = await this.repository.getInvoicesForEmployeePerformance(jobIds, dateLimit);
       const revenueContribution = invoices.reduce((sum, i) => sum + this.invoiceNet(i), 0);
 
       return {

@@ -351,6 +351,12 @@ model ReceiptSequence {
   counter Int    @default(0)
 }
 
+// Race-safe DB-backed job card numbering counter across multiple backend instances
+model JobSequence {
+  prefix  String @id
+  counter Int    @default(0)
+}
+
 model Payment {
   id                 String     @id
   invoiceId          String?
@@ -362,6 +368,7 @@ model Payment {
   mode               String
   multipleModes      Json?      // e.g. [{mode: 'Cash', amount: 5000}, {mode: 'UPI', amount: 10000}]
   type               String     @default("Full Payment") // "Advance Payment", "Full Payment", "Partial Payment", "Refund", "Credit Sale"
+  idempotencyKey     String?    @unique
   receiptNumber      String?    @unique
   date               DateTime
   ref                String?
@@ -460,6 +467,7 @@ model Franchise {
   estimates         Estimate[]
   workflowStages    WorkflowStage[]
   qcChecklistTemplates QCChecklistTemplate[]
+  qcChecklistTemplateVersions QCChecklistTemplateVersion[]
 }
 
 model Customer {
@@ -569,7 +577,7 @@ model Job {
   actualCompletion       DateTime?
   notes                  String
   remarks                String?         // Additional remarks on the job
-  carInId                String?         // Reference to CarIn check-in
+  carInId                String?         @unique // Reference to CarIn check-in (1-to-1 db constraint)
   customerSignature      String?
   companyAcknowledgement String?
   photos                 String[]
@@ -896,6 +904,10 @@ model AuditLog {
   ipAddress String?
   device    String?
   createdAt DateTime @default(now())
+
+  @@index([recordId, createdAt(sort: Desc)])
+  @@index([branchId, createdAt(sort: Desc)])
+  @@index([module, action, createdAt(sort: Desc)])
 }
 
 model InventoryMovement {
@@ -1273,6 +1285,97 @@ model QCChecklistTemplate {
   isDeleted   Boolean    @default(false)
   createdAt   DateTime   @default(now())
   franchise   Franchise? @relation(fields: [franchiseId], references: [id])
+
+  // Phase 4B-2C — default false preserves current behavior for all existing
+  // rows (nothing was ever enforced as mandatory before this phase existed).
+  mandatory   Boolean    @default(false)
+
+  // Phase 4B-2D-C — stable logical identity, independent of this row's own
+  // `id`. Generated once at creation and never reassigned (not exposed on
+  // UpdateChecklistTemplateItemDTO, so no update path can change it). A
+  // rename, category move, or mandatory change keeps this value — the row
+  // is still "the same conceptual item," just with a different current
+  // definition. Deleting a row and creating a new one (even with an
+  // identical label) produces a brand-new logicalItemId, since that IS a
+  // new conceptual item. This is what QCChecklistTemplateVersionItem below
+  // references, so the same logical item can be traced across multiple
+  // immutable published versions once versioning is actually wired up (not
+  // yet, in this phase — see QCChecklistTemplateVersion).
+  logicalItemId String   @default(uuid())
+
+  // Phase 4B-2C closure fix — a partial, case-insensitive unique index named
+  // "QCChecklistTemplate_scope_category_label_ci_key" exists on
+  // (COALESCE("franchiseId", ''), lower(category), lower(label)) WHERE
+  // "isDeleted" = false, added by migration
+  // 20260915010000_phase4b2c_closure_template_duplicate_index. Prisma's
+  // schema DSL cannot express a functional/partial index declaratively, so
+  // it is NOT represented here as `@@unique` — it exists only in that raw
+  // SQL migration. Do not run `prisma migrate dev` (schema-diff-based) or
+  // `db push` against this model without accounting for that, or the
+  // generated diff may try to drop it as unrecognized drift.
+}
+
+// Phase 4B-2D-C — whole-template versioning foundation (approved Model B
+// from the Phase 4B-2D-B discovery: one immutable version = one complete
+// checklist configuration for one scope, NOT independently-versioned
+// items). This phase builds the data model and a minimal, unexposed
+// create/publish mechanism only — the Draft->Publish HTTP workflow, the
+// effective-template resolver, and wiring buildFrozenChecklist to read from
+// versions instead of live QCChecklistTemplate rows are explicitly later
+// phases. See the bootstrap script (scripts/phase4b2d-c-bootstrap-hq-
+// version.ts) for how the current 18 live global rows become "HQ Version 1,
+// Published."
+model QCChecklistTemplateVersion {
+  id            String    @id @default(cuid())
+  franchiseId   String?   // null = HQ/global scope, same convention as QCChecklistTemplate
+  versionNumber Int       // unique WITHIN this scope only — see the migration-managed partial index below, not a global counter
+  status        String    @default("Draft") // Draft | Published | Superseded
+  createdById   String?
+  createdAt     DateTime  @default(now())
+  publishedById String?
+  publishedAt   DateTime?
+  franchise     Franchise? @relation(fields: [franchiseId], references: [id])
+  items         QCChecklistTemplateVersionItem[]
+  inspections   QCInspection[] @relation("QCInspectionHqTemplateVersion")
+  franchiseInspections QCInspection[] @relation("QCInspectionFranchiseTemplateVersion")
+
+  // Phase 4B-2D-C — two raw-SQL partial/functional unique indexes exist on
+  // this table (Prisma's schema DSL can't express either declaratively —
+  // same limitation as QCChecklistTemplate's own closure-fix index above):
+  //   1. QCChecklistTemplateVersion_scope_version_number_key on
+  //      (COALESCE("franchiseId", ''), "versionNumber") — version numbers
+  //      unique per scope, applies to every status (Draft/Published/
+  //      Superseded alike), using the same COALESCE-normalization lesson
+  //      from the Phase 4B-2C closure fix so global (NULL-franchiseId)
+  //      versions correctly collide with each other on version number too.
+  //   2. QCChecklistTemplateVersion_one_published_per_scope_key on
+  //      COALESCE("franchiseId", '') WHERE status = 'Published' — at most
+  //      one Published version per scope at any time.
+  // Both added by migration 20260915030000_phase4b2d_c_template_versioning.
+  // Do not run `prisma migrate dev`/`db push` against this model without
+  // accounting for that.
+}
+
+// Phase 4B-2D-C — one immutable row per checklist item within a version's
+// snapshot. Independent of the live, mutable QCChecklistTemplate row it was
+// copied from at version-creation time — a later edit to that live row
+// (rename, mandatory flip, category move, even deletion) never changes an
+// already-created version item. `logicalItemId` is the only link back to
+// "which conceptual item this was" (see QCChecklistTemplate.logicalItemId);
+// there is deliberately no FK to QCChecklistTemplate.id itself, since a
+// version item must remain fully reconstructable even after the live row it
+// came from is later deleted.
+model QCChecklistTemplateVersionItem {
+  id            String   @id @default(cuid())
+  versionId     String
+  logicalItemId String
+  label         String
+  category      String
+  order         Int
+  mandatory     Boolean
+  version       QCChecklistTemplateVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+
+  @@index([versionId])
 }
 
 model QCInspection {
@@ -1284,7 +1387,47 @@ model QCInspection {
   scheduledAt    DateTime?   // Inspection Date & Time (12.3)
   priority       String?
   assignRemarks  String?
-  checklist      Json?       // snapshot of {id, label, passed, remark}[] for this attempt
+  // Phase 4B-2C: array of {id, result, remark, label, category} for
+  // whichever items the inspector has actually submitted a result for —
+  // REPLACED wholesale on every QcService.submitChecklist call (this exact
+  // replace-not-merge contract is asserted by the pre-existing, protected
+  // Phase 4B-1 test suite, so it is deliberately unchanged here). `label`/
+  // `category` are enrichment copied from checklistDefinition below, not
+  // re-derived from QCChecklistTemplate. Starts null; an item never yet
+  // submitted simply has no entry here (equivalent to "Unanswered").
+  checklist      Json?
+  // Phase 4B-2D-A — the complete effective checklist frozen at Start
+  // (QcRepository.buildFrozenChecklist): one array element per item,
+  // {id, label, category, order, mandatory}, captured once from
+  // QCChecklistTemplate and never re-read from it again for this attempt.
+  // This is what makes submitChecklist's unknown-id check and decide()'s
+  // mandatory-completeness check independent of the live template — see
+  // QcService.assertChecklistComplete, which cross-references this field's
+  // mandatory ids against `checklist` above to find anything still
+  // unanswered. Kept as a second field (rather than merged into `checklist`
+  // itself) specifically so `checklist`'s existing submitted-items-only
+  // contract above did not have to change.
+  checklistDefinition Json?
+  // Phase 4B-2D-D — historical traceability: "which published HQ version,
+  // and (if any) which published franchise version, together produced this
+  // attempt's checklistDefinition." Two independent nullable references,
+  // not one — the Phase 4B-2D-B discovery explicitly flagged that a single
+  // id would be misleading once the effective checklist is genuinely
+  // composed from two independently-versioned scopes (HQ always; franchise
+  // only if that franchise has ever published its own additions).
+  // `templateVersionId` is always the HQ scope's version (null only if HQ
+  // has no Published version at all, which cannot happen once bootstrapped);
+  // `franchiseTemplateVersionId` is null whenever the job's franchise has no
+  // Published version of its own, or the job has no franchise. Both are
+  // populated atomically, in the same transaction as checklistDefinition
+  // itself (QcRepository.buildFrozenChecklist) — they always describe
+  // exactly the versions that produced this attempt's frozen items, never a
+  // stale or mismatched pair. checklistDefinition remains the authoritative
+  // frozen content; these fields are the reference to where it came from.
+  templateVersionId String?
+  templateVersion QCChecklistTemplateVersion? @relation("QCInspectionHqTemplateVersion", fields: [templateVersionId], references: [id])
+  franchiseTemplateVersionId String?
+  franchiseTemplateVersion QCChecklistTemplateVersion? @relation("QCInspectionFranchiseTemplateVersion", fields: [franchiseTemplateVersionId], references: [id])
   result         String    @default("Pending") // Pending | Passed | Failed
   reason         String?     // failure reason (12.6)
   remarks        String?     // decision remarks (12.6)
@@ -1295,6 +1438,10 @@ model QCInspection {
   updatedAt      DateTime  @default(now()) @updatedAt
   job            Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
   photos         JobPhoto[]
+
+  // Phase 4A — DB-level guard against concurrent lazy-start/assign requests
+  // allocating the same attempt number for a job (see QcRepository.getOrCreateOpenInspection).
+  @@unique([jobId, attemptNumber])
 }
 
 // ═══════════════════════════════════════════════════════════════

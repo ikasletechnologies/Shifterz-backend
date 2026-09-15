@@ -1,6 +1,7 @@
 import { VehicleCheckinRepository } from '../repository/vehicle-checkin.repository.js';
 import type { CreateCheckinDTO, UpdateCheckinDTO, CheckoutDTO } from '../validation/vehicle-checkin.validation.js';
 import { generateSequentialId, generateUid } from '../../../shared/utils/idGenerator.js';
+import { normalizeVehicleNo } from '../../../shared/utils/vehicleUtils.js';
 import { NotFoundError } from '../../../shared/errors/NotFoundError.js';
 import { ValidationError } from '../../../shared/errors/ValidationError.js';
 import { ForbiddenError } from '../../../shared/errors/ForbiddenError.js';
@@ -61,6 +62,28 @@ export class VehicleCheckinService {
     }
   }
 
+  // EPB 2.6/2.4 — a franchise (or HQ-controlled) user may only delete a
+  // check-in that belongs to their own franchise. HQ (SUPER_ADMIN/HQ_USER)
+  // retains unrestricted access, matching the tenant() middleware's scope
+  // resolution elsewhere. Mirrors checkTechnicianAccess's id-or-jobCardId
+  // lookup so a legitimate delete-by-job-card-id request isn't rejected.
+  async assertFranchiseAccess(checkinId: string, user?: { role?: string; franchiseId?: string | null }) {
+    if (!user) return;
+    const userRole = (user.role || "").toUpperCase().replace(/[\s_]+/g, "_");
+    if (userRole === "SUPER_ADMIN" || userRole === "HQ_USER") return;
+
+    let car = await this.repository.findById(checkinId);
+    if (!car) {
+      car = await db.carIn.findFirst({ where: { jobCardId: checkinId, isDeleted: false } });
+    }
+    if (!car) throw new NotFoundError("Car entry not found");
+
+    const requiredFranchiseId = user.franchiseId ?? null;
+    if (car.franchiseId !== requiredFranchiseId) {
+      throw new ForbiddenError("You do not have permission to access this vehicle");
+    }
+  }
+
   async getAllCheckins(user?: { id?: string; name?: string; role?: string; franchiseId?: string | null }) {
     const userRole = user ? (user.role || "").toUpperCase().replace(/[\s_]+/g, "_") : "";
     const isHQ = userRole === "SUPER_ADMIN" || userRole === "HQ_USER";
@@ -112,89 +135,182 @@ export class VehicleCheckinService {
   }
 
   async createCheckin(data: CreateCheckinDTO, franchiseId: string | null) {
-    const recentEntry = await this.repository.findRecentCheckinByVehicle(data.vehicle, 24);
+    const normVehicle = normalizeVehicleNo(data.vehicle);
+
+    const recentEntry = await this.repository.findRecentCheckinByVehicle(normVehicle, 24);
     if (recentEntry) {
       throw new ValidationError(
-        `Vehicle ${data.vehicle} was already checked.`
+        `Vehicle ${normVehicle} was already checked.`
       );
     }
 
     const carId = generateUid("CAR");
     const jobCardId = await generateSequentialId("JOB");
 
-    const newCar = await this.repository.create(carId, data, jobCardId, franchiseId);
+    return db.$transaction(async (tx) => {
+      const validInTimeISO = safeIsoDate(data.inTime);
 
-    // Auto-create Job Card
-    const validInTimeISO = safeIsoDate(data.inTime);
-    await this.repository.createJobCard({
-      id: jobCardId,
-      vehicle: data.vehicle,
-      customer: data.customer || "",
-      service: data.service || "",
-      technician: "",
-      status: "Pending",
-      priority: "",
-      startDate: validInTimeISO,
-      estCompletion: validInTimeISO,
-      notes: (data.notes && data.notes.trim()) ? data.notes.trim() : "Auto-created from check-in",
-      franchiseId,
-    });
+      const checkinData = {
+        ...data,
+        vehicle: normVehicle,
+      };
 
-    // Auto-upsert Customer & Vehicle association
-    if (data.phone) {
-      let customer = await this.repository.findCustomerByPhone(data.phone);
-      if (customer) {
-        await this.repository.updateCustomerVisits(
-          customer.id,
-          customer.visits + 1,
-          new Date().toISOString()
-        );
-      } else {
-        const custId = await generateSequentialId("CUS");
-        customer = await this.repository.createCustomer({
-          id: custId,
-          name: data.customer || "Walk-in",
-          phone: data.phone || "",
-          email: "",
-          vehicle: data.vehicle || "Unknown",
-          model: data.model || "Unknown",
-          visits: 1,
-          totalSpend: 0,
-          lastVisit: new Date().toISOString(),
+      const newCar = await tx.carIn.create({
+        data: {
+          id: carId,
+          vehicle: normVehicle,
+          model: checkinData.model || "",
+          customer: checkinData.customer || "",
+          phone: checkinData.phone || "",
+          service: checkinData.service || "",
+          inTime: validInTimeISO,
+          status: (checkinData as any).status || "Pending",
+          odometer: String(checkinData.odometer || "0"),
+          notes: checkinData.notes || "",
+          jobCardId,
           franchiseId,
-        });
-      }
-
-      // Check if vehicle is already linked to the customer, if not create a new CustomerVehicle
-      const uppercaseVehicle = data.vehicle.toUpperCase();
-      const existingVehicle = await db.customerVehicle.findFirst({
-        where: { customerId: customer.id, vehicleNo: uppercaseVehicle, isDeleted: false }
+          receivedById: checkinData.receivedById || null,
+          receivedByName: checkinData.receivedByName || null,
+          fuelLevel: checkinData.fuelLevel || null,
+          keyCount: checkinData.keyCount ? Number(checkinData.keyCount) : 1,
+          expectedDelivery: checkinData.expectedDelivery ? safeIsoDate(checkinData.expectedDelivery) : null,
+          scratches: checkinData.scratches || null,
+          dents: checkinData.dents || null,
+          brokenParts: checkinData.brokenParts || null,
+          glassDamage: checkinData.glassDamage || null,
+          wheelDamage: checkinData.wheelDamage || null,
+          interiorCondition: checkinData.interiorCondition || null,
+          accessoriesReceived: checkinData.accessoriesReceived || null,
+          remarks: checkinData.remarks || null,
+          photoFront: checkinData.photoFront || null,
+          photoRear: checkinData.photoRear || null,
+          photoLeft: checkinData.photoLeft || null,
+          photoRight: checkinData.photoRight || null,
+          photoDashboard: checkinData.photoDashboard || null,
+          photoOdometer: checkinData.photoOdometer || null,
+          photoDamages: checkinData.photoDamages || [],
+          hasSpareWheel: Boolean(checkinData.hasSpareWheel),
+          hasJack: Boolean(checkinData.hasJack),
+          hasToolkit: Boolean(checkinData.hasToolkit),
+          hasFloorMats: Boolean(checkinData.hasFloorMats),
+          hasFastag: Boolean(checkinData.hasFastag),
+          hasDashCam: Boolean(checkinData.hasDashCam),
+          hasUsbCharger: Boolean(checkinData.hasUsbCharger),
+          otherAccessories: checkinData.otherAccessories || null,
+        }
       });
-      if (!existingVehicle) {
-        await db.customerVehicle.create({
-          data: {
-            customerId: customer.id,
-            vehicleNo: uppercaseVehicle,
-            make: data.model ? (data.model.split(' ')[0] || 'Unknown') : 'Unknown',
-            model: data.model || 'Unknown',
-            odometer: data.odometer ? Number(data.odometer) : 0
-          }
+
+      // Auto-create Job Card
+      await tx.job.create({
+        data: {
+          id: jobCardId,
+          vehicle: normVehicle,
+          customer: checkinData.customer || "",
+          service: checkinData.service || "",
+          technician: "",
+          status: "Pending",
+          priority: "Medium",
+          startDate: validInTimeISO,
+          estCompletion: validInTimeISO,
+          notes: (checkinData.notes && checkinData.notes.trim()) ? checkinData.notes.trim() : "Auto-created from check-in",
+          franchiseId,
+          carInId: carId,
+        }
+      });
+
+      // Write CREATED history record so getJobHistory always finds this event
+      await tx.jobHistory.create({
+        data: {
+          jobId: jobCardId,
+          event: 'CREATED',
+          performedBy: 'SYSTEM',
+          payload: {
+            vehicle: normVehicle,
+            customer: checkinData.customer || "",
+            source: 'vehicle-checkin',
+          },
+        },
+      });
+
+      // Auto-upsert Customer & Vehicle association
+      if (checkinData.phone) {
+        let customer = await tx.customer.findFirst({
+          where: { phone: checkinData.phone }
         });
+
+        if (customer) {
+          customer = await tx.customer.update({
+            where: { id: customer.id },
+            data: {
+              visits: customer.visits + 1,
+              lastVisit: new Date(),
+              isDeleted: false,
+              deletedAt: null
+            }
+          });
+        } else {
+          const custId = await generateSequentialId("CUS");
+          customer = await tx.customer.create({
+            data: {
+              id: custId,
+              name: checkinData.customer || "Walk-in",
+              phone: checkinData.phone || "",
+              email: "",
+              vehicle: normVehicle,
+              model: checkinData.model || "Unknown",
+              visits: 1,
+              totalSpend: 0,
+              lastVisit: new Date(),
+              franchiseId,
+            }
+          });
+        }
+
+        // Check if vehicle is already in CustomerVehicle master
+        const existingVehicle = await tx.customerVehicle.findFirst({
+          where: { vehicleNo: normVehicle }
+        });
+
+        const checkinOdometerNum = parseInt(String(checkinData.odometer || "0"), 10);
+
+        if (!existingVehicle) {
+          await tx.customerVehicle.create({
+            data: {
+              customerId: customer.id,
+              vehicleNo: normVehicle,
+              make: checkinData.model ? (checkinData.model.split(' ')[0] || 'Unknown') : 'Unknown',
+              model: checkinData.model || 'Unknown',
+              odometer: !isNaN(checkinOdometerNum) ? checkinOdometerNum : 0
+            }
+          });
+        } else {
+          // Odometer Authority: advance odometer ONLY if new reading is greater than current
+          const currentOdometer = existingVehicle.odometer || 0;
+          const shouldUpdateOdometer = !isNaN(checkinOdometerNum) && checkinOdometerNum > currentOdometer;
+
+          await tx.customerVehicle.update({
+            where: { id: existingVehicle.id },
+            data: {
+              customerId: customer.id, // Ensure ownership re-linked if visiting under this customer
+              isDeleted: false,
+              deletedAt: null,
+              odometer: shouldUpdateOdometer ? checkinOdometerNum : existingVehicle.odometer
+            }
+          });
+        }
       }
-    }
 
-    // ── Notification: Job Assigned ──────────────────────────────────────────
-    // Fires after job card auto-creation; technician may be assigned later
-    notifyJobAssigned({
-      franchiseId,
-      jobId: jobCardId,
-      vehicle: data.vehicle,
-      customerName: data.customer || 'Customer',
-      technicianId: null,   // assigned later via job card update
-      technicianName: null,
-    }).catch(console.error);
+      notifyJobAssigned({
+        franchiseId,
+        jobId: jobCardId,
+        vehicle: normVehicle,
+        customerName: checkinData.customer || 'Customer',
+        technicianId: null,
+        technicianName: null,
+      }).catch(console.error);
 
-    return newCar;
+      return newCar;
+    });
   }
 
   async updateCheckin(id: string, data: UpdateCheckinDTO) {
@@ -315,14 +431,33 @@ export class VehicleCheckinService {
     // authoritative signal — see deliveryGate.helper.ts).
     assertJobQcPassed(job, "check out");
 
-    // 3. Invoice Generated Check
+    // 3. Invoice Generated Check — EPB 2.10 re-verification finding: for a
+    // repeat vehicle (same registration serviced on a prior, already-paid
+    // visit), resolving by vehicle string FIRST could match that older,
+    // unrelated invoice instead of failing when the CURRENT job hasn't been
+    // billed yet — silently satisfying the payment gate with stale data.
+    // car.jobCardId is a direct, reliable reference to THIS check-in's own
+    // job (set at check-in time), and Invoice.jobId is populated at billing
+    // time (see billing.service.ts's createInvoice), so it is the correct,
+    // specific identifier to try first.
+    //
+    // The vehicle-string fallback below is deliberately scoped to
+    // `jobId: null` — it exists ONLY to find genuinely legacy invoices that
+    // predate Invoice.jobId being populated (an optional/nullable field).
+    // It must never match an invoice that IS linked to a different job:
+    // that would still let an already-settled prior visit's invoice
+    // satisfy the current, unbilled visit's payment gate, just through a
+    // narrower door. If no job-linked invoice exists and no unlinked
+    // legacy invoice exists either, `invoice` stays null and the check
+    // below correctly fails with "no Invoice found" rather than
+    // substituting unrelated data.
     let invoice = await db.invoice.findFirst({
-      where: { vehicle: car.vehicle, isDeleted: false, status: { not: "Cancelled" } },
+      where: { jobId: car.jobCardId, isDeleted: false, status: { not: "Cancelled" } },
       orderBy: { createdAt: "desc" }
     });
-    if (!invoice && car.jobCardId) {
+    if (!invoice) {
       invoice = await db.invoice.findFirst({
-        where: { jobId: car.jobCardId, isDeleted: false, status: { not: "Cancelled" } },
+        where: { vehicle: car.vehicle, jobId: null, isDeleted: false, status: { not: "Cancelled" } },
         orderBy: { createdAt: "desc" }
       });
     }
@@ -399,6 +534,9 @@ export class VehicleCheckinService {
     return updatedCar;
   }
 
+  // EPB 2.13/17.7 — returns a pre-delete snapshot (car, job, linked
+  // outpasses) so the caller can write an audit entry with a real
+  // "Previous Value" instead of null.
   async deleteCheckin(id: string) {
     let car = await this.repository.findById(id);
     if (!car) {
@@ -406,15 +544,22 @@ export class VehicleCheckinService {
     }
 
     if (car) {
+      const job = car.jobCardId ? await db.job.findFirst({ where: { id: car.jobCardId } }) : null;
+      const outpasses = await db.outPass.findMany({ where: { carInId: car.id, isDeleted: false } });
+      const snapshot = { car, job, outpasses };
+
       if (car.jobCardId) {
         await this.repository.deleteJobCard(car.jobCardId);
       }
       await this.repository.deleteJobCard(car.id);
       await this.repository.deleteOutpassesByCarInId(car.id);
       await this.repository.delete(car.id);
+      return snapshot;
     } else {
+      const job = await db.job.findFirst({ where: { id } });
       await this.repository.deleteJobCard(id);
       await this.repository.delete(id);
+      return { car: null, job, outpasses: [] };
     }
   }
 }

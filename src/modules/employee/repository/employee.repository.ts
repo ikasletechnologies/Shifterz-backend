@@ -32,13 +32,14 @@ export class EmployeeRepository {
     return db.employee.count({ where: { franchiseId } });
   }
 
-  async create(id: string, data: any, hashedPassword: string | null, normalizedUsername: string | null) {
+  async create(id: string, data: any, hashedPassword: string | null, normalizedUsername: string | null, tx?: import('@prisma/client').Prisma.TransactionClient) {
     const franchiseId = (data.franchiseId && data.franchiseId !== "HQ") ? data.franchiseId : null;
     const isFranchiseEmployee = franchiseId !== null;
     const approvalStatus = data.approvalStatus || (isFranchiseEmployee ? "Pending" : "Approved");
     const status = data.status || (isFranchiseEmployee ? "Inactive" : "Active");
 
-    return db.employee.create({
+    const client = tx || db;
+    return client.employee.create({
       data: {
         id,
         name: data.name,

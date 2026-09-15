@@ -51,8 +51,9 @@ export class TransferRepository {
     return db.memberTransferRequest.findUnique({ where: { id } });
   }
 
-  async updateRequestStatus(id: string, status: string) {
-    return db.memberTransferRequest.update({
+  async updateRequestStatus(id: string, status: string, tx?: import('@prisma/client').Prisma.TransactionClient) {
+    const client = tx || db;
+    return client.memberTransferRequest.update({
       where: { id },
       data: { status }
     });
@@ -65,8 +66,9 @@ export class TransferRepository {
     });
   }
 
-  async createEmployeeFromTransfer(data: any) {
-    return db.employee.create({
+  async createEmployeeFromTransfer(data: any, tx?: import('@prisma/client').Prisma.TransactionClient) {
+    const client = tx || db;
+    return client.employee.create({
       data: {
         id: data.empId,
         name: data.name,
@@ -84,8 +86,9 @@ export class TransferRepository {
     });
   }
 
-  async updateEmployeeFranchise(employeeId: string, franchiseId: string | null) {
-    return db.employee.update({
+  async updateEmployeeFranchise(employeeId: string, franchiseId: string | null, tx?: import('@prisma/client').Prisma.TransactionClient) {
+    const client = tx || db;
+    return client.employee.update({
       where: { id: employeeId },
       data: { franchiseId }
     });

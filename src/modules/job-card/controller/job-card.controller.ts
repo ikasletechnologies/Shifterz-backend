@@ -92,28 +92,6 @@ export class JobCardController {
     }
   };
 
-  submitChecklist = async (req: AuthRequest, res: Response, next: NextFunction) => {
-    try {
-      const id = String(req.params.id);
-      const oldValue = await db.job.findUnique({ where: { id } });
-      const result = await this.service.submitChecklist(id, req.body.checklist, req.user);
-      await logAudit({
-        module: "JOB",
-        recordId: id,
-        action: "SUBMIT_CHECKLIST",
-        userId: req.user?.id || "unknown",
-        branchId: req.user?.franchiseId || null,
-        oldValue,
-        newValue: result,
-        ipAddress: req.ip,
-        device: req.headers['user-agent'],
-      });
-      res.json(result);
-    } catch (error) {
-      next(error);
-    }
-  };
-
   uploadQcPhotos = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const id = String(req.params.id);
@@ -209,7 +187,7 @@ export class JobCardController {
       const result = await this.service.resolveAdditionalWork(awId, req.body, req.user);
       await logAudit({
         module: "ADDITIONAL_WORK",
-        recordId: result.jobId,
+        recordId: result?.jobId || awId,
         action: req.body.status === 'Approved' ? "APPROVE" : "REJECT",
         userId: req.user?.id || "unknown",
         branchId: req.user?.franchiseId || null,

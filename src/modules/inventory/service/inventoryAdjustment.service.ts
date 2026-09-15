@@ -2,6 +2,7 @@ import { InventoryAdjustmentRepository } from '../repository/inventoryAdjustment
 import type { CreateAdjustmentDTO } from '../validation/inventoryAdjustment.validation.js';
 import { db } from '../../../lib/db.js';
 import { NotFoundError } from '../../../shared/errors/NotFoundError.js';
+import { ValidationError } from '../../../shared/errors/ValidationError.js';
 import { resolveDataScope, scopeWhere, type ScopeActor } from '../../../shared/scope/dataScope.js';
 import {
   assertApproverAuthority,
@@ -63,12 +64,22 @@ export class InventoryAdjustmentService {
       if (!item) throw new NotFoundError("Inventory item not found");
 
       assertAdjustmentWithinStock(item.stock, request.requestedQty);
-      const newStock = resolveNewStock(item.stock, request.requestedQty);
-
-      const updatedItem = await tx.inventory.update({
-        where: { id: item.id },
-        data: { stock: newStock },
-      });
+      let updatedItem;
+      if (request.requestedQty < 0) {
+        const decrementQty = Math.abs(request.requestedQty);
+        const updatedCount = await tx.inventory.updateMany({
+          where: { id: item.id, stock: { gte: decrementQty } },
+          data: { stock: { decrement: decrementQty } },
+        });
+        if (updatedCount.count === 0) throw new ValidationError("Insufficient stock for adjustment");
+        updatedItem = await tx.inventory.findUniqueOrThrow({ where: { id: item.id } });
+      } else {
+        const updatedCount = await tx.inventory.updateMany({
+          where: { id: item.id },
+          data: { stock: { increment: request.requestedQty } },
+        });
+        updatedItem = await tx.inventory.findUniqueOrThrow({ where: { id: item.id } });
+      }
 
       await tx.inventoryMovement.create({
         data: buildAdjustmentMovementData({

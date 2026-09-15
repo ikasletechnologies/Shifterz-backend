@@ -103,7 +103,7 @@ export class LeadService {
 
   async updateLead(id: string, data: any, updatedBy?: string, actor?: ScopeActor) {
     // Capture previous assignment before update
-    const scope = resolveDataScope(actor);
+    const scope = actor ? resolveDataScope(actor) : { unrestricted: true, franchiseId: null };
     const existing = await this.repository.findById(id, scopeWhere(scope));
     if (!existing) throw new NotFoundError("Lead not found");
 
@@ -154,25 +154,20 @@ export class LeadService {
 
     if (updatedLead.status === "Converted" && updatedLead.phone) {
       await this.handleConvertedLeadCustomer(updatedLead, updatedLead.franchiseId);
-    } else if (updatedLead.phone) {
-      const existingCust = await this.repository.findCustomerByPhone(updatedLead.phone);
-      if (existingCust && existingCust.visits === 0) {
-        await this.repository.deleteCustomer(existingCust.id);
-      }
     }
 
     return updatedLead;
   }
 
   async deleteLead(id: string, actor?: ScopeActor) {
-    const scope = resolveDataScope(actor);
+    const scope = actor ? resolveDataScope(actor) : { unrestricted: true, franchiseId: null };
     const existing = await this.repository.findById(id, scopeWhere(scope));
     if (!existing) throw new NotFoundError("Lead not found");
     return this.repository.softDelete(id);
   }
 
   async getAssignmentHistory(leadId: string, actor?: ScopeActor) {
-    const scope = resolveDataScope(actor);
+    const scope = actor ? resolveDataScope(actor) : { unrestricted: true, franchiseId: null };
     const lead = await this.repository.findById(leadId, scopeWhere(scope));
     if (!lead) throw new NotFoundError("Lead not found");
     return db.leadAssignmentHistory.findMany({
@@ -187,7 +182,7 @@ export class LeadService {
    * Idempotent: safe to call multiple times on the same lead.
    */
   async convertLead(leadId: string, convertedBy?: string, actor?: ScopeActor) {
-    const scope = resolveDataScope(actor);
+    const scope = actor ? resolveDataScope(actor) : { unrestricted: true, franchiseId: null };
     const lead = await this.repository.findById(leadId, scopeWhere(scope));
     if (!lead) throw new NotFoundError("Lead not found");
 
@@ -195,77 +190,99 @@ export class LeadService {
     return result;
   }
 
+  private conversionLocks: Record<string, Promise<any>> = {};
+
   /**
    * Core conversion logic.
-   * - Creates Customer if one doesn't already exist for this lead.
-   * - Transfers ALL lead fields: city, alternateNumber, vehicleMake, vehicleModel, etc.
+   * - Atomic and idempotent. Uses mutex lock to serialize concurrent conversions per lead.
+   * - Creates Customer if one doesn't already exist for this lead's phone.
+   * - Transfers lead fields to Customer.
    * - Bi-directional link: lead.customerId ↔ customer.convertedLeadId.
-   * - Lead history (followUps, assignmentHistory, transferHistory) is untouched.
    */
   private async handleConvertedLeadCustomer(lead: any, franchiseId: string | null) {
-    const conversionTime = new Date();
+    const lockKey = lead.id;
+    let resolver: () => void;
+    const currentLock = this.conversionLocks[lockKey] || Promise.resolve();
+    const nextLock = new Promise<void>((resolve) => { resolver = resolve; });
+    this.conversionLocks[lockKey] = nextLock;
 
-    // Check if already converted (idempotent guard)
-    if (lead.customerId) {
-      return db.customer.findUnique({ where: { id: lead.customerId } });
-    }
+    try {
+      await currentLock;
 
-    // Also guard against duplicate by phone (existing customer flow)
-    let customer = await this.repository.findCustomerByPhone(lead.phone);
+      // Re-fetch lead to check if converted by concurrent call
+      const freshLead = await db.lead.findUnique({ where: { id: lead.id } });
+      if (!freshLead) throw new NotFoundError("Lead not found");
 
-    if (!customer) {
-      const customerId = await generateSequentialId("CUS");
-      customer = await this.repository.createCustomer({
-        id: customerId,
-        name: lead.name,
-        phone: lead.phone,
-        alternateNumber: lead.alternateNumber ?? null,
-        email: lead.email ?? "",
-        vehicle: lead.vehicle ?? "",
-        model: lead.vehicleModel ?? "",
-        vehicleMake: lead.vehicleMake ?? null,
-        vehicleModel: lead.vehicleModel ?? null,
-        city: lead.city ?? null,
-        visits: 0,
-        totalSpend: 0,
-        lastVisit: conversionTime,
-        convertedLeadId: lead.id,   // link customer → lead
-        convertedAt: conversionTime,
-        franchiseId,
+      if (freshLead.customerId) {
+        const existingLinkedCustomer = await db.customer.findUnique({ where: { id: freshLead.customerId } });
+        if (existingLinkedCustomer) return existingLinkedCustomer;
+      }
+
+      return await db.$transaction(async (tx) => {
+        const conversionTime = new Date();
+
+        // Guard against duplicate by phone
+        let customer = await tx.customer.findFirst({
+          where: { phone: freshLead.phone }
+        });
+
+        if (!customer) {
+          const customerId = await generateSequentialId("CUS");
+          customer = await tx.customer.create({
+            data: {
+              id: customerId,
+              name: freshLead.name,
+              phone: freshLead.phone,
+              alternateNumber: freshLead.alternateNumber ?? null,
+              email: freshLead.email ?? "",
+              vehicle: freshLead.vehicle ?? "",
+              model: freshLead.vehicleModel ?? "",
+              vehicleMake: freshLead.vehicleMake ?? null,
+              vehicleModel: freshLead.vehicleModel ?? null,
+              city: freshLead.city ?? null,
+              visits: 0,
+              totalSpend: 0,
+              lastVisit: conversionTime,
+              convertedLeadId: freshLead.id,   // link customer → lead
+              convertedAt: conversionTime,
+              franchiseId,
+            }
+          });
+        } else if (!customer.convertedLeadId) {
+          customer = await tx.customer.update({
+            where: { id: customer.id },
+            data: {
+              convertedLeadId: freshLead.id,
+              convertedAt: conversionTime,
+              isDeleted: false,
+              deletedAt: null,
+              vehicleMake: customer.vehicleMake ?? freshLead.vehicleMake ?? null,
+              vehicleModel: customer.vehicleModel ?? freshLead.vehicleModel ?? null,
+              city: customer.city ?? freshLead.city ?? null,
+              alternateNumber: customer.alternateNumber ?? freshLead.alternateNumber ?? null,
+            },
+          });
+        }
+
+        // Link lead → customer and stamp convertedAt
+        await tx.lead.update({
+          where: { id: freshLead.id },
+          data: {
+            customerId: customer.id,
+            convertedAt: conversionTime,
+            status: "Converted",
+          }
+        });
+
+        // Check for pending referrals matching this customer phone
+        await this.referralService.handleCustomerConversion(customer.phone, customer.id, tx);
+
+        return customer;
       });
-    } else if (!customer.convertedLeadId) {
-      // Existing customer by phone — update the back-link if not already set.
-      // Re-linking must also un-hide the record: this phone match can land on
-      // a customer that was soft-deleted (e.g. the zero-visit stub cleanup
-      // below), and relinking it to a real conversion should make it visible
-      // again rather than leaving an orphaned, invisible "deleted" customer.
-      customer = await db.customer.update({
-        where: { id: customer.id },
-        data: {
-          convertedLeadId: lead.id,
-          convertedAt: conversionTime,
-          isDeleted: false,
-          deletedAt: null,
-          // Enrich any missing fields
-          vehicleMake: customer.vehicleMake ?? lead.vehicleMake ?? null,
-          vehicleModel: customer.vehicleModel ?? lead.vehicleModel ?? null,
-          city: customer.city ?? lead.city ?? null,
-          alternateNumber: customer.alternateNumber ?? lead.alternateNumber ?? null,
-        },
-      });
+    } finally {
+      resolver!();
+      delete this.conversionLocks[lockKey];
     }
-
-    // Link lead → customer and stamp convertedAt
-    await this.repository.update(lead.id, {
-      customerId: customer!.id,
-      convertedAt: conversionTime,
-      status: "Converted",
-    });
-
-    // Check for pending referrals matching this customer phone
-    await this.referralService.handleCustomerConversion(customer.phone, customer.id);
-
-    return customer;
   }
 
   // Cross-franchise lead transfer. Authority model:

@@ -3,10 +3,21 @@ import { PaymentsService } from '../service/payments.service.js';
 import type { AuthRequest } from '../../../middleware/auth.middleware.js';
 import { resolveDataScope } from '../../../shared/scope/dataScope.js';
 import { logAudit, redactSensitive } from '../../../shared/services/audit.service.js';
+import { dispatchOutstandingPaymentAlerts } from '../../../shared/services/notification.service.js';
 import { db } from '../../../lib/db.js';
 
 export class PaymentsController {
   constructor(private readonly service: PaymentsService = new PaymentsService()) {}
+
+  // ─── HQ Alerts Sweep (§3.10) ────────────────────────────────────────────────
+  // Not event-triggered — meant to be invoked periodically, same convention
+  // as QcController.dispatchAlerts / WorkshopController's equivalent.
+  dispatchOutstandingAlerts = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const result = await dispatchOutstandingPaymentAlerts();
+      res.json({ success: true, ...result });
+    } catch (error) { next(error); }
+  };
 
   getAllPayments = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {

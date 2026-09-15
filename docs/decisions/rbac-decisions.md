@@ -562,3 +562,42 @@ Important sequencing: this decision defines who may see which dashboard class. I
 ---
 
 **D-08 through D-21: register complete.** All 14 decisions locked. Proceed to RBAC-01: action catalog derived strictly from this file.
+
+---
+
+## D-22 — QC Template Publish Authority
+
+Added during Phase 4B-2D-D (QC checklist governance/versioning), after the Draft/Published/Superseded version model (Phase 4B-2D-C) made "administer a template" split into two materially different actions for the first time: editing a Draft (low-stakes, reversible before publish) versus publishing a version (makes it the one effective checklist franchises' QC Starts actually freeze from — high-stakes, and the trigger that supersedes whatever was previously live). D-18 authorized "administer QC templates" as a single undifferentiated capability, before that distinction existed as a technical concept in this codebase; D-18's own RBAC-implication line anticipated exactly this kind of refinement ("precise view/use action names finalized ... after the actual QC routes are inventoried"). This decision does not expand or narrow D-18's already-locked "who"/"scope" — it gives the existing authority boundary a name for the newly-real publish action specifically.
+
+**Who**
+- `SUPER_ADMIN` — may publish HQ (global) template versions.
+- `HQ_USER` — may publish HQ (global) template versions.
+- `FRANCHISE_ADMIN` — may publish template versions within their own franchise only.
+- `QUALITY_INSPECTOR` — cannot publish (D-18: view/use only, never administration).
+- `BRANCH_MANAGER` — cannot publish (D-18 excludes BRANCH_MANAGER from template administration entirely).
+- Other operational roles — cannot publish.
+
+**Scope**
+- `SUPER_ADMIN` / `HQ_USER`: global — may publish the HQ scope's Draft, superseding the current HQ Published version.
+- `FRANCHISE_ADMIN`: own franchise only — may publish their own franchise's Draft, superseding that franchise's own current Published version. Cannot publish the HQ/global scope, and cannot publish another franchise's version, under any condition.
+- Identical scope boundary D-18 already established for `qc:templates:manage` — this decision does not alter it.
+
+**Conditions**
+- Publishing operates only on a version currently in `Draft` status; publishing an already-Published or Superseded version is rejected, not silently re-applied.
+- Publishing must be atomic: the previously-Published version of the same scope becomes `Superseded` and the target Draft becomes `Published` within one transaction — never a state with two Published versions or zero Published versions for a scope mid-operation.
+- `qc:templates:manage` continues to authorize Draft creation/editing only; it does not by itself authorize publishing. `qc:templates:publish` is a separate, additional grant.
+- Publish actions must be audit-tracked (same requirement D-18 already stated for template configuration changes generally), recording the previous and newly-published version.
+
+**Exceptions**
+- None beyond what D-18 already excludes (`QUALITY_INSPECTOR`, `BRANCH_MANAGER`, and every other operational role).
+
+**RBAC implication**
+- New action: `qc:templates:publish`, added to `ACTION_CATALOG` (RBAC-02) alongside the existing `qc:templates:manage`. Proposed in `defaultGrants.ts` for `HQ_USER` and `FRANCHISE_ADMIN` only, in the same entries where `qc:templates:manage` already appears — this file is a proposal an admin must apply via the grant-management API, not a live grant, consistent with every other entry in it. `SUPER_ADMIN` needs no entry (already unconditionally granted `ALL_ACTIONS`, per `resolveActionPermissionsPure`).
+
+**Basis**: direct extension of D-18's already-locked "who"/"scope," applied to a distinction (Draft-edit vs. publish) that did not exist as a separate technical capability at the time D-18 was written.
+
+**Status**: LOCKED.
+
+---
+
+**D-22 added.** Register now covers D-08 through D-22.

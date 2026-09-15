@@ -384,12 +384,45 @@ export class ReportRepository {
     return db.lead.findMany({ where: { assignedTo: employeeName || "", date: { gte: from }, isDeleted: false } });
   }
 
-  async getInvoicesForEmployeePerformance(jobIds: string[], customerNames: string[], from: Date) {
+  // EPB §3.8/§12.7/§12.8 (Section 3 Finding 2B remediation) — a Quality
+  // Inspector is never a Job.technicianId/serviceAdvisorId, so
+  // getJobsForEmployeePerformance structurally always returns zero jobs for
+  // one, and every job-derived metric (assigned/completed/pending/
+  // qcFailures/reworkCount) was silently 0 regardless of how much QC work
+  // they actually did. QCInspection already records one row per inspection
+  // attempt (attemptNumber, inspectorId, result, decidedAt — see
+  // qc.service.ts's decide()); this reuses that existing table rather than
+  // introducing a new QC tracking model or duplicating qc.service.ts's own
+  // logic.
+  async getQCInspectionsForEmployeePerformance(inspectorId: string, from: Date) {
+    return db.qCInspection.findMany({
+      where: { inspectorId, createdAt: { gte: from } },
+    });
+  }
+
+  // EPB §3.8/§10.11 Revenue Contribution (Section 3 Finding 2A remediation) —
+  // previously compared Invoice.id (a different id namespace — Job ids are
+  // generated via generateSequentialId("JOB"), Invoice ids are not) against
+  // Job ids, a comparison that could never match. That left the
+  // customer-name fallback as the entire real mechanism, which could both
+  // MISS revenue (name mismatch/formatting) and OVER-COUNT it (a different
+  // employee's job for the same customer, in the same date window, still
+  // matched by name). Invoice.jobId is the real link, populated at billing
+  // time (see billing.service.ts's createInvoice, data.jobId). An invoice
+  // with no jobId at all is a legitimate case (a standalone/manual invoice
+  // not tied to any job — see billing.validation.ts's own comment on
+  // manualGstRate/manualHsnSac) but has no defensible link to any specific
+  // employee's job-based work, so it is correctly excluded here rather than
+  // guessed at via customer name. Cancelled invoices are also now excluded
+  // — they were previously counted, which no other revenue calculation in
+  // this codebase does (see getRevenueSummary/getOutstandingReport).
+  async getInvoicesForEmployeePerformance(jobIds: string[], from: Date) {
     return db.invoice.findMany({
       where: {
-        OR: [{ id: { in: jobIds } }, { client: { in: customerNames } }],
-        date: { gte: from },
+        jobId: { in: jobIds },
         isDeleted: false,
+        status: { not: 'Cancelled' },
+        date: { gte: from },
       },
     });
   }

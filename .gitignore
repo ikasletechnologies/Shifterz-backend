@@ -13,6 +13,10 @@
 # testing
 /coverage
 
+# E2E fixture credentials generated per-run by scripts/e2e-qc-templates-fixtures-setup.ts
+# (disposable test-only data, never real credentials, but generated/machine-specific)
+scripts/e2e-qc-templates-fixtures.json
+
 # next.js
 /.next/
 /out/

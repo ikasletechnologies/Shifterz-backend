@@ -211,10 +211,14 @@ export class InventoryService {
       });
       assertSufficientHqStock(hqItem, franchiseItem.name, qtyToDispatch);
 
-      const updatedHqItem = await tx.inventory.update({
-        where: { id: hqItem.id },
-        data: { stock: hqItem.stock - qtyToDispatch },
+      const updatedHqCount = await tx.inventory.updateMany({
+        where: { id: hqItem.id, stock: { gte: qtyToDispatch } },
+        data: { stock: { decrement: qtyToDispatch } },
       });
+      if (updatedHqCount.count === 0) {
+        throw new ValidationError(`Insufficient stock for ${franchiseItem.name}`);
+      }
+      const updatedHqItem = await tx.inventory.findUniqueOrThrow({ where: { id: hqItem.id } });
 
       // INV-02 — the movement's own franchiseId is the *destination*
       // franchise (req.franchiseId), not the HQ item's franchiseId (null).
@@ -309,8 +313,8 @@ export class InventoryService {
   // NEGATIVE STOCK PROTECTION CONSUMPTION
   // ═══════════════════════════════════════════════════════════════
 
-  async consumeItem(id: string, quantity: number, reference: string, userId: string) {
-    return db.$transaction(async (tx) => {
+  async consumeItem(id: string, quantity: number, reference: string, userId: string, customTx?: any) {
+    const runInTx = async (tx: any) => {
       // Pessimistic transaction lock
       const item = await tx.inventory.findFirst({
         where: { id },
@@ -322,10 +326,14 @@ export class InventoryService {
         throw new ValidationError(`Insufficient stock for ${item.name}. Available: ${item.stock}, Required: ${quantity}`);
       }
 
-      const updated = await tx.inventory.update({
-        where: { id },
-        data: { stock: item.stock - quantity },
+      const updatedCount = await tx.inventory.updateMany({
+        where: { id, stock: { gte: quantity } },
+        data: { stock: { decrement: quantity } },
       });
+      if (updatedCount.count === 0) {
+        throw new ValidationError(`Insufficient stock for ${item.name}`);
+      }
+      const updated = await tx.inventory.findUniqueOrThrow({ where: { id } });
 
       // Low stock notification trigger
       if (updated.stock <= updated.reorder) {
@@ -353,7 +361,13 @@ export class InventoryService {
       });
 
       return updated;
-    });
+    };
+
+    if (customTx) {
+      return runInTx(customTx);
+    } else {
+      return db.$transaction(runInTx);
+    }
   }
 
   // INV-01A — franchise-scope fix. Previously unscoped: any authenticated

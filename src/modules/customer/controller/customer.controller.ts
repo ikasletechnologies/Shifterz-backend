@@ -8,13 +8,17 @@ export class CustomerController {
   constructor(private readonly service: CustomerService = new CustomerService()) {}
 
   private getTenantFilter(req: AuthRequest) {
-    let tenantFilter: any = {};
-    if (req.user) {
-      if (req.user.role !== "SUPER_ADMIN" && req.user.role !== "HQ_USER" && req.user.franchiseId) {
-        tenantFilter = { franchiseId: req.user.franchiseId };
+    return scopeWhere(resolveDataScope(req.user));
+  }
+
+  private checkCustomerAccess(customer: any, req: AuthRequest) {
+    if (req.user && req.user.role !== "SUPER_ADMIN" && req.user.role !== "HQ_USER" && req.user.franchiseId) {
+      if (customer.franchiseId !== req.user.franchiseId) {
+        const error: any = new Error("Access denied to this customer profile");
+        error.statusCode = 403;
+        throw error;
       }
     }
-    return tenantFilter;
   }
 
   getCustomers = async (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -31,12 +35,7 @@ export class CustomerController {
     try {
       const id = String(req.params.id);
       const customer = await this.service.getCustomerById(id);
-      // Validate tenant access
-      if (req.user && req.user.role !== "SUPER_ADMIN" && req.user.role !== "HQ_USER" && req.user.franchiseId) {
-        if (customer.franchiseId !== req.user.franchiseId) {
-          return res.status(403).json({ error: "Access denied to this customer profile" });
-        }
-      }
+      this.checkCustomerAccess(customer, req);
       res.json(customer);
     } catch (error) {
       next(error);

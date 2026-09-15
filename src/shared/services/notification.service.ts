@@ -1,4 +1,5 @@
 import { db } from '../../lib/db.js';
+import { ReportService } from '../../modules/report/service/report.service.js';
 
 // ─── Core Primitives ──────────────────────────────────────────────────────────
 
@@ -556,4 +557,42 @@ export async function dispatchQcAlerts() {
   }
 
   return { highFailureFranchises, delayedCount, multiReworkCount };
+}
+
+// ─── Financial Notification Events (EPB §3.10) ────────────────────────────────
+
+/**
+ * Sweep: High Outstanding Payments Alert for HQ (§3.10)
+ * Not event-triggered — meant to be invoked periodically, same convention
+ * as dispatchQcAlerts/dispatchWorkshopReminders above. Per-franchise
+ * outstanding total (ReportService.getRevenueSummary's outstandingPayments,
+ * the same figure the HQ dashboard already displays) compared against a
+ * threshold. The EPB names this alert but does not specify a number —
+ * like dispatchQcAlerts's FAILURE_RATE_THRESHOLD/DELAYED_QC_HOURS/
+ * REWORK_THRESHOLD constants, this is a named, commented, single-place-
+ * adjustable placeholder, not a silently invented business rule.
+ */
+export async function dispatchOutstandingPaymentAlerts() {
+  const OUTSTANDING_THRESHOLD = 50000; // ₹ — placeholder pending business policy; adjust here only
+
+  const reportService = new ReportService();
+  const franchises = await db.franchise.findMany({
+    where: { isDeleted: false, status: 'Active' },
+    select: { id: true, name: true },
+  });
+
+  let alertedCount = 0;
+  for (const franchise of franchises) {
+    const { outstandingPayments } = await reportService.getRevenueSummary(franchise.id);
+    if (outstandingPayments > OUTSTANDING_THRESHOLD) {
+      alertedCount++;
+      await sendNotification(
+        'HQ',
+        'High Outstanding Payments',
+        `${franchise.name} has ₹${outstandingPayments.toLocaleString('en-IN')} in outstanding payments, above the ₹${OUTSTANDING_THRESHOLD.toLocaleString('en-IN')} alert threshold.`
+      ).catch(console.error);
+    }
+  }
+
+  return { alertedCount, threshold: OUTSTANDING_THRESHOLD };
 }

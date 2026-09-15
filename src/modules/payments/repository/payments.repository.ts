@@ -45,7 +45,9 @@ export class PaymentsRepository {
     clientName: string,
     receiptNumber: string,
     franchiseId: string | null,
-    outstandingBalance?: number
+    outstandingBalance?: number,
+    idempotencyKey?: string,
+    tx?: import('@prisma/client').Prisma.TransactionClient
   ) {
     const parseDate = (d?: string | null) => {
       if (!d) return new Date();
@@ -53,7 +55,8 @@ export class PaymentsRepository {
       return isNaN(parsed.getTime()) ? new Date() : parsed;
     };
 
-    return db.payment.create({
+    const client = tx || db;
+    return client.payment.create({
       data: {
         id,
         invoiceId: data.invoiceId || null,
@@ -74,6 +77,7 @@ export class PaymentsRepository {
         approvedBy: data.approvedBy || null,
         createdBy: data.createdBy || data.receivedBy || null,
         franchiseId,
+        idempotencyKey: idempotencyKey || data.idempotencyKey || null,
       },
     });
   }
@@ -90,8 +94,9 @@ export class PaymentsRepository {
     return db.payment.findMany({ where: { customerId, isDeleted: false, ...scopeWhere }, orderBy: { date: "desc" } });
   }
 
-  async updateInvoiceStatus(id: string, status: string) {
-    return db.invoice.update({
+  async updateInvoiceStatus(id: string, status: string, tx?: import('@prisma/client').Prisma.TransactionClient) {
+    const client = tx || db;
+    return client.invoice.update({
       where: { id },
       data: { status },
     });
@@ -101,10 +106,11 @@ export class PaymentsRepository {
     return db.customer.findFirst({ where: { phone } });
   }
 
-  async incrementCustomerSpend(id: string, amountToAdd: number) {
-    const cust = await db.customer.findUnique({ where: { id } });
+  async incrementCustomerSpend(id: string, amountToAdd: number, tx?: import('@prisma/client').Prisma.TransactionClient) {
+    const client = tx || db;
+    const cust = await client.customer.findUnique({ where: { id } });
     if (!cust) return null;
-    return db.customer.update({
+    return client.customer.update({
       where: { id },
       data: { totalSpend: cust.totalSpend + amountToAdd },
     });

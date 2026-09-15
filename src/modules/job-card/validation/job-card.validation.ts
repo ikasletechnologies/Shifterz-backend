@@ -54,17 +54,6 @@ export const updateJobCardSchema = z.object({
   })
 });
 
-export const qcChecklistSchema = z.object({
-  body: z.object({
-    checklist: z.array(z.object({
-      id: z.string(),
-      label: z.string(),
-      passed: z.boolean(),
-      remark: z.string().optional(),
-    })),
-  })
-});
-
 // ─── Additional Work Approval ─────────────────────────────────────────────────
 
 export const createAdditionalWorkSchema = z.object({
@@ -128,7 +117,6 @@ export const JOB_PHOTO_CATEGORIES = [
 
 export type CreateJobCardDTO = z.infer<typeof createJobCardSchema>['body'];
 export type UpdateJobCardDTO = z.infer<typeof updateJobCardSchema>['body'];
-export type QcChecklistDTO = z.infer<typeof qcChecklistSchema>['body'];
 export type CreateAdditionalWorkDTO = z.infer<typeof createAdditionalWorkSchema>['body'];
 export type ApproveAdditionalWorkDTO = z.infer<typeof approveAdditionalWorkSchema>['body'];
 export type WorkStageUpdateDTO = z.infer<typeof workStageUpdateSchema>['body'];
