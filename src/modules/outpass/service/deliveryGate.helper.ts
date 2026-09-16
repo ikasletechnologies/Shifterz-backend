@@ -27,7 +27,7 @@ export function assertJobQcPassed(job: JobLike | null, action = "generate an Out
   if (!job) {
     throw new ValidationError(`Cannot ${action} this vehicle: no matching Job Card found.`);
   }
-  if (!job.passedAt) {
+  if (!job.passedAt && job.status !== "Ready For Billing" && job.status !== "QC Passed") {
     throw new ValidationError(
       `Cannot ${action} this vehicle: Job has not passed Quality Control yet (current status: "${job.status}").`
     );

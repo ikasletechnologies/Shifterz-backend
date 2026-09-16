@@ -96,7 +96,7 @@ export class BillingService {
     if (!jobId || type !== 'Invoice') return;
     const job = await db.job.findFirst({ where: { id: jobId, isDeleted: false, ...(franchiseId ? { franchiseId } : {}) } });
     if (!job) throw new ValidationError(`Job ${jobId} not found`);
-    if (!job.passedAt) {
+    if (!job.passedAt && job.status !== "Ready For Billing" && job.status !== "QC Passed") {
       throw new ValidationError(
         `Job ${jobId} has not passed Quality Control yet (current status: "${job.status}"). Billing cannot proceed until QC is passed.`
       );
