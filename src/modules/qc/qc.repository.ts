@@ -62,6 +62,47 @@ async function buildFrozenChecklist(tx: any, franchiseId: string | null): Promis
   };
 }
 
+// Phase 4B-3-C-A — QC Decision Integrity. The single place both the
+// mandatory-completeness rule (Phase 4B-2C, unchanged in substance — moved
+// here purely so it runs against the same transactionally-locked row as the
+// new rule below, closing the TOCTOU race described on recordDecision) and
+// the new mandatory-Failed-blocks-Pass rule are checked, always against
+// whatever `checklist`/`checklistDefinition` recordDecision just locked —
+// never a pre-transaction snapshot. Optional (non-mandatory) items are
+// filtered out of `mandatoryIds` up front, so a Failed optional item can
+// never affect the result either way, by construction. Returns a
+// human-readable rejection message, or null if the checklist supports the
+// requested overall result.
+function validateChecklistForDecision(
+  rawChecklist: unknown,
+  rawDefinition: unknown,
+  requestedResult: 'Passed' | 'Failed'
+): string | null {
+  const definition = Array.isArray(rawDefinition) ? (rawDefinition as FrozenChecklistItem[]) : [];
+  const mandatoryIds = definition.filter((t) => t.mandatory).map((t) => t.id);
+  if (mandatoryIds.length === 0) return null;
+
+  const checklist = Array.isArray(rawChecklist) ? (rawChecklist as { id: string; result?: string }[]) : [];
+  const byId = new Map(checklist.map((item) => [item.id, item]));
+
+  const incompleteIds = mandatoryIds.filter((id) => {
+    const entry = byId.get(id);
+    return !entry || entry.result === 'Unanswered' || entry.result === undefined;
+  });
+  if (incompleteIds.length > 0) {
+    return `Checklist is incomplete: ${incompleteIds.length} mandatory item(s) have not been answered.`;
+  }
+
+  if (requestedResult === 'Passed') {
+    const failedMandatoryIds = mandatoryIds.filter((id) => byId.get(id)?.result === 'Failed');
+    if (failedMandatoryIds.length > 0) {
+      return `Cannot record an overall Pass: ${failedMandatoryIds.length} mandatory checklist item(s) are marked Failed. Record an overall Fail instead.`;
+    }
+  }
+
+  return null;
+}
+
 export class QcRepository {
   // ─── QC Queue ─────────────────────────────────────────────────────────────
 
@@ -240,6 +281,35 @@ export class QcRepository {
   // result), without touching Job or JobHistory again. This is the same
   // conditional-update pattern already used by
   // JobCardService.resolveMaterialConsumption for the same reason.
+  //
+  // Phase 4B-3-C-A — QC Decision Integrity. Before Phase 4B-3-C-A, the
+  // mandatory-completeness rule (assertChecklistComplete) was checked once
+  // in QcService.decide(), against a plain pre-transaction read
+  // (findLatestInspection) — a real TOCTOU race, since a concurrent
+  // submitChecklist call (itself a plain UPDATE against this same
+  // QCInspection row, see updateInspection below) could change the
+  // checklist's content after that read but before this transaction's
+  // conditional UPDATE commits. Fixed here by locking the QCInspection row
+  // FIRST, as this transaction's very first statement, via `SELECT ... FOR
+  // UPDATE`: Postgres blocks any other UPDATE against a FOR-UPDATE-locked
+  // row until this transaction ends, so a concurrent submitChecklist call
+  // cannot interleave between this validation read and this transaction's
+  // eventual commit/rollback — it simply waits, then either succeeds
+  // (if this decide() call is rejected below and the transaction rolls back
+  // having written nothing) or fails via its own existing Pending-guard (if
+  // this decide() call commits and finalizes the attempt first). This same
+  // lock-then-validate step also enforces two Phase 4B-3-C-A business rules,
+  // both scoped to `validateChecklistForDecision` and the inline Fail-reason
+  // check below: (1) a mandatory item marked Failed blocks an overall Pass
+  // (Fail remains allowed), and (2) an overall Fail requires a non-empty
+  // `reason`. Both checks are gated on `current.result === 'Pending'`
+  // specifically so a retry against an already-finalized attempt (idempotent
+  // same-result replay, or a genuine conflict) is never turned into a new
+  // validation failure — it must keep falling through unchanged to the
+  // existing idempotent/conflict classification below, per Phase 4B-3-C-A's
+  // explicit instruction. Phase 4B-3-B's inspector-ownership check remains
+  // entirely in QcService.decide(), called before this method — unrelated
+  // and unaffected; this method has no ownership concept of its own.
   async recordDecision(jobId: string, inspectionId: string, data: {
     result: 'Passed' | 'Failed';
     reason?: string | null;
@@ -248,6 +318,25 @@ export class QcRepository {
     performedBy: string;
   }) {
     return db.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw<{
+        result: string;
+        checklist: unknown;
+        checklistDefinition: unknown;
+      }[]>`
+        SELECT "result", "checklist", "checklistDefinition" FROM "QCInspection" WHERE "id" = ${inspectionId} FOR UPDATE
+      `;
+      const current = locked[0];
+
+      if (current && current.result === 'Pending') {
+        if (data.result === 'Failed' && !(data.reason && data.reason.trim())) {
+          return { outcome: 'invalid' as const, detail: 'A non-empty reason is required to record a QC Fail.' };
+        }
+        const checklistError = validateChecklistForDecision(current.checklist, current.checklistDefinition, data.result);
+        if (checklistError) {
+          return { outcome: 'invalid' as const, detail: checklistError };
+        }
+      }
+
       const claim = await tx.qCInspection.updateMany({
         where: { id: inspectionId, result: 'Pending' },
         data: {

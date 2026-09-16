@@ -65,30 +65,6 @@ export class QcService {
     }
   }
 
-  // Phase 4B-2C — mandatory-checklist completeness, checked only at the
-  // decision boundary. `submitChecklist` is a genuinely incremental save
-  // (the checklist dialog reseeds from whatever was last saved and can be
-  // resubmitted any number of times before a decision), so gating
-  // completeness there would block an inspector from saving legitimate
-  // partial progress. This check is narrowly scoped to checklist
-  // completeness only — it does not add any other Pass/Fail precondition
-  // (photos, failure reason, rework evidence, etc. remain untouched, out of
-  // this phase's scope). A checklist with zero mandatory items (the default
-  // for every pre-existing row) short-circuits immediately.
-  //
-  // Phase 4B-2D-A — no longer re-resolves QCChecklistTemplate at all.
-  // `mandatoryIds` now comes from `checklistDefinition`, frozen once at
-  // Start (see QcRepository.buildFrozenChecklist) — a template change made
-  // after Start (adding a new mandatory item, or flipping an existing
-  // item's mandatory flag either way) has zero effect on an already-open
-  // inspection's completeness requirement. This is the fix for the
-  // Phase 4B-2D discovery's HIGH-severity finding: a live-resolved mandatory
-  // check could previously demand an item the inspector was never shown.
-  // Structurally this is otherwise the same shape the pre-4B-2D-A version
-  // used against a live template query: mandatory ids come from one source
-  // (there: QCChecklistTemplate; here: the frozen definition), cross-
-  // referenced against `checklist` (Phase 4B-2C, submitted-items-only) to
-  // find anything still missing or explicitly Unanswered.
   // Phase 4B-3-B — QC Inspector Ownership. Business rule: one Pending
   // attempt has exactly one owning inspector (QCInspection.inspectorId, set
   // once at creation by either getOrCreateOpenInspection or
@@ -108,25 +84,6 @@ export class QcService {
   private assertInspectionOwner(inspection: { inspectorId?: string | null }, user?: ActingUser) {
     if (inspection.inspectorId && inspection.inspectorId !== user?.id) {
       throw new ForbiddenError("You are not the assigned inspector for this QC inspection.");
-    }
-  }
-
-  private assertChecklistComplete(inspection: { checklist: unknown; checklistDefinition: unknown }) {
-    const definition = Array.isArray(inspection.checklistDefinition) ? (inspection.checklistDefinition as FrozenChecklistItem[]) : [];
-    const mandatoryIds = definition.filter((t) => t.mandatory).map((t) => t.id);
-    if (mandatoryIds.length === 0) return;
-
-    const checklist = Array.isArray(inspection.checklist) ? (inspection.checklist as { id: string; result?: string }[]) : [];
-    const byId = new Map(checklist.map((item) => [item.id, item]));
-
-    const incompleteIds = mandatoryIds.filter((id) => {
-      const entry = byId.get(id);
-      return !entry || entry.result === 'Unanswered' || entry.result === undefined;
-    });
-    if (incompleteIds.length > 0) {
-      throw new ValidationError(
-        `Checklist is incomplete: ${incompleteIds.length} mandatory item(s) have not been answered.`
-      );
     }
   }
 
@@ -323,13 +280,9 @@ export class QcService {
       throw new ValidationError("No open QC inspection for this job. Submit a checklist before recording a decision.");
     }
 
-    // Phase 4B-2C — only checked for an attempt still awaiting its decision;
-    // a retry against an already-finalized attempt skips straight to
-    // recordDecision's existing idempotent/conflict handling unchanged.
-    //
-    // Phase 4B-3-B — ownership is likewise only checked while the attempt is
-    // still Pending: there is nothing left to "own" once it's finalized, and
-    // a decide() call against an already-decided attempt (from anyone) must
+    // Phase 4B-3-B — ownership is only checked while the attempt is still
+    // Pending: there is nothing left to "own" once it's finalized, and a
+    // decide() call against an already-decided attempt (from anyone) must
     // keep falling through to recordDecision's existing idempotent/conflict
     // classification untouched, not a new ownership rejection. Checking
     // ownership here — before recordDecision's own conditional UPDATE even
@@ -337,10 +290,19 @@ export class QcService {
     // non-owner) resolve as "non-owner rejected for lack of ownership"
     // rather than racing the DB update: inspectorId is write-once for a
     // Pending attempt's lifetime (see assertInspectionOwner), so this
-    // pre-transaction read is safe to trust.
+    // pre-transaction read is safe to trust for ownership specifically.
+    //
+    // Phase 4B-3-C-A — mandatory-completeness, mandatory-Failed-blocks-Pass,
+    // and Fail-reason-required are deliberately NOT checked here anymore.
+    // Unlike inspectorId (write-once for a Pending attempt), the checklist
+    // content is mutable up until the moment of decision (submitChecklist is
+    // a legitimate incremental save), so checking it against this
+    // pre-transaction `latest` snapshot would reopen exactly the TOCTOU race
+    // the Phase 4B-3-C discovery identified. Those checks now live inside
+    // repository.recordDecision, against the row it locks transactionally —
+    // see that method's comment for the full reasoning.
     if (latest.result === 'Pending') {
       this.assertInspectionOwner(latest, user);
-      this.assertChecklistComplete(latest);
     }
 
     const outcome = await this.repository.recordDecision(jobId, latest.id, {
@@ -350,6 +312,14 @@ export class QcService {
       reworkRequired: data.reworkRequired,
       performedBy: user?.id || 'SYSTEM',
     });
+
+    // Phase 4B-3-C-A — a rejection here means recordDecision's transaction
+    // wrote nothing at all (it validated against the locked row before ever
+    // attempting the conditional UPDATE) — safe to surface directly as a
+    // ValidationError, exactly like the pre-existing 'conflict' case below.
+    if (outcome.outcome === 'invalid') {
+      throw new ValidationError(outcome.detail);
+    }
 
     if (outcome.outcome === 'conflict') {
       throw new ValidationError(
