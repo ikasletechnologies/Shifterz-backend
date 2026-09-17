@@ -19,7 +19,7 @@ import {
   notifyWorkCompletion,
 } from '../../../shared/services/notification.service.js';
 
-const QC_TRANSITION_STATUSES = ["Inspecting", "QC Passed", "QC Failed", "Rework"];
+const QC_TRANSITION_STATUSES = ["Inspecting", "QC Passed", "QC Failed", "Rework", "Rework Required", "Ready For Billing"];
 const MANAGEMENT_ROLES = ['SUPER_ADMIN', 'HQ_USER', 'FRANCHISE_ADMIN', 'BRANCH_MANAGER'];
 const QC_ROLES = ['QUALITY_INSPECTOR', 'QUALITY_INSPECTION', 'QC_INSPECTOR', 'QC', 'QUALITY_ASSURANCE'];
 const normalizeRole = (role?: string) => (role || '').toUpperCase().replace(/[\s_]+/g, '_');
@@ -319,9 +319,12 @@ export class JobCardService {
         // Must be coming from active work status — except "Waiting for Quality
         // Check", which a job in "Rework Required" must also be able to reach
         // so a technician can resubmit reworked jobs back into the QC queue
-        // (Phase 4A: this transition was previously blocked entirely).
+        // (Phase 4A: this transition was previously blocked entirely), and
+        // which a job already marked "Completed" (the Workshop module's
+        // intermediate "Complete Work" step, set outside this gate) must also
+        // be able to reach via the subsequent "Send to QC" action.
         const allowedSourceStatuses = data.status === 'Waiting for Quality Check'
-          ? [...workActiveStatuses, 'Rework Required']
+          ? [...workActiveStatuses, 'Rework Required', 'Completed']
           : workActiveStatuses;
         if (!allowedSourceStatuses.includes(job.status)) {
           throw new ValidationError(

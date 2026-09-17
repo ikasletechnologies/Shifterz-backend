@@ -15,6 +15,11 @@ const envSchema = z.object({
   // configured; requireSystemCredential() fails closed when it's unset,
   // never treats "not configured" as "no check needed".
   SCHEDULER_SECRET: z.string().optional(),
+  // Uploaded photos (vehicle/QC/job-card) are stored on disk outside the
+  // repo/deployment bundle so they survive redeploys and never end up
+  // tracked in git. Falls back to <cwd>/public/uploads when unset so local
+  // setups without this configured still work.
+  UPLOAD_DIR: z.string().optional(),
 });
 
 const _env = envSchema.safeParse(process.env);

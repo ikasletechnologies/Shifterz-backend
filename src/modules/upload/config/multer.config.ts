@@ -1,5 +1,8 @@
 import multer from "multer";
 import path from "path";
+import fs from "fs";
+
+import { env } from "../../../config/env.js";
 
 // Phase 0.13 — every consumer of this endpoint (vehicle/QC/job/inspection
 // photos) only ever uploads images, so the allowlist is scoped to that.
@@ -19,9 +22,21 @@ const ALLOWED_MIME_TO_EXT: Record<string, string[]> = {
 
 const MAX_FILE_SIZE_BYTES = (Number(process.env.UPLOAD_MAX_FILE_SIZE_MB) || 10) * 1024 * 1024;
 
+// Resolved once at module load: uploaded photos live on disk outside the
+// repo (UPLOAD_DIR), so a redeploy/git checkout never touches them and they
+// never risk getting committed. Falls back to public/uploads for setups
+// that haven't configured UPLOAD_DIR yet.
+export const UPLOAD_DIR = env.UPLOAD_DIR
+  ? path.resolve(env.UPLOAD_DIR)
+  : path.join(process.cwd(), "public/uploads");
+
+// The configured directory may not exist yet (e.g. first run against a
+// fresh external path) — multer's diskStorage does not create it.
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
-    cb(null, path.join(process.cwd(), "public/uploads"));
+    cb(null, UPLOAD_DIR);
   },
   filename: function (req, file, cb) {
     // Never derived from the client-supplied original filename beyond its

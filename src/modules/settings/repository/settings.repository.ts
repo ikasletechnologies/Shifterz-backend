@@ -1,69 +1,69 @@
 import { db } from '../../../lib/db.js';
 import type { UpdateSettingDTO } from '../validation/settings.validation.js';
 
-export class SettingsRepository {
-  async getSettings() {
-    return db.setting.findUnique({
-      where: { id: "default" }
-    });
-  }
+const DEFAULT_SETTINGS_DATA = {
+  companyName: "ERP Shifterz",
+  address: "123 Main St",
+  phone: "1234567890",
+  email: "contact@shifterz.com",
+  gstin: "",
+  gstPct: 18,
+  currency: "INR",
+  agents: [],
+  categories: [],
+  securityGuards: [],
+  leadSources: [
+    "Website",
+    "Walk-In",
+    "Phone Call",
+    "WhatsApp",
+    "Google Business Profile",
+    "Facebook",
+    "Instagram",
+    "Justdial",
+    "Referral",
+    "Existing Customer",
+    "Corporate",
+    "Exhibition / Event",
+    "Manual Entry",
+    "Other"
+  ],
+  leadStatuses: [
+    "New",
+    "Assigned",
+    "Contacted",
+    "Follow-up Required",
+    "Quotation Sent",
+    "Negotiation",
+    "Converted",
+    "Lost",
+    "Closed"
+  ],
+  lostReasons: [
+    "Price",
+    "Competitor Chosen",
+    "No Response",
+    "Postponed",
+    "Budget Constraints",
+    "Duplicate Enquiry",
+    "Other"
+  ],
+  referralProgram: {},
+  loyaltyProgram: {},
+  workingHours: {},
+  notificationTemplates: {},
+  numberingSeries: {}
+};
 
-  async initDefaultSettings() {
-    return db.setting.create({
-      data: {
-        id: "default",
-        companyName: "ERP Shifterz",
-        address: "123 Main St",
-        phone: "1234567890",
-        email: "contact@shifterz.com",
-        gstin: "",
-        gstPct: 18,
-        currency: "INR",
-        agents: [],
-        categories: [],
-        securityGuards: [],
-        leadSources: [
-          "Website",
-          "Walk-In",
-          "Phone Call",
-          "WhatsApp",
-          "Google Business Profile",
-          "Facebook",
-          "Instagram",
-          "Justdial",
-          "Referral",
-          "Existing Customer",
-          "Corporate",
-          "Exhibition / Event",
-          "Manual Entry",
-          "Other"
-        ],
-        leadStatuses: [
-          "New",
-          "Assigned",
-          "Contacted",
-          "Follow-up Required",
-          "Quotation Sent",
-          "Negotiation",
-          "Converted",
-          "Lost",
-          "Closed"
-        ],
-        lostReasons: [
-          "Price",
-          "Competitor Chosen",
-          "No Response",
-          "Postponed",
-          "Budget Constraints",
-          "Duplicate Enquiry",
-          "Other"
-        ],
-        referralProgram: {},
-        loyaltyProgram: {},
-        workingHours: {},
-        notificationTemplates: {},
-        numberingSeries: {}
-      }
+export class SettingsRepository {
+  // Atomic — avoids the read-then-create race where two concurrent GETs
+  // both see no "default" row and both attempt to create it, the loser
+  // failing with a P2002 unique-constraint error on a plain read.
+  async getSettings() {
+    return db.setting.upsert({
+      where: { id: "default" },
+      update: {},
+      create: { id: "default", ...DEFAULT_SETTINGS_DATA }
     });
   }
 

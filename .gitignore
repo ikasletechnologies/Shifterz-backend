@@ -54,3 +54,8 @@ next-env.d.ts
 # logs
 logs/
 *.log
+
+# uploaded photos — dev fallback dir when UPLOAD_DIR isn't set; real
+# storage lives outside the repo (see UPLOAD_DIR in src/config/env.ts)
+public/uploads/*
+!public/uploads/.gitkeep

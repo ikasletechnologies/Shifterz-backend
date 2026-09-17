@@ -5,18 +5,12 @@ export class SettingsService {
   constructor(private readonly repository: SettingsRepository = new SettingsRepository()) {}
 
   async getSettings() {
-    let settings = await this.repository.getSettings();
-    if (!settings) {
-      settings = await this.repository.initDefaultSettings();
-    }
-    return settings;
+    return this.repository.getSettings();
   }
 
   async updateSettings(data: UpdateSettingDTO) {
-    let settings = await this.repository.getSettings();
-    if (!settings) {
-      await this.repository.initDefaultSettings();
-    }
+    // Ensures the "default" row exists (idempotent upsert) before updating it.
+    await this.repository.getSettings();
     return this.repository.updateSettings(data);
   }
 }

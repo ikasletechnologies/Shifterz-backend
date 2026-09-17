@@ -21,7 +21,7 @@ export class JobCardController {
           if (req.user.name?.trim()) conditions.push({ technician: { equals: req.user.name.trim(), mode: "insensitive" } });
           filter = conditions.length > 0 ? { OR: conditions } : { id: "__NO_MATCH__" };
         } else if (["QUALITY_INSPECTOR", "QUALITY_INSPECTION", "QC_INSPECTOR", "QC", "QUALITY_ASSURANCE"].includes(userRole)) {
-          filter = { status: { in: ["Completed", "Work Completed", "QC Pending", "Waiting QC", "Inspecting", "QC Passed", "QC Failed", "Ready For Billing"] } };
+          filter = { status: { in: ["Completed", "Work Completed", "QC Pending", "Waiting QC", "Waiting for Quality Check", "Rework Required", "Inspecting", "QC Passed", "QC Failed", "Ready For Billing"] } };
         } else if (userRole.includes("BILLING") || userRole.includes("ACCOUNTANT")) {
           filter = { status: { in: ["Ready For Billing", "QC Passed", "Delivered", "Out"] } };
         }

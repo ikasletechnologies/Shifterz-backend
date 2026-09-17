@@ -78,10 +78,12 @@ export class QcService {
   // decision. A null/undefined inspectorId (should not occur via either
   // creation path, both of which always stamp a value) is treated as
   // "no owner recorded" and blocks no one, since there is nothing to
-  // enforce against. Management roles get NO automatic bypass in this
-  // phase (explicit business decision) — a future takeover mechanism, if
-  // ever needed, is a separate, not-yet-designed action.
+  // enforce against. Management roles (SUPER_ADMIN, HQ_USER, FRANCHISE_ADMIN,
+  // BRANCH_MANAGER) bypass ownership and may take over any inspector's
+  // attempt — reverses the earlier "no automatic bypass" decision per
+  // explicit request.
   private assertInspectionOwner(inspection: { inspectorId?: string | null }, user?: ActingUser) {
+    if (MANAGEMENT_ROLES.includes(normalizeRole(user?.role))) return;
     if (inspection.inspectorId && inspection.inspectorId !== user?.id) {
       throw new ForbiddenError("You are not the assigned inspector for this QC inspection.");
     }

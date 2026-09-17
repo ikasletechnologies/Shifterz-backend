@@ -16,6 +16,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 import { env } from "./config/env.js";
+import { UPLOAD_DIR } from "./modules/upload/config/multer.config.js";
 
 const app = express();
 const PORT = env.PORT || 5000;
@@ -69,7 +70,10 @@ app.use(
 );
 app.use(cookieParser());
 app.use(express.json({ limit: "2mb" }));
-app.use("/uploads", express.static(path.join(__dirname, "../public/uploads")));
+// Served from the same UPLOAD_DIR multer writes to (see
+// modules/upload/config/multer.config.ts) — kept outside the repo via env
+// so uploaded photos survive redeploys and never get committed.
+app.use("/uploads", express.static(UPLOAD_DIR));
 
 import { authRoutes } from "./modules/auth/auth.routes.js";
 import { leadRouter } from "./modules/lead/routes/lead.routes.js";
