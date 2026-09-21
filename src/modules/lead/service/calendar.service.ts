@@ -30,6 +30,13 @@ export class CalendarService {
       const dow = from.getDay(); // 0 = Sunday
       from.setDate(from.getDate() - dow);
       from.setHours(0, 0, 0, 0);
+      // `to` must be re-based on `from` before applying the +6 day offset —
+      // `from` may have rolled into a different month than refDate (e.g. the
+      // week's Sunday falls in the previous month), and calling
+      // to.setDate(from.getDate() + 6) while `to` is still in refDate's
+      // original month context resolves the day number against the wrong
+      // month, corrupting the range.
+      to.setTime(from.getTime());
       to.setDate(from.getDate() + 6);
       to.setHours(23, 59, 59, 999);
     } else {

@@ -1,40 +1,71 @@
 import { db } from '../../lib/db.js';
 
-const idCounters: Record<string, number> = {
-  CUS: 0,
-  INV: 0,
-  QT: 0,
-  EST: 0,
-  L: 0,
-  JOB: 0,
-};
-
-export const generateSequentialId = async (prefix: string): Promise<string> => {
-  if (idCounters[prefix] === 0) {
-    let maxId = 0;
-    let model: any = null;
-    if (prefix === "CUS") model = db.customer;
-    else if (prefix === "INV" || prefix === "QT" || prefix === "EST") model = db.invoice;
-    else if (prefix === "L") model = db.lead;
-    else if (prefix === "JOB") model = db.job;
-
-    if (model) {
-      const allRecords = await model.findMany({
-        where: { id: { startsWith: prefix } },
-        select: { id: true }
-      });
-      for (const record of allRecords) {
-        const numStr = record.id.replace(prefix, "");
-        const num = parseInt(numStr, 10);
-        if (!isNaN(num) && num > maxId) {
-          maxId = num;
-        }
-      }
+const getMaxExistingId = async (prefix: string, prisma: any): Promise<number> => {
+  const modelMap: Record<string, any> = {
+    CUS: prisma.customer,
+    CUST: prisma.customer,
+    JOB: prisma.job,
+    L: prisma.lead,
+    INV: prisma.invoice,
+  };
+  const model = modelMap[prefix];
+  let maxId = 0;
+  if (model) {
+    const records = await model.findMany({
+      where: { id: { startsWith: prefix } },
+      select: { id: true },
+      take: 5000
+    });
+    for (const r of records) {
+      const num = parseInt(r.id.replace(/^[A-Za-z]+[-_]?/, ""), 10);
+      if (!isNaN(num) && num > maxId) maxId = num;
     }
-    idCounters[prefix] = maxId;
   }
-  idCounters[prefix] = (idCounters[prefix] || 0) + 1;
-  return `${prefix}${String(idCounters[prefix]).padStart(3, "0")}`;
+  return maxId;
 };
 
-export const generateUid = (prefix: string) => `${prefix}${Date.now().toString(36).toUpperCase()}`;
+/**
+ * Database-backed atomic sequential ID generator across multiple backend process instances.
+ * Uses atomic upsert on JobSequence table with PostgreSQL row-level counter increment.
+ */
+export const generateSequentialId = async (prefix: string, tx?: any): Promise<string> => {
+  const prisma = tx || db;
+
+  if ((prisma as any).jobSequence) {
+    const existingSeq = await (prisma as any).jobSequence.findUnique({ where: { prefix } });
+    if (!existingSeq) {
+      const maxId = await getMaxExistingId(prefix, prisma);
+      await (prisma as any).jobSequence.create({
+        data: { prefix, counter: maxId }
+      }).catch(() => {});
+    }
+  }
+
+  let attempts = 0;
+  while (attempts < 10) {
+    attempts++;
+    try {
+      if ((prisma as any).jobSequence) {
+        const seq = await (prisma as any).jobSequence.upsert({
+          where: { prefix },
+          update: { counter: { increment: 1 } },
+          create: { prefix, counter: 1 }
+        });
+        return `${prefix}-${String(seq.counter).padStart(5, "0")}`;
+      }
+    } catch (err: any) {
+      if (attempts >= 10) {
+        const maxId = await getMaxExistingId(prefix, prisma);
+        return `${prefix}-${String(maxId + attempts).padStart(5, "0")}`;
+      }
+      await new Promise((r) => setTimeout(r, 5 + Math.floor(Math.random() * 15)));
+    }
+  }
+
+  const maxId = await getMaxExistingId(prefix, prisma);
+  return `${prefix}-${String(maxId + 1).padStart(5, "0")}`;
+};
+
+
+export const generateUid = (prefix: string) => `${prefix}${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+

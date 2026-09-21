@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { CallbackController } from '../controller/callback.controller.js';
 import { authenticate } from '../../../middleware/auth.middleware.js';
+import { requireSystemCredential } from '../../../middleware/system-auth.middleware.js';
 import { validate } from '../../../middleware/validate.middleware.js';
 import {
   createCallbackSchema,
@@ -10,6 +11,15 @@ import {
 
 export const callbackRouter = Router();
 const controller = new CallbackController();
+
+// D-20 — registered before callbackRouter.use(authenticate) below, so this
+// route is matched and fully handled before that blanket human-auth
+// middleware ever runs; it never requires a human JWT.
+callbackRouter.post(
+  '/reminders/dispatch',
+  requireSystemCredential('scheduler:callbacks:dispatch'),
+  controller.dispatchReminders
+);
 
 callbackRouter.use(authenticate);
 
@@ -33,6 +43,3 @@ callbackRouter.post('/:id/reschedule', validate(rescheduleCallbackSchema), contr
 
 // Soft delete a callback
 callbackRouter.delete('/:id', controller.deleteCallback);
-
-// Internal: dispatch reminder notifications (called by background scheduler)
-callbackRouter.post('/reminders/dispatch', controller.dispatchReminders);

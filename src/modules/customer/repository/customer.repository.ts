@@ -179,11 +179,16 @@ export class CustomerRepository {
     });
   }
 
-  async addWarranty(customerId: string, data: CreateWarrantyDTO) {
+  // WTY-01A (Fix 1) — warrantyNo is now always allocated by the caller
+  // (CustomerService.addWarranty, via the canonical WarrantyRepository
+  // allocator) and required here, closing the gap where this path created
+  // warranties with warrantyNo: null.
+  async addWarranty(customerId: string, data: CreateWarrantyDTO, warrantyNo: string) {
     const start = data.startDate || new Date();
     const expiry = new Date(start.getTime() + data.durationDays * 24 * 60 * 60 * 1000);
     return db.warranty.create({
       data: {
+        warrantyNo,
         customerId,
         vehicleNo: data.vehicleNo.toUpperCase(),
         jobId: data.jobId || null,
@@ -275,6 +280,7 @@ export class CustomerRepository {
     // 1. Find matching carIns to get candidate phones by jobCardId
     const matchingCarIns = await db.carIn.findMany({
       where: {
+        ...tenantFilter,
         OR: [
           { id: { contains: query, mode: 'insensitive' } },
           { jobCardId: { contains: query, mode: 'insensitive' } }
@@ -288,6 +294,7 @@ export class CustomerRepository {
     // 2. Find matching invoices to get candidate phones
     const matchingInvoices = await db.invoice.findMany({
       where: {
+        ...tenantFilter,
         id: { contains: query, mode: 'insensitive' },
         isDeleted: false
       },

@@ -30,6 +30,16 @@ notificationsRouter.get("/", async (req: Request, res: Response): Promise<void> 
 notificationsRouter.post("/:id/read", async (req: Request, res: Response): Promise<void> => {
   try {
     const id = String(req.params.id);
+    const userId = (req as any).user?.id || "HQ";
+    // Ownership check: without this, any authenticated user could mark any
+    // other user's (or another franchise's) notification as read just by
+    // guessing/enumerating its id — the same OR { userId }/{ userId: "HQ" }
+    // scope every other route in this file already applies.
+    const existing = await db.notification.findUnique({ where: { id } });
+    if (!existing || (existing.userId !== userId && existing.userId !== "HQ")) {
+      res.status(404).json({ error: "Notification not found" });
+      return;
+    }
     const updated = await db.notification.update({
       where: { id },
       data: { read: true }

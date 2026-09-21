@@ -2,18 +2,23 @@ import type { Response, NextFunction } from 'express';
 import { CustomerService } from '../service/customer.service.js';
 import type { AuthRequest } from '../../../middleware/auth.middleware.js';
 import { logAudit } from '../../../shared/services/audit.service.js';
+import { resolveDataScope, scopeWhere } from '../../../shared/scope/dataScope.js';
 
 export class CustomerController {
   constructor(private readonly service: CustomerService = new CustomerService()) {}
 
   private getTenantFilter(req: AuthRequest) {
-    let tenantFilter: any = {};
-    if (req.user) {
-      if (req.user.role !== "SUPER_ADMIN" && req.user.role !== "HQ_USER" && req.user.franchiseId) {
-        tenantFilter = { franchiseId: req.user.franchiseId };
+    return scopeWhere(resolveDataScope(req.user));
+  }
+
+  private checkCustomerAccess(customer: any, req: AuthRequest) {
+    if (req.user && req.user.role !== "SUPER_ADMIN" && req.user.role !== "HQ_USER" && req.user.franchiseId) {
+      if (customer.franchiseId !== req.user.franchiseId) {
+        const error: any = new Error("Access denied to this customer profile");
+        error.statusCode = 403;
+        throw error;
       }
     }
-    return tenantFilter;
   }
 
   getCustomers = async (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -30,12 +35,7 @@ export class CustomerController {
     try {
       const id = String(req.params.id);
       const customer = await this.service.getCustomerById(id);
-      // Validate tenant access
-      if (req.user && req.user.role !== "SUPER_ADMIN" && req.user.role !== "HQ_USER" && req.user.franchiseId) {
-        if (customer.franchiseId !== req.user.franchiseId) {
-          return res.status(403).json({ error: "Access denied to this customer profile" });
-        }
-      }
+      this.checkCustomerAccess(customer, req);
       res.json(customer);
     } catch (error) {
       next(error);
@@ -154,6 +154,8 @@ export class CustomerController {
     try {
       const id = String(req.params.id);
       const vehicleId = String(req.params.vehicleId);
+      const customer = await this.service.getCustomerById(id);
+      this.checkCustomerAccess(customer, req);
       const vehicle = await this.service.updateVehicle(id, vehicleId, req.body);
       res.json(vehicle);
     } catch (error) {
@@ -165,6 +167,8 @@ export class CustomerController {
     try {
       const id = String(req.params.id);
       const vehicleId = String(req.params.vehicleId);
+      const customer = await this.service.getCustomerById(id);
+      this.checkCustomerAccess(customer, req);
       await this.service.deleteVehicle(id, vehicleId);
       res.json({ success: true, message: "Vehicle removed" });
     } catch (error) {
@@ -176,7 +180,7 @@ export class CustomerController {
   getWarranties = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const id = String(req.params.id);
-      const warranties = await this.service.getWarranties(id);
+      const warranties = await this.service.getWarranties(id, req.user);
       res.json(warranties);
     } catch (error) {
       next(error);
@@ -186,7 +190,18 @@ export class CustomerController {
   addWarranty = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const id = String(req.params.id);
-      const warranty = await this.service.addWarranty(id, req.body);
+      const warranty = await this.service.addWarranty(id, req.body, req.user);
+      await logAudit({
+        module: "WARRANTY",
+        recordId: warranty.id,
+        action: "CREATE",
+        userId: req.user?.id || "unknown",
+        branchId: req.user?.franchiseId || null,
+        oldValue: null,
+        newValue: warranty,
+        ipAddress: req.ip,
+        device: req.headers['user-agent'],
+      });
       res.json(warranty);
     } catch (error) {
       next(error);
@@ -239,7 +254,12 @@ export class CustomerController {
   // Reports
   getReportsSummary = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const tenantFilter = this.getTenantFilter(req);
+      // EPB 2.4 — the canonical scope resolver, not the local getTenantFilter
+      // helper: that helper treats a franchise-role user with no franchiseId
+      // on their account as unrestricted (falls through to `{}`), which
+      // resolveDataScope/scopeWhere instead fails closed on (franchiseId:
+      // null, matching nothing rather than everything).
+      const tenantFilter = scopeWhere(resolveDataScope(req.user));
       const summary = await this.service.getReportsSummary(tenantFilter);
       res.json(summary);
     } catch (error) {
@@ -314,7 +334,8 @@ export class CustomerController {
   exportCSVReport = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const type = String(req.query.type || 'customer_register');
-      const tenantFilter = this.getTenantFilter(req);
+      // EPB 2.4 — same canonical scope resolver as getReportsSummary above.
+      const tenantFilter = scopeWhere(resolveDataScope(req.user));
       const csvContent = await this.service.getReportCSV(type, tenantFilter);
       res.setHeader('Content-Type', 'text/csv');
       res.setHeader('Content-Disposition', `attachment; filename=${type}_report.csv`);

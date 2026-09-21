@@ -54,7 +54,13 @@ export async function computeStaffPerformance(params: StaffPerformanceParams) {
   });
 
   const jobWhere: any = { isDeleted: false };
-  if (tenantFilter && tenantFilter.franchiseId) {
+  // Must mirror employeeWhere's spread: an HQ-controlled actor's tenantFilter
+  // is `{ franchiseId: null }` (scoped to HQ's own records), which a truthy
+  // check on `.franchiseId` would silently skip, leaving jobWhere completely
+  // unscoped and leaking every franchise's jobs into this report. Only a
+  // genuinely unrestricted scope omits the `franchiseId` key entirely (see
+  // dataScope.ts's `scopeWhere`/the `tenant` middleware).
+  if (tenantFilter && Object.prototype.hasOwnProperty.call(tenantFilter, "franchiseId")) {
     jobWhere.franchiseId = tenantFilter.franchiseId;
   }
   if (franchiseId !== undefined) {

@@ -1,10 +1,20 @@
 import { db } from "../../../lib/db.js";
 import type { CreateWarrantyDTO, UpdateWarrantyDTO, WarrantyClaimRecord } from "../types/warranty.types.js";
 
+// WTY-01A — Warranty has no franchiseId column of its own (confirmed in the
+// WTY-01 audit not to need one: customerId is a required, non-nullable
+// relation on every single warranty row, so franchise ownership can be
+// derived reliably through Customer.franchiseId for 100% of records, with
+// no schema change). `customerScopeWhere` is nested under the `customer`
+// relation filter — {} for an unrestricted actor (matches any customer,
+// a no-op filter), or {franchiseId: X} for a franchise-scoped actor.
+type CustomerScopeWhere = { franchiseId?: string | null };
+
 export class WarrantyRepository {
-  async findAll(filter: { customerId?: string; vehicleNo?: string; status?: string; search?: string }) {
+  async findAll(filter: { customerId?: string; vehicleNo?: string; status?: string; search?: string }, customerScopeWhere: CustomerScopeWhere = {}) {
     const where: any = {
       isDeleted: false,
+      customer: customerScopeWhere,
     };
 
     if (filter.customerId) where.customerId = filter.customerId;
@@ -12,6 +22,9 @@ export class WarrantyRepository {
     if (filter.status) where.status = filter.status;
 
     if (filter.search) {
+      // The top-level `customer: customerScopeWhere` above already
+      // constrains every branch of this OR to the actor's scope — no need
+      // to repeat it inside the OR itself.
       where.OR = [
         { warrantyNo: { contains: filter.search, mode: "insensitive" } },
         { vehicleNo: { contains: filter.search, mode: "insensitive" } },
@@ -28,6 +41,7 @@ export class WarrantyRepository {
             id: true,
             name: true,
             phone: true,
+            franchiseId: true,
           },
         },
       },
@@ -35,15 +49,16 @@ export class WarrantyRepository {
     });
   }
 
-  async findById(id: string) {
+  async findById(id: string, customerScopeWhere: CustomerScopeWhere = {}) {
     return db.warranty.findFirst({
-      where: { id, isDeleted: false },
+      where: { id, isDeleted: false, customer: customerScopeWhere },
       include: {
         customer: {
           select: {
             id: true,
             name: true,
             phone: true,
+            franchiseId: true,
           },
         },
       },
@@ -82,7 +97,12 @@ export class WarrantyRepository {
     return `${prefix}${seq}`;
   }
 
-  async create(data: CreateWarrantyDTO & { warrantyNo: string }) {
+  // customerId/vehicleNo are required here even though CreateWarrantyDTO
+  // itself allows them to be omitted by a caller — every service-layer
+  // caller (createWarranty, generateFromInvoice) resolves them to a real
+  // string (from the qualifying invoice or the invoice-derived customer)
+  // before reaching this repository method.
+  async create(data: CreateWarrantyDTO & { warrantyNo: string; customerId: string; vehicleNo: string }) {
     const start = data.startDate ? new Date(data.startDate) : new Date();
     const expiry = data.expiryDate
       ? new Date(data.expiryDate)

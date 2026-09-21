@@ -35,9 +35,27 @@ export class QcController {
     } catch (error) { next(error); }
   };
 
+  // Phase 4B-2D-C — template mutations previously generated no AuditLog
+  // entries at all (unlike every other QC action in this controller).
+  // `branchId` is always the ACTING user's own franchiseId (null for HQ),
+  // matching every other logAudit call in this file — never derived from
+  // the target record — so tenant scope is respected automatically: an
+  // out-of-scope actor's underlying service call throws before this line is
+  // ever reached, so no audit entry is created for a rejected attempt.
   createChecklistTemplateItem = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const result = await this.service.createChecklistTemplateItem(req.body, req.user);
+      await logAudit({
+        module: "QC_TEMPLATE",
+        recordId: result.id,
+        action: "CREATE",
+        userId: req.user?.id || "unknown",
+        branchId: req.user?.franchiseId || null,
+        oldValue: null,
+        newValue: result,
+        ipAddress: req.ip,
+        device: req.headers['user-agent'],
+      });
       res.status(201).json(result);
     } catch (error) { next(error); }
   };
@@ -45,7 +63,19 @@ export class QcController {
   updateChecklistTemplateItem = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const id = String(req.params.id);
-      const result = await this.service.updateChecklistTemplateItem(id, req.body);
+      const oldValue = await this.service.getChecklistTemplateItemById(id);
+      const result = await this.service.updateChecklistTemplateItem(id, req.body, req.user);
+      await logAudit({
+        module: "QC_TEMPLATE",
+        recordId: id,
+        action: "UPDATE",
+        userId: req.user?.id || "unknown",
+        branchId: req.user?.franchiseId || null,
+        oldValue,
+        newValue: result,
+        ipAddress: req.ip,
+        device: req.headers['user-agent'],
+      });
       res.json(result);
     } catch (error) { next(error); }
   };
@@ -53,7 +83,19 @@ export class QcController {
   deleteChecklistTemplateItem = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const id = String(req.params.id);
-      await this.service.deleteChecklistTemplateItem(id);
+      const oldValue = await this.service.getChecklistTemplateItemById(id);
+      await this.service.deleteChecklistTemplateItem(id, req.user);
+      await logAudit({
+        module: "QC_TEMPLATE",
+        recordId: id,
+        action: "DELETE",
+        userId: req.user?.id || "unknown",
+        branchId: req.user?.franchiseId || null,
+        oldValue,
+        newValue: oldValue ? { ...oldValue, isDeleted: true } : null,
+        ipAddress: req.ip,
+        device: req.headers['user-agent'],
+      });
       res.json({ success: true, message: "Checklist item deleted" });
     } catch (error) { next(error); }
   };
@@ -79,12 +121,37 @@ export class QcController {
     } catch (error) { next(error); }
   };
 
+  // ─── QC Inspection Start (Phase 4B-1) ───────────────────────────────────────
+  // Thin wrapper exposing QcService.getOrCreateOpenInspection directly — until
+  // now it was only reachable as a side effect of submitChecklist/uploadPhotos,
+  // so the frontend had no way to open/lazy-start an attempt and get back the
+  // inspection record before doing anything else with it.
+
+  startInspection = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const jobId = String(req.params.jobId);
+      const result = await this.service.getOrCreateOpenInspection(jobId, req.user);
+      await logAudit({
+        module: "QC",
+        recordId: jobId,
+        action: "START_INSPECTION",
+        userId: req.user?.id || "unknown",
+        branchId: req.user?.franchiseId || null,
+        oldValue: null,
+        newValue: result,
+        ipAddress: req.ip,
+        device: req.headers['user-agent'],
+      });
+      res.status(200).json(result);
+    } catch (error) { next(error); }
+  };
+
   // ─── QC History (12.8) ─────────────────────────────────────────────────────
 
   listInspections = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const jobId = String(req.params.jobId);
-      const data = await this.service.listInspections(jobId);
+      const data = await this.service.listInspections(jobId, req.user);
       res.json(data);
     } catch (error) { next(error); }
   };

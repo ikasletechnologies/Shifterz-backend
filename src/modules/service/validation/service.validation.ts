@@ -11,7 +11,9 @@ export const createServiceSchema = z.object({
     duration: z.string().min(1, "Duration is required"),
     warranty: z.string().optional().default("1 Year"),
     desc: z.string().optional().default(""),
-    status: z.enum(["Active", "Inactive"]).optional().default("Active")
+    status: z.enum(["Active", "Inactive"]).optional().default("Active"),
+    hsnSac: z.string().optional(),
+    taxApplicable: z.coerce.boolean().optional().default(true)
   })
 });
 
@@ -26,7 +28,9 @@ export const updateServiceSchema = z.object({
     duration: z.string().optional(),
     warranty: z.string().optional(),
     desc: z.string().optional(),
-    status: z.enum(["Active", "Inactive"]).optional()
+    status: z.enum(["Active", "Inactive"]).optional(),
+    hsnSac: z.string().optional(),
+    taxApplicable: z.coerce.boolean().optional()
   })
 });
 

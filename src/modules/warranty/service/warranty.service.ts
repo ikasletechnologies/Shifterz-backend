@@ -2,6 +2,11 @@ import { WarrantyRepository } from "../repository/warranty.repository.js";
 import type { CreateWarrantyDTO, UpdateWarrantyDTO, WarrantyClaimDTO, WarrantyClaimRecord } from "../types/warranty.types.js";
 import { ValidationError, NotFoundError } from "../../../shared/errors/index.js";
 import { db } from "../../../lib/db.js";
+import { resolveDataScope, scopeWhere, type ScopeActor } from "../../../shared/scope/dataScope.js";
+import { assertQualifyingInvoice } from "./invoiceQualification.helper.js";
+import { assertWarrantyModifyAuthority } from "./warrantyAuthority.helper.js";
+
+type ActingUser = ScopeActor & { id?: string; name?: string };
 
 export class WarrantyService {
   private repository = new WarrantyRepository();
@@ -44,13 +49,21 @@ export class WarrantyService {
     return updated;
   }
 
-  async getAllWarranties(filter: { customerId?: string; vehicleNo?: string; status?: string; search?: string }) {
-    const warranties = await this.repository.findAll(filter);
+  // WTY-01A — franchise scoping (Fix 2). Warranty has no franchiseId of its
+  // own; ownership is derived through the required, always-present
+  // customerId -> Customer.franchiseId relation (confirmed reliable for
+  // every record in the WTY-01 audit — no schema change needed). The scope
+  // is applied at the query level via the repository's `customer:
+  // scopeWhere` filter, not fetched-then-checked.
+  async getAllWarranties(filter: { customerId?: string; vehicleNo?: string; status?: string; search?: string }, actor?: ScopeActor) {
+    const scope = resolveDataScope(actor);
+    const warranties = await this.repository.findAll(filter, scopeWhere(scope));
     return this.syncExpiryStatuses(warranties);
   }
 
-  async getWarrantyById(id: string) {
-    const warranty = await this.repository.findById(id);
+  async getWarrantyById(id: string, actor?: ScopeActor) {
+    const scope = resolveDataScope(actor);
+    const warranty = await this.repository.findById(id, scopeWhere(scope));
     if (!warranty) throw new NotFoundError("Warranty not found");
     const [synced] = await this.syncExpiryStatuses([warranty]);
     return synced;
@@ -108,23 +121,47 @@ export class WarrantyService {
     }
   }
 
-  async createWarranty(data: CreateWarrantyDTO) {
-    if (!data.customerId || !data.vehicleNo || !data.itemName) {
-      throw new ValidationError("Customer ID, vehicle number, and item/service name are required.");
+  // WTY-01C (D-W2, locked) — manual creation now REQUIRES a qualifying
+  // invoice (real Invoice type, not deleted, not Cancelled — the same bar
+  // generateFromInvoice's automatic trigger already applies) and derives
+  // customer/vehicle/franchise identity from that invoice rather than
+  // trusting client-supplied customerId/vehicleNo, closing the gap where a
+  // standalone warranty could be manufactured for an arbitrary
+  // customer/vehicle with no qualifying document behind it. Franchise scope
+  // is enforced the same way generateFromInvoice's manual trigger does it —
+  // a 404 for an out-of-scope invoice, not a 403, matching this codebase's
+  // don't-confirm-existence convention.
+  async createWarranty(data: CreateWarrantyDTO, actor?: ScopeActor) {
+    if (!data.invoiceId || !data.itemName) {
+      throw new ValidationError("Invoice ID and item/service name are required.");
     }
-    const validCustomerId = await this.resolveCustomerId(data.customerId, undefined, data.vehicleNo);
+
+    const scope = resolveDataScope(actor);
+    const invoice = await db.invoice.findFirst({ where: { id: data.invoiceId } });
+    assertQualifyingInvoice(invoice);
+    if (!scope.unrestricted && (invoice.franchiseId ?? null) !== scope.franchiseId) {
+      throw new NotFoundError("Invoice not found.");
+    }
+
+    const validCustomerId = await this.resolveCustomerId(invoice.client, invoice.phone, invoice.vehicle, invoice.franchiseId);
     const warrantyNo = await this.repository.allocateWarrantyNo();
     const created = await this.repository.create({
       ...data,
       customerId: validCustomerId,
+      vehicleNo: invoice.vehicle,
+      jobId: data.jobId || invoice.jobId || undefined,
+      invoiceId: invoice.id,
       warrantyNo,
     });
     const [synced] = await this.syncExpiryStatuses([created]);
     return synced;
   }
 
-  async updateWarranty(id: string, data: UpdateWarrantyDTO) {
-    const existing = await this.repository.findById(id);
+  // WTY-01C (D-W5, locked) — SUPER_ADMIN/HQ_USER only.
+  async updateWarranty(id: string, data: UpdateWarrantyDTO, actor?: ScopeActor) {
+    assertWarrantyModifyAuthority(actor?.role);
+    const scope = resolveDataScope(actor);
+    const existing = await this.repository.findById(id, scopeWhere(scope));
     if (!existing) throw new NotFoundError("Warranty not found");
 
     // PRD rule: Expired warranties shall become read-only.
@@ -137,11 +174,14 @@ export class WarrantyService {
     return synced;
   }
 
-  async addClaim(id: string, data: WarrantyClaimDTO) {
+  // WTY-01C (D-W5, locked) — SUPER_ADMIN/HQ_USER only.
+  async addClaim(id: string, data: WarrantyClaimDTO, actor?: ActingUser) {
+    assertWarrantyModifyAuthority(actor?.role);
     if (!data.description) {
       throw new ValidationError("Claim description is required.");
     }
-    const existing = await this.repository.findById(id);
+    const scope = resolveDataScope(actor);
+    const existing = await this.repository.findById(id, scopeWhere(scope));
     if (!existing) throw new NotFoundError("Warranty not found");
 
     // PRD rule: Expired warranties shall become read-only.
@@ -161,7 +201,9 @@ export class WarrantyService {
       claimDate: new Date().toISOString(),
       description: data.description,
       resolution: data.resolution || "Pending Investigation",
-      claimedBy: data.claimedBy || "Authorized User",
+      // WTY-01A (Fix 3) — the acting identity now always comes from the
+      // authenticated actor, never a client-supplied `claimedBy` string.
+      claimedBy: actor?.name || actor?.id || "Authorized User",
     };
 
     const updated = await this.repository.addClaim(id, existingClaims, newClaim, data.status);
@@ -169,7 +211,13 @@ export class WarrantyService {
     return synced;
   }
 
-  async generateFromInvoice(invoiceId: string) {
+  // WTY-01A (Fix 2) — `actor` is optional and used only to scope the
+  // manually-triggered path (POST /generate-from-invoice/:invoiceId, exposed
+  // to any authenticated user). The automatic call sites in
+  // billing.service.ts (invoice create/update) intentionally omit actor —
+  // that path already only ever targets the invoice it just created or
+  // updated itself, so there is no cross-franchise surface to close there.
+  async generateFromInvoice(invoiceId: string, actor?: ScopeActor) {
     const trimmedId = invoiceId.trim();
     const normInput = trimmedId.replace(/[^A-Z0-9]/g, "").toUpperCase();
 
@@ -213,6 +261,15 @@ export class WarrantyService {
     }
 
     if (!invoice) throw new NotFoundError(`Invoice "${invoiceId}" not found in Billing module.`);
+
+    if (actor) {
+      const scope = resolveDataScope(actor);
+      if (!scope.unrestricted && (invoice.franchiseId ?? null) !== scope.franchiseId) {
+        // 404, not 403 — matches this codebase's established convention of
+        // not confirming existence of out-of-scope records to the caller.
+        throw new NotFoundError(`Invoice "${invoiceId}" not found in Billing module.`);
+      }
+    }
 
     let targetInvoice = invoice;
     if (invoice.type !== "Invoice" && invoice.jobId) {
@@ -291,11 +348,20 @@ export class WarrantyService {
     return this.syncExpiryStatuses(createdList);
   }
 
-  async deleteWarranty(id: string) {
-    const existing = await this.repository.findById(id);
+  // WTY-01A (Fix 5) — now checks the LIVE expiry date, matching
+  // updateWarranty/addClaim, instead of only the persisted `status` field.
+  // The previous status-only check left a staleness window: a warranty
+  // whose expiryDate had already passed, but that hadn't been read via
+  // getAllWarranties/getWarrantyById since (the only place status gets
+  // lazily synced), could still be deleted.
+  // WTY-01C (D-W5, locked) — SUPER_ADMIN/HQ_USER only.
+  async deleteWarranty(id: string, actor?: ScopeActor) {
+    assertWarrantyModifyAuthority(actor?.role);
+    const scope = resolveDataScope(actor);
+    const existing = await this.repository.findById(id, scopeWhere(scope));
     if (!existing) throw new NotFoundError("Warranty not found");
     // PRD rule: Expired warranties shall become read-only. History remains permanent.
-    if (existing.status === "Expired") {
+    if (existing.status === "Expired" || new Date(existing.expiryDate) < new Date()) {
       throw new ValidationError("Expired warranties are read-only and cannot be deleted.");
     }
     await this.repository.softDelete(id);

@@ -1,11 +1,19 @@
 import { db } from '../../../lib/db.js';
 import type { CreatePaymentDTO } from '../validation/payments.validation.js';
 
+type FranchiseScopeWhere = { franchiseId?: string | null };
+
 export class PaymentsRepository {
-  async findAll() {
+  async findAll(scopeWhere: FranchiseScopeWhere = {}) {
     return db.payment.findMany({
-      where: { isDeleted: false },
+      where: { isDeleted: false, ...scopeWhere },
       orderBy: { date: "desc" },
+    });
+  }
+
+  async findById(id: string, scopeWhere: FranchiseScopeWhere = {}) {
+    return db.payment.findFirst({
+      where: { id, isDeleted: false, ...scopeWhere },
     });
   }
 
@@ -36,7 +44,10 @@ export class PaymentsRepository {
     data: CreatePaymentDTO,
     clientName: string,
     receiptNumber: string,
-    outstandingBalance?: number
+    franchiseId: string | null,
+    outstandingBalance?: number,
+    idempotencyKey?: string,
+    tx?: import('@prisma/client').Prisma.TransactionClient
   ) {
     const parseDate = (d?: string | null) => {
       if (!d) return new Date();
@@ -44,7 +55,8 @@ export class PaymentsRepository {
       return isNaN(parsed.getTime()) ? new Date() : parsed;
     };
 
-    return db.payment.create({
+    const client = tx || db;
+    return client.payment.create({
       data: {
         id,
         invoiceId: data.invoiceId || null,
@@ -64,6 +76,8 @@ export class PaymentsRepository {
         originalReceiptRef: data.originalReceiptRef || null,
         approvedBy: data.approvedBy || null,
         createdBy: data.createdBy || data.receivedBy || null,
+        franchiseId,
+        idempotencyKey: idempotencyKey || data.idempotencyKey || null,
       },
     });
   }
@@ -76,12 +90,13 @@ export class PaymentsRepository {
     return db.payment.findMany({ where: { jobId, isDeleted: false } });
   }
 
-  async findPaymentsByCustomerId(customerId: string) {
-    return db.payment.findMany({ where: { customerId, isDeleted: false }, orderBy: { date: "desc" } });
+  async findPaymentsByCustomerId(customerId: string, scopeWhere: FranchiseScopeWhere = {}) {
+    return db.payment.findMany({ where: { customerId, isDeleted: false, ...scopeWhere }, orderBy: { date: "desc" } });
   }
 
-  async updateInvoiceStatus(id: string, status: string) {
-    return db.invoice.update({
+  async updateInvoiceStatus(id: string, status: string, tx?: import('@prisma/client').Prisma.TransactionClient) {
+    const client = tx || db;
+    return client.invoice.update({
       where: { id },
       data: { status },
     });
@@ -91,13 +106,19 @@ export class PaymentsRepository {
     return db.customer.findFirst({ where: { phone } });
   }
 
-  async incrementCustomerSpend(id: string, amountToAdd: number) {
-    const cust = await db.customer.findUnique({ where: { id } });
-    if (!cust) return null;
-    return db.customer.update({
-      where: { id },
-      data: { totalSpend: cust.totalSpend + amountToAdd },
-    });
+  async incrementCustomerSpend(id: string, amountToAdd: number, tx?: import('@prisma/client').Prisma.TransactionClient) {
+    const client = tx || db;
+    // Atomic increment — the previous read-then-write (findUnique, then
+    // update with the read value + amountToAdd) lost updates whenever two
+    // payments for the same customer were recorded concurrently.
+    try {
+      return await client.customer.update({
+        where: { id },
+        data: { totalSpend: { increment: amountToAdd } },
+      });
+    } catch {
+      return null;
+    }
   }
 
   async softDelete(id: string) {

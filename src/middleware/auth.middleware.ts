@@ -3,6 +3,7 @@ import jwt from "jsonwebtoken";
 import type { JwtPayload } from "jsonwebtoken";
 import { env } from "../config/env.js";
 import { db } from "../lib/db.js";
+import { resolveActionPermissions, ALL_ACTIONS } from "../lib/auth.js";
 
 const JWT_SECRET = env.JWT_SECRET;
 
@@ -124,6 +125,47 @@ export const requirePermission = (permission: string) => {
     }
     
     next();
+  };
+};
+
+// RBAC-03 — the action-level counterpart to requireRole/requirePermission.
+// Not yet attached to any route (that's RBAC-04, gated on RBAC-02's grants
+// being seeded). Deliberately mirrors requireRole's shape: same 401/403
+// response contract, so swapping requireRole(...) for requireAction(...) on
+// a route later is a drop-in change, not a rewrite.
+//
+// Unlike requirePermission (which reads req.user.permissions, baked into the
+// JWT at login), this calls the DB-backed resolveActionPermissions() on
+// every request — actions can change without the affected user re-logging
+// in, at the cost of two extra queries per protected request. That's an
+// existing property of resolveActionPermissions itself (Pre-flight Patch C),
+// not a new tradeoff introduced here.
+//
+// Fails closed by construction: resolveActionPermissions() already returns
+// [] on any resolution error (see lib/auth.ts), and an empty/non-matching
+// list simply falls through to the 403 below — there is no code path here
+// that defaults to allow.
+//
+// `resolver` is injectable (defaults to the real DB-backed
+// resolveActionPermissions) so this middleware's branching logic — 401 with
+// no user, 403 on a missing action, next() on a match or the ALL_ACTIONS
+// sentinel — can be unit-tested with a fake resolver and zero DB dependency,
+// the same separation resolveActionPermissionsPure already established.
+export const requireAction = (
+  actionName: string,
+  resolver: (userId: string, role: string) => Promise<string[]> = resolveActionPermissions
+) => {
+  return async (req: AuthRequest, res: Response, next: NextFunction) => {
+    if (!req.user) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const actions = await resolver(req.user.id, req.user.role);
+    if (actions.includes(ALL_ACTIONS) || actions.includes(actionName)) {
+      return next();
+    }
+
+    return res.status(403).json({ error: `Forbidden: Missing action ${actionName}` });
   };
 };
 

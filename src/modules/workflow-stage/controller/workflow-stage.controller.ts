@@ -27,7 +27,7 @@ export class WorkflowStageController {
   updateStage = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const id = String(req.params.id);
-      const result = await this.service.updateStage(id, req.body);
+      const result = await this.service.updateStage(id, req.body, req.user);
       res.json(result);
     } catch (error) {
       next(error);
@@ -37,7 +37,7 @@ export class WorkflowStageController {
   deleteStage = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const id = String(req.params.id);
-      await this.service.deleteStage(id);
+      await this.service.deleteStage(id, req.user);
       res.json({ success: true, message: "Workflow stage deleted" });
     } catch (error) {
       next(error);

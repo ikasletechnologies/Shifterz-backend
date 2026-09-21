@@ -6,7 +6,6 @@ import { upload } from '../../upload/config/multer.config.js';
 import {
   createJobCardSchema,
   updateJobCardSchema,
-  qcChecklistSchema,
   createAdditionalWorkSchema,
   approveAdditionalWorkSchema,
   workStageUpdateSchema,
@@ -30,7 +29,13 @@ jobCardRouter.get('/:id/print',       controller.printJobCard);
 
 
 // ─── QC ───────────────────────────────────────────────────────────────────────
-jobCardRouter.post('/:id/qc-checklist', validate(qcChecklistSchema), controller.submitChecklist);
+// Phase 4B-2D-C — the legacy '/:id/qc-checklist' route (writing directly to
+// Job.checklist, bypassing the entire canonical QCInspection pipeline) was
+// removed here after confirming zero frontend callers, zero downstream
+// readers of Job.checklist, and no test dependency. The canonical checklist
+// path is PUT /api/qc/:jobId/checklist (qc.routes.ts). Job.checklist and
+// Job.qcPhotos DB fields are left in place (out of scope); qc-photos below
+// is a separate, still-legitimate upload path not covered by this removal.
 jobCardRouter.post('/:id/qc-photos',    upload.array('files'), controller.uploadQcPhotos);
 
 // ─── Job History ──────────────────────────────────────────────────────────────

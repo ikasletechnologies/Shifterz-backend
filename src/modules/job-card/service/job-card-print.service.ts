@@ -1,13 +1,15 @@
 import PDFDocument from 'pdfkit';
 import { db } from '../../../lib/db.js';
 import { NotFoundError } from '../../../shared/errors/NotFoundError.js';
+import { resolveDataScope, scopeWhere, type ScopeActor } from '../../../shared/scope/dataScope.js';
 import type { Response } from 'express';
 
 
 export class JobCardPrintService {
-  async generatePdf(jobId: string, copyType: 'workshop' | 'customer', res: Response): Promise<void> {
+  async generatePdf(jobId: string, copyType: 'workshop' | 'customer', res: Response, actor?: ScopeActor): Promise<void> {
+    const scope = resolveDataScope(actor);
     const job = await db.job.findFirst({
-      where: { id: jobId, isDeleted: false },
+      where: { id: jobId, isDeleted: false, ...scopeWhere(scope) },
     });
 
     if (!job) {

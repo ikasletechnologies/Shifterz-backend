@@ -25,6 +25,10 @@ export class AttendanceRepository {
     return db.employee.findUnique({ where: { id } });
   }
 
+  async findById(id: string) {
+    return db.attendance.findFirst({ where: { id, isDeleted: false } });
+  }
+
   async findExistingCheckIn(employeeId: string, date: string) {
     return db.attendance.findFirst({
       where: { employeeId, date: safeIsoDate(date), isDeleted: false }

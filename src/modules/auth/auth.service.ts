@@ -2,7 +2,7 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import { authRepository } from "./auth.repository.js";
-import { resolveUserPermissions } from "../../lib/auth.js";
+import { resolveUserPermissions, resolveActionPermissions } from "../../lib/auth.js";
 import { env } from "../../config/env.js";
 import { db } from "../../lib/db.js";
 
@@ -106,13 +106,27 @@ export class AuthService {
     }
 
     const baseRole = user.role.split("|")[0];
-    const resolvedPermissions = await resolveUserPermissions(user.id, user.role);
+    // Phase 4B-2E — coarse module-name strings (`permissions`) already
+    // existed for sidebar/nav gating; `actions` is the fine-grained RBAC
+    // action list (e.g. "qc:templates:publish") this same
+    // resolveActionPermissions() already computes for requireAction() on
+    // every protected backend route (auth.middleware.ts). Exposing it here
+    // reuses that exact, already-tested resolution logic — no new
+    // authorization decision is made, just surfaced to the frontend so a
+    // security-sensitive action like Publish can be UI-gated on the real
+    // grant instead of a role-name heuristic. The backend route gate
+    // remains authoritative regardless of what this response says.
+    const [resolvedPermissions, resolvedActions] = await Promise.all([
+      resolveUserPermissions(user.id, user.role),
+      resolveActionPermissions(user.id, user.role),
+    ]);
 
     return {
       id: user.id,
       username: user.username,
       role: user.role,
       permissions: resolvedPermissions,
+      actions: resolvedActions,
       franchiseId: user.franchiseId,
       hqControlled: user.hqControlled,
       branch: resolveBranch(user),

@@ -25,6 +25,14 @@ export const createInvoiceSchema = z.object({
     franchiseId: z.string().nullable().optional(),
     warranty: z.string().nullable().optional(),
     discountReason: z.string().nullable().optional(),
+    // GST-03 — inputs to GstInvoiceResolverService, not stored verbatim.
+    // buyerState is only needed when no matching Customer record (by phone)
+    // already has one on file. manualGstRate/manualHsnSac are required only
+    // when the invoice has no jobId (no service line items to resolve a rate
+    // from) — see GstInvoiceResolverService.resolveManualLineItem.
+    buyerState: z.string().nullable().optional(),
+    manualGstRate: z.union([z.string(), z.number()]).nullable().optional(),
+    manualHsnSac: z.string().nullable().optional(),
   })
 });
 
@@ -64,6 +72,12 @@ export const cancelInvoiceSchema = z.object({
 export const shareInvoiceSchema = z.object({
   body: z.object({
     channel: z.enum(["whatsapp", "email"]),
+  })
+});
+
+export const deleteInvoiceSchema = z.object({
+  body: z.object({
+    reason: z.string().min(1, "A reason is required to permanently delete an invoice"),
   })
 });
 

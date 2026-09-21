@@ -16,6 +16,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 import { env } from "./config/env.js";
+import { UPLOAD_DIR } from "./modules/upload/config/multer.config.js";
 
 const app = express();
 const PORT = env.PORT || 5000;
@@ -69,7 +70,10 @@ app.use(
 );
 app.use(cookieParser());
 app.use(express.json({ limit: "2mb" }));
-app.use("/uploads", express.static(path.join(__dirname, "../public/uploads")));
+// Served from the same UPLOAD_DIR multer writes to (see
+// modules/upload/config/multer.config.ts) — kept outside the repo via env
+// so uploaded photos survive redeploys and never get committed.
+app.use("/uploads", express.static(UPLOAD_DIR));
 
 import { authRoutes } from "./modules/auth/auth.routes.js";
 import { leadRouter } from "./modules/lead/routes/lead.routes.js";
@@ -78,6 +82,8 @@ import { vehicleCheckinRouter } from "./modules/vehicle-checkin/routes/vehicle-c
 import { jobCardRouter } from "./modules/job-card/routes/job-card.routes.js";
 import { workshopRouter } from "./modules/workshop/routes/workshop.routes.js";
 import { billingRouter } from "./modules/billing/routes/billing.routes.js";
+import { creditNoteRouter } from "./modules/gst/routes/creditNote.routes.js";
+import { debitNoteRouter } from "./modules/gst/routes/debitNote.routes.js";
 import { paymentsRouter } from "./modules/payments/routes/payments.routes.js";
 import { outpassRouter } from "./modules/outpass/routes/outpass.routes.js";
 import { inventoryRouter } from "./modules/inventory/routes/inventory.routes.js";
@@ -113,6 +119,8 @@ app.use("/api/carin", vehicleCheckinRouter);
 app.use("/api/jobs", jobCardRouter);
 app.use("/api/technician", workshopRouter);
 app.use("/api/invoices", billingRouter);
+app.use("/api/gst/credit-notes", creditNoteRouter);
+app.use("/api/gst/debit-notes", debitNoteRouter);
 app.use("/api/payments", paymentsRouter);
 app.use("/api/outpass", outpassRouter);
 app.use("/api/inventory", inventoryRouter);
@@ -147,21 +155,11 @@ app.get("/health", (req, res) => {
   res.json({ status: "healthy", timestamp: new Date() });
 });
 
-import { exec } from "child_process";
+
 
 // Start Server
-app.listen(PORT, async () => {
+app.listen(PORT, () => {
   logger.info(`Shifterz backend running on port ${PORT}`);
-
-  // Automigrate & regenerate Prisma client on startup
-  logger.info("[Auto-Migration] Running npx prisma db push...");
-  exec("npx prisma db push", (err, stdout, stderr) => {
-    if (err) {
-      logger.error(`[Auto-Migration] Failed to migrate database: ${err.message}`);
-    } else {
-      logger.info(`[Auto-Migration] Database migrated and generated successfully: ${stdout}`);
-    }
-  });
 });
 
 // Restart trigger

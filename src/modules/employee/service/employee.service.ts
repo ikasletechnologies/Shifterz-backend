@@ -56,8 +56,21 @@ export class EmployeeService {
     });
   }
 
-  async getTechnicians() {
-    return this.repository.findTechnicians();
+  async getTechnicians(userRole?: string, userFranchiseId?: string) {
+    // Was previously unscoped (db.employee.findMany() with no where clause)
+    // and returned the raw password hash — any authenticated user hitting
+    // GET /api/technicians got every employee across every franchise,
+    // credentials included. Bring it in line with getAllEmployees: scope by
+    // franchise for non-HQ roles and strip the password before returning.
+    const tenantFilter: any = {};
+    if (userRole && userRole !== "SUPER_ADMIN" && userRole !== "HQ_USER" && userFranchiseId) {
+      tenantFilter.franchiseId = userFranchiseId;
+    }
+    const list = await this.repository.findTechnicians(tenantFilter);
+    return list.map(emp => {
+      const { password, ...rest } = emp;
+      return rest;
+    });
   }
 
   async getTechnicianManagement(userRole: string, userFranchiseId: string | undefined, query: StaffManagementQuery) {
@@ -79,6 +92,51 @@ export class EmployeeService {
       page: query.page ? parseInt(query.page, 10) : undefined,
       pageSize: query.pageSize ? parseInt(query.pageSize, 10) : undefined,
     });
+  }
+
+  // EPB 2.3 licensing — the single canonical license-limit check (1 Super
+  // Admin, 6 HQ users, 1 Franchise Admin + 6 users per franchise). Every
+  // employee-creation path, direct or via an approved transfer request, must
+  // call this rather than re-deriving its own count/limit logic.
+  async assertLicenseCapacity(role: string, franchiseId: string | null, tx?: import('@prisma/client').Prisma.TransactionClient): Promise<void> {
+    const client = tx || db;
+    let license = null;
+    if (franchiseId) {
+      license = await client.license.findFirst({
+        where: { organizationId: franchiseId, status: "Active" }
+      });
+    }
+
+    const limitFranchiseUsers = license ? license.maxFranchiseUsers : 6;
+    const limitFranchiseAdmins = license ? license.maxFranchiseAdmins : 1;
+    const limitHQUsers = license ? license.maxHQUsers : 6;
+    const limitSuperAdmins = license ? license.maxSuperAdmins : 1;
+
+    const roleToCheck = role || "EMPLOYEE";
+
+    if (roleToCheck === "SUPER_ADMIN") {
+      const count = await client.employee.count({ where: { role: "SUPER_ADMIN", isDeleted: false } });
+      if (count >= limitSuperAdmins) {
+        throw new ApiError(403, `License limit reached. Maximum ${limitSuperAdmins} Super Administrator allowed.`);
+      }
+    } else if (roleToCheck === "HQ_USER") {
+      const count = await client.employee.count({ where: { role: "HQ_USER", isDeleted: false } });
+      if (count >= limitHQUsers) {
+        throw new ApiError(403, `License limit reached. Maximum ${limitHQUsers} HQ Users allowed.`);
+      }
+    } else if (franchiseId) {
+      if (roleToCheck === "FRANCHISE_ADMIN") {
+        const count = await client.employee.count({ where: { franchiseId, role: "FRANCHISE_ADMIN", isDeleted: false } });
+        if (count >= limitFranchiseAdmins) {
+          throw new ApiError(403, `License limit reached. Maximum ${limitFranchiseAdmins} Franchise Administrator allowed.`);
+        }
+      } else {
+        const count = await client.employee.count({ where: { franchiseId, isDeleted: false } });
+        if (count >= limitFranchiseUsers) {
+          throw new ApiError(403, `License limit reached. Maximum ${limitFranchiseUsers} users allowed per franchise.`);
+        }
+      }
+    }
   }
 
   async createEmployee(data: CreateEmployeeDTO, userRole: string, userFranchiseId?: string, isTechnicianRoute = false) {
@@ -109,19 +167,6 @@ export class EmployeeService {
       }
     }
 
-    // Dynamic licensing enforcement
-    let license = null;
-    if (franchiseId) {
-      license = await db.license.findFirst({
-        where: { organizationId: franchiseId, status: "Active" }
-      });
-    }
-
-    const limitFranchiseUsers = license ? license.maxFranchiseUsers : 6;
-    const limitFranchiseAdmins = license ? license.maxFranchiseAdmins : 1;
-    const limitHQUsers = license ? license.maxHQUsers : 6;
-    const limitSuperAdmins = license ? license.maxSuperAdmins : 1;
-
     const roleToCheck = data.role || (isTechnicianRoute ? "TECHNICIAN" : "EMPLOYEE");
 
     // Phase 0.1 — only an existing Super Administrator may create another
@@ -132,87 +177,72 @@ export class EmployeeService {
       throw new ApiError(403, "Only a Super Administrator can create a Super Administrator account.");
     }
 
-    if (roleToCheck === "SUPER_ADMIN") {
-      const count = await db.employee.count({ where: { role: "SUPER_ADMIN", isDeleted: false } });
-      if (count >= limitSuperAdmins) {
-        throw new ApiError(403, `License limit reached. Maximum ${limitSuperAdmins} Super Administrator allowed.`);
-      }
-    } else if (roleToCheck === "HQ_USER") {
-      const count = await db.employee.count({ where: { role: "HQ_USER", isDeleted: false } });
-      if (count >= limitHQUsers) {
-        throw new ApiError(403, `License limit reached. Maximum ${limitHQUsers} HQ Users allowed.`);
-      }
-    } else if (franchiseId) {
-      if (roleToCheck === "FRANCHISE_ADMIN") {
-        const count = await db.employee.count({ where: { franchiseId, role: "FRANCHISE_ADMIN", isDeleted: false } });
-        if (count >= limitFranchiseAdmins) {
-          throw new ApiError(403, `License limit reached. Maximum ${limitFranchiseAdmins} Franchise Administrator allowed.`);
-        }
-      } else {
-        const count = await db.employee.count({ where: { franchiseId, isDeleted: false } });
-        if (count >= limitFranchiseUsers) {
-          throw new ApiError(403, `License limit reached. Maximum ${limitFranchiseUsers} users allowed per franchise.`);
-        }
-      }
-    }
+    // EPB 2.3 — single canonical license-limit check, also reused by
+    // TransferService.approveTransfer so employee creation via an approved
+    // transfer request can't bypass the same caps a direct create goes through.
+    return db.$transaction(async (tx) => {
+      const lockKey = franchiseId ? franchiseId : 'HQ';
+      await tx.$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))", 'LICENSE_' + lockKey);
 
-    const rawPassword = data.password || (isTechnicianRoute ? "tech123" : null);
-    const hashedPassword = rawPassword ? await bcrypt.hash(rawPassword, 10) : null;
+      await this.assertLicenseCapacity(roleToCheck, franchiseId, tx);
 
-    let normalizedUsername = null;
-    if (data.username) {
-      normalizedUsername = String(data.username).trim().toLowerCase();
-      if (normalizedUsername) {
-        const existingUsername = await db.employee.findFirst({
-          where: { username: normalizedUsername, isDeleted: false }
-        });
-        if (existingUsername) {
-          throw new ApiError(400, `Username '${normalizedUsername}' is already taken by another account.`);
+      const rawPassword = data.password || (isTechnicianRoute ? "tech123" : null);
+      const hashedPassword = rawPassword ? await bcrypt.hash(rawPassword, 10) : null;
+
+      let normalizedUsername = null;
+      if (data.username) {
+        normalizedUsername = String(data.username).trim().toLowerCase();
+        if (normalizedUsername) {
+          const existingUsername = await tx.employee.findFirst({
+            where: { username: normalizedUsername, isDeleted: false }
+          });
+          if (existingUsername) {
+            throw new ApiError(400, `Username '${normalizedUsername}' is already taken by another account.`);
+          }
         }
+      } else if (isTechnicianRoute && data.name) {
+        normalizedUsername = data.name.replace(/\s+/g, "").toLowerCase();
       }
-    } else if (isTechnicianRoute && data.name) {
-      normalizedUsername = data.name.replace(/\s+/g, "").toLowerCase();
-    }
 
-    if (data.email) {
-      const trimmedEmail = String(data.email).trim().toLowerCase();
-      if (trimmedEmail) {
-        const existingEmail = await db.employee.findFirst({
-          where: { email: { equals: trimmedEmail, mode: "insensitive" }, isDeleted: false }
-        });
-        if (existingEmail) {
-          throw new ApiError(400, "An employee with this email address already exists.");
+      if (data.email) {
+        const trimmedEmail = String(data.email).trim().toLowerCase();
+        if (trimmedEmail) {
+          const existingEmail = await tx.employee.findFirst({
+            where: { email: { equals: trimmedEmail, mode: "insensitive" }, isDeleted: false }
+          });
+          if (existingEmail) {
+            throw new ApiError(400, "An employee with this email address already exists.");
+          }
         }
       }
-    }
 
-    if (data.phone) {
-      const trimmedPhone = String(data.phone).trim();
-      if (trimmedPhone) {
-        const existingPhone = await db.employee.findFirst({
-          where: { phone: trimmedPhone, isDeleted: false }
-        });
-        if (existingPhone) {
-          throw new ApiError(400, "An employee with this mobile number already exists.");
+      if (data.phone) {
+        const trimmedPhone = String(data.phone).trim();
+        if (trimmedPhone) {
+          const existingPhone = await tx.employee.findFirst({
+            where: { phone: trimmedPhone, isDeleted: false }
+          });
+          if (existingPhone) {
+            throw new ApiError(400, "An employee with this mobile number already exists.");
+          }
         }
       }
-    }
 
-    const empId = data.role === "SERVICE_ADVISOR"
-      ? generateUid("SA-")
-      : isTechnicianRoute
-        ? generateUid("TECH")
-        : `EMP${Date.now().toString().slice(-6)}`;
+      const empId = data.role === "SERVICE_ADVISOR"
+        ? generateUid("SA-")
+        : isTechnicianRoute
+          ? generateUid("TECH")
+          : `EMP${Date.now().toString().slice(-6)}`;
 
-    const targetFranchiseId = (franchiseId && franchiseId !== "HQ") ? franchiseId : null;
-    const newEmployee = await this.repository.create(empId, { ...data, franchiseId: targetFranchiseId }, hashedPassword, normalizedUsername);
-    const { password, ...rest } = newEmployee;
+      const targetFranchiseId = (franchiseId && franchiseId !== "HQ") ? franchiseId : null;
+      const newEmployee = await this.repository.create(empId, { ...data, franchiseId: targetFranchiseId }, hashedPassword, normalizedUsername, tx);
+      const { password, ...rest } = newEmployee;
 
-    return {
-      ...rest,
-      permissions: newEmployee.permission?.modules || []
-    };
-  }
+      return {
+        ...rest,
+        permissions: newEmployee.permission?.modules || []
+      };
+    });  }
 
   async updateEmployee(id: string, data: UpdateEmployeeDTO, userRole = "UNKNOWN", userFranchiseId?: string, userPermissions: string[] = []) {
     const existing = await db.employee.findUnique({ where: { id } });

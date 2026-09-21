@@ -24,21 +24,22 @@ export class EmployeeRepository {
     });
   }
 
-  async findTechnicians() {
-    return db.employee.findMany(); // The original GET /technicians returned all employees for some reason
+  async findTechnicians(tenantFilter: any) {
+    return db.employee.findMany({ where: tenantFilter });
   }
 
   async countFranchiseUsers(franchiseId: string) {
     return db.employee.count({ where: { franchiseId } });
   }
 
-  async create(id: string, data: any, hashedPassword: string | null, normalizedUsername: string | null) {
+  async create(id: string, data: any, hashedPassword: string | null, normalizedUsername: string | null, tx?: import('@prisma/client').Prisma.TransactionClient) {
     const franchiseId = (data.franchiseId && data.franchiseId !== "HQ") ? data.franchiseId : null;
     const isFranchiseEmployee = franchiseId !== null;
     const approvalStatus = data.approvalStatus || (isFranchiseEmployee ? "Pending" : "Approved");
     const status = data.status || (isFranchiseEmployee ? "Inactive" : "Active");
 
-    return db.employee.create({
+    const client = tx || db;
+    return client.employee.create({
       data: {
         id,
         name: data.name,

@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 export const createPaymentSchema = z.object({
   body: z.object({
+    idempotencyKey: z.string().optional().nullable(),
     invoiceId: z.string().optional().nullable(),
     jobId: z.string().optional().nullable(),
     customerId: z.string().optional().nullable(),

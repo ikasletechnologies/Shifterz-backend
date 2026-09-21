@@ -50,6 +50,7 @@ export class VehicleCheckinController {
     try {
       const id = String(req.params.id);
       await this.service.checkTechnicianAccess(id, req.user);
+      await this.service.assertFranchiseAccess(id, req.user);
       const updated = await this.service.updateCheckin(id, req.body);
 
       // Rule 10: Record in Audit Trail
@@ -71,10 +72,21 @@ export class VehicleCheckinController {
     }
   };
 
+  getDeliveryReadiness = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const id = String(req.params.id);
+      const result = await this.service.getDeliveryReadiness(id);
+      res.json(result);
+    } catch (error) {
+      next(error);
+    }
+  };
+
   checkout = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const id = String(req.params.id);
       await this.service.checkTechnicianAccess(id, req.user);
+      await this.service.assertFranchiseAccess(id, req.user);
       const result = await this.service.checkout(id, req.body);
 
       // Rule 10: Record in Audit Trail
@@ -107,15 +119,16 @@ export class VehicleCheckinController {
     try {
       const id = String(req.params.id);
       await this.service.checkTechnicianAccess(id, req.user);
-      await this.service.deleteCheckin(id);
+      await this.service.assertFranchiseAccess(id, req.user);
+      const snapshot = await this.service.deleteCheckin(id);
 
       await logAudit({
         module: 'VEHICLE_CHECKIN',
         recordId: id,
         action: 'DELETE',
         userId: req.user?.id || 'unknown',
-        branchId: req.user?.franchiseId || null,
-        oldValue: null,
+        branchId: snapshot.car?.franchiseId ?? req.user?.franchiseId ?? null,
+        oldValue: snapshot,
         newValue: null,
         ipAddress: req.ip,
         device: req.headers['user-agent'],

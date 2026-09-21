@@ -8,7 +8,8 @@
     "start": "node dist/app.js",
     "dev": "tsx watch src/app.ts",
     "db:push": "prisma db push",
-    "db:seed": "tsx prisma/seed.ts"
+    "db:seed": "tsx prisma/seed.ts",
+    "test": "tsx"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.8.0",

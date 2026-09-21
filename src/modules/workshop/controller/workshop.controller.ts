@@ -2,6 +2,7 @@ import type { Response, NextFunction } from 'express';
 import { WorkshopService } from '../service/workshop.service.js';
 import type { AuthRequest } from '../../../middleware/auth.middleware.js';
 import { dispatchWorkshopReminders } from '../../../shared/services/notification.service.js';
+import { resolveDataScope } from '../../../shared/scope/dataScope.js';
 
 export class WorkshopController {
   constructor(private readonly service: WorkshopService = new WorkshopService()) {}
@@ -20,16 +21,16 @@ export class WorkshopController {
     }
   };
 
+  // REP-01C (D-REP1/28) — was a manual, controller-local reimplementation
+  // of "franchise-scoped actor's own franchiseId always wins, HQ may
+  // override via ?franchiseId=" — the exact rule resolveDataScope() already
+  // canonically implements. Reused instead of duplicated.
   getFranchiseDashboard = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const userRole = req.user?.role || "UNKNOWN";
-      // HQ users can specify franchiseId via query; Franchise admins are locked to their own franchiseId.
-      let franchiseId = req.user?.franchiseId || null;
-      if (userRole === "SUPER_ADMIN" || userRole === "HQ_USER") {
-        if (req.query.franchiseId) {
-          franchiseId = String(req.query.franchiseId);
-        }
-      }
+      const scope = resolveDataScope(req.user);
+      const franchiseId = scope.unrestricted
+        ? (req.query.franchiseId ? String(req.query.franchiseId) : null)
+        : scope.franchiseId;
 
       if (!franchiseId) {
         res.status(400).json({ error: "Franchise ID is required" });

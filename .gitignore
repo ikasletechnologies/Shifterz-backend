@@ -13,6 +13,10 @@
 # testing
 /coverage
 
+# E2E fixture credentials generated per-run by scripts/e2e-qc-templates-fixtures-setup.ts
+# (disposable test-only data, never real credentials, but generated/machine-specific)
+scripts/e2e-qc-templates-fixtures.json
+
 # next.js
 /.next/
 /out/
@@ -50,3 +54,15 @@ next-env.d.ts
 # logs
 logs/
 *.log
+
+# uploaded photos — dev fallback dir when UPLOAD_DIR isn't set; real
+# storage lives outside the repo (see UPLOAD_DIR in src/config/env.ts)
+public/uploads/*
+!public/uploads/.gitkeep
+
+# db dumps and ad-hoc debug/scratch scripts — never commit real data or throwaway tooling
+*.sql
+/scratch/
+/scratch_check/
+scratch_*.log
+*_test_output.txt

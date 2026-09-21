@@ -34,7 +34,8 @@ export class FranchiseRepository {
         address: data.address || null,
         state: data.state || null,
         pinCode: data.pinCode || null,
-        licenseStatus: data.licenseStatus || "Active"
+        licenseStatus: data.licenseStatus || "Active",
+        gstRegistrationType: data.gstRegistrationType || null
       }
     });
   }
