@@ -104,6 +104,16 @@ export class AuthController {
     }
   }
 
+  async completeOnboarding(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+      const user = await authService.completeOnboarding(req.user.id);
+      res.json({ user });
+    } catch (error: any) {
+      next(error);
+    }
+  }
+
   async updateProfile(req: AuthRequest, res: Response, next: NextFunction) {
     try {
       if (!req.user) return res.status(401).json({ error: "Unauthorized" });

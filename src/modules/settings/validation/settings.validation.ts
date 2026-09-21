@@ -28,7 +28,8 @@ export const updateSettingSchema = z.object({
     loyaltyProgram: z.any().optional(),
     workingHours: z.any().optional(),
     notificationTemplates: z.any().optional(),
-    numberingSeries: z.any().optional()
+    numberingSeries: z.any().optional(),
+    isSetupComplete: z.boolean().optional()
   })
 });
 

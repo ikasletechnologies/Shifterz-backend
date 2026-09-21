@@ -1,15 +1,27 @@
 import type { Request, Response, NextFunction } from 'express';
 import { SettingsService } from '../service/settings.service.js';
+import { GstinLookupService } from '../service/gstinLookup.service.js';
 import type { AuthRequest } from '../../../middleware/auth.middleware.js';
 import { logAudit, redactSensitive } from '../../../shared/services/audit.service.js';
 
 export class SettingsController {
-  constructor(private readonly service: SettingsService = new SettingsService()) {}
+  constructor(private readonly service: SettingsService = new SettingsService()) { }
 
   getSettings = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const settings = await this.service.getSettings();
       res.json(settings);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  lookupGstin = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const gstin = String(req.params.gstin || '');
+      const forceRefresh = req.query.refresh === 'true';
+      const result = await GstinLookupService.verify(gstin, forceRefresh);
+      res.json(result);
     } catch (error) {
       next(error);
     }

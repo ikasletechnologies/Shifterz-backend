@@ -14,3 +14,8 @@ settingsRouter.get('/', controller.getSettings);
 // settings exist) — requireAction() here does not introduce a new franchise
 // carve-out; FRANCHISE_ADMIN still has no grant for this action.
 settingsRouter.put('/', requireAction('settings:edit'), validate(updateSettingSchema), controller.updateSettings);
+
+// Read-only GSTIN lookup (setup wizard auto-fill) — any authenticated user,
+// same as GET / above. Server-side cached (GstinCache), so repeat lookups
+// never spend another upstream credit regardless of who requests them.
+settingsRouter.get('/gstin/:gstin', controller.lookupGstin);

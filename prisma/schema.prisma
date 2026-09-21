@@ -28,10 +28,10 @@ model Lead {
   priority            String?                 @default("Medium")
   date                DateTime
   franchiseId         String?
-  originalFranchiseId String?                 // Preserved original franchise on transfer
-  customerId          String?                 // Set once the lead is converted → Customer
-  convertedAt         DateTime?               // Timestamp of conversion
-  lostReason          String?                 // Reason when marked as Lost
+  originalFranchiseId String? // Preserved original franchise on transfer
+  customerId          String? // Set once the lead is converted → Customer
+  convertedAt         DateTime? // Timestamp of conversion
+  lostReason          String? // Reason when marked as Lost
   isDeleted           Boolean                 @default(false)
   deletedAt           DateTime?
   franchise           Franchise?              @relation(fields: [franchiseId], references: [id])
@@ -65,7 +65,7 @@ model LeadTransferHistory {
 }
 
 model LeadFollowUp {
-  id               String   @id @default(cuid())
+  id               String    @id @default(cuid())
   leadId           String
   // When the follow-up happened
   followUpDate     DateTime
@@ -73,25 +73,24 @@ model LeadFollowUp {
   performedById    String?
   performedBy      String
   // Communication mode
-  mode             String   // "Phone Call", "WhatsApp", "SMS", "Email", "Meeting", "Walk-In", "Other"
+  mode             String // "Phone Call", "WhatsApp", "SMS", "Email", "Meeting", "Walk-In", "Other"
   // What was discussed
   notes            String
   // Outcome / result of this interaction
-  outcome          String?  // "Interested", "Not Interested", "Callback Requested", "No Response", "Deal Closed"
+  outcome          String? // "Interested", "Not Interested", "Callback Requested", "No Response", "Deal Closed"
   // What to do next
   nextAction       String?
   // Optional: schedule the next follow-up
   nextFollowUpDate DateTime?
   // Lead status at the time of this follow-up (or updated by this follow-up)
   leadStatusUpdate String?
-  franchiseId      String?  // franchise at the time of follow-up
-  createdAt        DateTime @default(now())
-  lead             Lead     @relation(fields: [leadId], references: [id])
+  franchiseId      String? // franchise at the time of follow-up
+  createdAt        DateTime  @default(now())
+  lead             Lead      @relation(fields: [leadId], references: [id])
 }
 
-
 model Invoice {
-  id                  String     @id
+  id                  String        @id
   type                String
   client              String
   phone               String
@@ -111,16 +110,16 @@ model Invoice {
   deliveryTerms       String?
   authorizedSignatory String?
   franchiseId         String?
-  jobId               String?    // Optional link to the Job this invoice bills (10.11 revenue attribution)
+  jobId               String? // Optional link to the Job this invoice bills (10.11 revenue attribution)
   warranty            String?
   cancelReason        String?
   discountReason      String?
-  numberPrefix        String?    // e.g. "STZ-25-26-" — captured at creation so delete/cancel never re-parse the id
-  sequenceNumber      Int?       // the numeric suffix allocated from InvoiceSequence at creation
-  isDeleted           Boolean    @default(false)
+  numberPrefix        String? // e.g. "STZ-25-26-" — captured at creation so delete/cancel never re-parse the id
+  sequenceNumber      Int? // the numeric suffix allocated from InvoiceSequence at creation
+  isDeleted           Boolean       @default(false)
   deletedAt           DateTime?
-  createdAt           DateTime   @default(now())
-  updatedAt           DateTime   @default(now()) @updatedAt
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @default(now()) @updatedAt
   createdBy           String?
   modifiedBy          String?
   cancelledBy         String?
@@ -137,16 +136,16 @@ model Invoice {
   sellerState         String?
   buyerState          String?
   placeOfSupply       String?
-  supplyType          String?    // "B2B" | "B2C"
+  supplyType          String? // "B2B" | "B2C"
   taxableAmount       Float?
   cgst                Float?
   sgst                Float?
   igst                Float?
   cess                Float?
-  hsnSac              String?    // simplified invoice-level snapshot; single-group case only, see GST-04's InvoiceLine for the full per-line breakdown
+  hsnSac              String? // simplified invoice-level snapshot; single-group case only, see GST-04's InvoiceLine for the full per-line breakdown
   gstCalculationMeta  Json?
-  franchise           Franchise? @relation(fields: [franchiseId], references: [id])
-  job                 Job?       @relation(fields: [jobId], references: [id])
+  franchise           Franchise?    @relation(fields: [franchiseId], references: [id])
+  job                 Job?          @relation(fields: [jobId], references: [id])
   // GST-04 — structured per-line GST detail. Additive: `items` (Json) above
   // is untouched and still populated exactly as before; nothing currently
   // reads invoiceLines, so no existing invoice needs one for this schema
@@ -168,7 +167,7 @@ model InvoiceLine {
   id            String   @id @default(cuid())
   invoiceId     String
   invoice       Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  serviceId     String?  // plain reference, not an enforced FK — matches how Job.services already matches Service by name, not id
+  serviceId     String? // plain reference, not an enforced FK — matches how Job.services already matches Service by name, not id
   description   String
   quantity      Float    @default(1)
   unitPrice     Float
@@ -214,7 +213,7 @@ model CreditNote {
   totalAmount       Float
   status            String           @default("Issued") // "Issued" | "Cancelled" — never hard-deleted
   createdBy         String?
-  linkedPaymentId   String?          // optional, non-enforced — see model comment; NOT the same concept as a refund
+  linkedPaymentId   String? // optional, non-enforced — see model comment; NOT the same concept as a refund
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
   lines             CreditNoteLine[]
@@ -297,17 +296,17 @@ model DebitNoteLine {
 model GstTransaction {
   id             String   @id @default(cuid())
   franchiseId    String?
-  documentType   String   // "INVOICE" | "CREDIT_NOTE" | "DEBIT_NOTE" | "REFUND" | "PURCHASE"
+  documentType   String // "INVOICE" | "CREDIT_NOTE" | "DEBIT_NOTE" | "REFUND" | "PURCHASE"
   documentId     String
   documentNumber String
   documentDate   DateTime
-  returnPeriod   String   // "YYYY-MM", derived from documentDate — never client-supplied
+  returnPeriod   String // "YYYY-MM", derived from documentDate — never client-supplied
   sellerGstin    String?
   buyerGstin     String?
-  buyerName      String?  // GST-07 — needed for GSTR-1's Customer Name column; the invoice snapshot has client name but the ledger didn't carry it until now
+  buyerName      String? // GST-07 — needed for GSTR-1's Customer Name column; the invoice snapshot has client name but the ledger didn't carry it until now
   sellerState    String?
   placeOfSupply  String?
-  supplyType     String?  // "B2B" | "B2C"
+  supplyType     String? // "B2B" | "B2C"
   // GST-07 — a ledger row is now one (rate, HSN) group, not one aggregate
   // per invoice (amends GST-05's original one-row-per-invoice granularity).
   // GSTR-1's HSN-wise and rate-wise summaries are meaningless at
@@ -366,7 +365,7 @@ model Payment {
   amount             Float
   outstandingBalance Float?
   mode               String
-  multipleModes      Json?      // e.g. [{mode: 'Cash', amount: 5000}, {mode: 'UPI', amount: 10000}]
+  multipleModes      Json? // e.g. [{mode: 'Cash', amount: 5000}, {mode: 'UPI', amount: 10000}]
   type               String     @default("Full Payment") // "Advance Payment", "Full Payment", "Partial Payment", "Refund", "Credit Sale"
   idempotencyKey     String?    @unique
   receiptNumber      String?    @unique
@@ -402,173 +401,173 @@ model Inventory {
 }
 
 model Service {
-  id        String    @id
-  code      String?   @unique
-  name      String
-  category  String
-  price     Float
-  minPrice  Float     @default(0)
-  gst       Float     @default(18)
-  duration  String
-  warranty  String
-  desc      String
-  status    String    @default("Active")
-  isDeleted Boolean   @default(false)
-  deletedAt DateTime?
+  id            String    @id
+  code          String?   @unique
+  name          String
+  category      String
+  price         Float
+  minPrice      Float     @default(0)
+  gst           Float     @default(18)
+  duration      String
+  warranty      String
+  desc          String
+  status        String    @default("Active")
+  isDeleted     Boolean   @default(false)
+  deletedAt     DateTime?
   // GST-01 — `gst` above is already the applicable rate; these two are the
   // only fields this model was missing for GST invoicing. hsnSac is a plain
   // string (not an FK to HsnSacMaster) to match how other master-data
   // references already work in this schema (e.g. Job/Invoice service line
   // items are copied snapshots, not live foreign keys).
   hsnSac        String?
-  taxApplicable Boolean @default(true)
+  taxApplicable Boolean   @default(true)
 }
 
 model Franchise {
-  id                String             @id
-  name              String
-  city              String
-  owner             String
-  phone             String
-  since             DateTime
-  revenue           Float
-  jobs              Int
-  royaltyPct        Float
-  status            String
-  businessName      String?
-  gstNumber         String?
-  email             String?
-  address           String?
-  state             String?
-  pinCode           String?
-  licenseStatus     String?            @default("Active")
-  canTransferLeads  Boolean            @default(false) // HQ grants Franchise Manager transfer permission
+  id                          String                       @id
+  name                        String
+  city                        String
+  owner                       String
+  phone                       String
+  since                       DateTime
+  revenue                     Float
+  jobs                        Int
+  royaltyPct                  Float
+  status                      String
+  businessName                String?
+  gstNumber                   String?
+  email                       String?
+  address                     String?
+  state                       String?
+  pinCode                     String?
+  licenseStatus               String?                      @default("Active")
+  canTransferLeads            Boolean                      @default(false) // HQ grants Franchise Manager transfer permission
   // GST-01 — franchise's own GST registration type ("Regular" | "Composition" |
   // "Unregistered"). gstNumber/state above already existed and are reused as
   // the seller GSTIN/state for invoice GST snapshots; this is the only new
   // field this model needs.
-  gstRegistrationType String?
-  isDeleted         Boolean            @default(false)
-  deletedAt         DateTime?
-  appointments      Appointment[]
-  attendances       Attendance[]
-  carIns            CarIn[]
-  customers         Customer[]
-  employees         Employee[]
-  inventory         Inventory[]
-  inventoryRequests InventoryRequest[]
+  gstRegistrationType         String?
+  isDeleted                   Boolean                      @default(false)
+  deletedAt                   DateTime?
+  appointments                Appointment[]
+  attendances                 Attendance[]
+  carIns                      CarIn[]
+  customers                   Customer[]
+  employees                   Employee[]
+  inventory                   Inventory[]
+  inventoryRequests           InventoryRequest[]
   inventoryAdjustmentRequests InventoryAdjustmentRequest[]
-  invoices          Invoice[]
-  jobsList          Job[]
-  leads             Lead[]
-  outPasses         OutPass[]
-  payments          Payment[]
-  leaveRequests     LeaveRequest[]
-  estimates         Estimate[]
-  workflowStages    WorkflowStage[]
-  qcChecklistTemplates QCChecklistTemplate[]
+  invoices                    Invoice[]
+  jobsList                    Job[]
+  leads                       Lead[]
+  outPasses                   OutPass[]
+  payments                    Payment[]
+  leaveRequests               LeaveRequest[]
+  estimates                   Estimate[]
+  workflowStages              WorkflowStage[]
+  qcChecklistTemplates        QCChecklistTemplate[]
   qcChecklistTemplateVersions QCChecklistTemplateVersion[]
 }
 
 model Customer {
-  id               String            @id
-  name             String
-  phone            String
-  email            String
-  vehicle          String
-  model            String
-  visits           Int
-  totalSpend       Float
-  lastVisit        DateTime
-  city             String?           // preserved from lead
-  vehicleMake      String?
-  vehicleModel     String?
-  alternateNumber  String?
-  convertedLeadId  String?           @unique // the lead that generated this customer
-  convertedAt      DateTime?                 // when conversion happened
-  rewardPoints     Int               @default(0)
-  franchiseId      String?
-  dob              DateTime?
-  anniversary      DateTime?
-  gstNumber        String?
-  address          String?
-  state            String?
-  pinCode          String?
-  status           String            @default("Active") // "Active", "Inactive"
-  isDeleted        Boolean           @default(false)
-  deletedAt        DateTime?
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @default(now()) @updatedAt
-  franchise        Franchise?        @relation(fields: [franchiseId], references: [id])
-  vehicles         CustomerVehicle[]
-  warranties       Warranty[]
-  reminders        ServiceReminder[]
-  estimates        Estimate[]
-  complaints       CustomerComplaint[]
+  id              String              @id
+  name            String
+  phone           String
+  email           String
+  vehicle         String
+  model           String
+  visits          Int
+  totalSpend      Float
+  lastVisit       DateTime
+  city            String? // preserved from lead
+  vehicleMake     String?
+  vehicleModel    String?
+  alternateNumber String?
+  convertedLeadId String?             @unique // the lead that generated this customer
+  convertedAt     DateTime? // when conversion happened
+  rewardPoints    Int                 @default(0)
+  franchiseId     String?
+  dob             DateTime?
+  anniversary     DateTime?
+  gstNumber       String?
+  address         String?
+  state           String?
+  pinCode         String?
+  status          String              @default("Active") // "Active", "Inactive"
+  isDeleted       Boolean             @default(false)
+  deletedAt       DateTime?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @default(now()) @updatedAt
+  franchise       Franchise?          @relation(fields: [franchiseId], references: [id])
+  vehicles        CustomerVehicle[]
+  warranties      Warranty[]
+  reminders       ServiceReminder[]
+  estimates       Estimate[]
+  complaints      CustomerComplaint[]
 }
 
 model CarIn {
-  id                  String     @id
-  vehicle             String
-  model               String
-  customer            String
-  phone               String
-  service             String
-  inTime              DateTime
-  outTime             DateTime?
-  status              String
-  odometer            String
-  notes               String
-  jobCardId           String
-  franchiseId         String?
-  receivedById        String?
-  receivedByName      String?
-  fuelLevel           String?
-  keyCount            Int?       @default(1)
-  expectedDelivery    DateTime?
-  scratches           String?
-  dents               String?
-  brokenParts         String?
-  glassDamage         String?
-  wheelDamage         String?
-  interiorCondition   String?
-  accessoriesReceived String?
-  remarks             String?
+  id                      String     @id
+  vehicle                 String
+  model                   String
+  customer                String
+  phone                   String
+  service                 String
+  inTime                  DateTime
+  outTime                 DateTime?
+  status                  String
+  odometer                String
+  notes                   String
+  jobCardId               String
+  franchiseId             String?
+  receivedById            String?
+  receivedByName          String?
+  fuelLevel               String?
+  keyCount                Int?       @default(1)
+  expectedDelivery        DateTime?
+  scratches               String?
+  dents                   String?
+  brokenParts             String?
+  glassDamage             String?
+  wheelDamage             String?
+  interiorCondition       String?
+  accessoriesReceived     String?
+  remarks                 String?
   // Vehicle Photographs
-  photoFront          String?
-  photoRear           String?
-  photoLeft           String?
-  photoRight          String?
-  photoDashboard      String?
-  photoOdometer       String?
-  photoDamages        String[]   @default([])
+  photoFront              String?
+  photoRear               String?
+  photoLeft               String?
+  photoRight              String?
+  photoDashboard          String?
+  photoOdometer           String?
+  photoDamages            String[]   @default([])
   // Accessories Checklist
-  hasSpareWheel       Boolean    @default(false)
-  hasJack             Boolean    @default(false)
-  hasToolkit          Boolean    @default(false)
-  hasFloorMats        Boolean    @default(false)
-  hasFastag           Boolean    @default(false)
-  hasDashCam          Boolean    @default(false)
-  hasUsbCharger       Boolean    @default(false)
-  otherAccessories         String?
+  hasSpareWheel           Boolean    @default(false)
+  hasJack                 Boolean    @default(false)
+  hasToolkit              Boolean    @default(false)
+  hasFloorMats            Boolean    @default(false)
+  hasFastag               Boolean    @default(false)
+  hasDashCam              Boolean    @default(false)
+  hasUsbCharger           Boolean    @default(false)
+  otherAccessories        String?
   // Check-Out / Delivery fields
-  checkOutAt               DateTime?
-  checkOutById             String?
-  checkOutByName           String?
-  customerAcknowledgement  String?
-  isDeleted                Boolean    @default(false)
-  deletedAt                DateTime?
-  createdAt                DateTime   @default(now())
-  updatedAt                DateTime   @default(now()) @updatedAt
-  franchise                Franchise? @relation(fields: [franchiseId], references: [id])
+  checkOutAt              DateTime?
+  checkOutById            String?
+  checkOutByName          String?
+  customerAcknowledgement String?
+  isDeleted               Boolean    @default(false)
+  deletedAt               DateTime?
+  createdAt               DateTime   @default(now())
+  updatedAt               DateTime   @default(now()) @updatedAt
+  franchise               Franchise? @relation(fields: [franchiseId], references: [id])
 }
 
 model Job {
-  id                     String          @id
+  id                     String    @id
   vehicle                String
   customer               String
   service                String
-  services               Json?           // Array of service line items [{name, price, qty}]
+  services               Json? // Array of service line items [{name, price, qty}]
   technician             String
   status                 String
   priority               String
@@ -576,82 +575,81 @@ model Job {
   estCompletion          DateTime
   actualCompletion       DateTime?
   notes                  String
-  remarks                String?         // Additional remarks on the job
-  carInId                String?         @unique // Reference to CarIn check-in (1-to-1 db constraint)
+  remarks                String? // Additional remarks on the job
+  carInId                String?   @unique // Reference to CarIn check-in (1-to-1 db constraint)
   customerSignature      String?
   companyAcknowledgement String?
   photos                 String[]
-    inspectionDetails      Json?        // Vehicle inspection information
-    checkInPhotos          String[] @default([])  // Check‑in photographs
-    workProgressPhotos     String[] @default([])  // Photographs during work
-    completionPhotos       String[] @default([])  // Final delivery photographs
-    technicianInstructions String?   // Instructions for technicians, visible only on workshop copy
-    internalRemarks        String?   // Private staff notes, not exposed to customers
+  inspectionDetails      Json? // Vehicle inspection information
+  checkInPhotos          String[]  @default([]) // Check‑in photographs
+  workProgressPhotos     String[]  @default([]) // Photographs during work
+  completionPhotos       String[]  @default([]) // Final delivery photographs
+  technicianInstructions String? // Instructions for technicians, visible only on workshop copy
+  internalRemarks        String? // Private staff notes, not exposed to customers
 
-  technicianId           String?
-  serviceAdvisorId       String?
-  serviceAdvisor         String?
-  qcNotes                String?
-  passedAt               DateTime?
-  failedAt               DateTime?
-  checklist              Json?
-  qcPhotos               String[]        @default([])
-  qcById                 String?
-  qcBy                   String?
-  isRework               Boolean         @default(false)
-  reworkCount            Int             @default(0)
-  qcAttemptCount         Int             @default(0)
-  franchiseId            String?
-  assignmentLocked       Boolean         @default(false)
-  assignedBy             String?
-  assignedByRole         String?
-  supportingTechnicianIds String[]       @default([]) // Optional supporting employees (10.3)
-  createdAt              DateTime        @default(now())
-  updatedAt              DateTime        @default(now()) @updatedAt
-  isDeleted              Boolean         @default(false)
-  deletedAt              DateTime?
-  franchise              Franchise?      @relation(fields: [franchiseId], references: [id])
-  additionalWorks        AdditionalWork[]
-  jobPhotos              JobPhoto[]
-  workNotes              WorkNote[]
-  materialConsumptions   MaterialConsumption[]
-  invoicesList           Invoice[]
-  complaints             CustomerComplaint[]
-  jobHistories           JobHistory[]
-  qcInspections          QCInspection[]
+  technicianId            String?
+  serviceAdvisorId        String?
+  serviceAdvisor          String?
+  qcNotes                 String?
+  passedAt                DateTime?
+  failedAt                DateTime?
+  checklist               Json?
+  qcPhotos                String[]              @default([])
+  qcById                  String?
+  qcBy                    String?
+  isRework                Boolean               @default(false)
+  reworkCount             Int                   @default(0)
+  qcAttemptCount          Int                   @default(0)
+  franchiseId             String?
+  assignmentLocked        Boolean               @default(false)
+  assignedBy              String?
+  assignedByRole          String?
+  supportingTechnicianIds String[]              @default([]) // Optional supporting employees (10.3)
+  createdAt               DateTime              @default(now())
+  updatedAt               DateTime              @default(now()) @updatedAt
+  isDeleted               Boolean               @default(false)
+  deletedAt               DateTime?
+  franchise               Franchise?            @relation(fields: [franchiseId], references: [id])
+  additionalWorks         AdditionalWork[]
+  jobPhotos               JobPhoto[]
+  workNotes               WorkNote[]
+  materialConsumptions    MaterialConsumption[]
+  invoicesList            Invoice[]
+  complaints              CustomerComplaint[]
+  jobHistories            JobHistory[]
+  qcInspections           QCInspection[]
 }
 
-
 model JobHistory {
-  id        String   @id @default(uuid())
-  jobId     String
-  event     String   // e.g., "CREATED", "STATUS_CHANGED", "SERVICE_ADDED", "SERVICE_REMOVED", "PRICE_UPDATED", "WARRANTY_UPDATED", "ADDITIONAL_WORK_APPROVED", "QC_COMPLETED", "BILLING_COMPLETED", "VEHICLE_DELIVERED"
-  performedBy String   // employee ID or system
-  payload   Json?    // optional details of the change
-  createdAt DateTime @default(now())
-  job       Job      @relation(fields: [jobId], references: [id])
+  id          String   @id @default(uuid())
+  jobId       String
+  event       String // e.g., "CREATED", "STATUS_CHANGED", "SERVICE_ADDED", "SERVICE_REMOVED", "PRICE_UPDATED", "WARRANTY_UPDATED", "ADDITIONAL_WORK_APPROVED", "QC_COMPLETED", "BILLING_COMPLETED", "VEHICLE_DELIVERED"
+  performedBy String // employee ID or system
+  payload     Json? // optional details of the change
+  createdAt   DateTime @default(now())
+  job         Job      @relation(fields: [jobId], references: [id])
 }
 
 model AdditionalWork {
-  id             String    @id
-  jobId          String
-  description    String
-  estimatedCost  Float
-  status         String    @default("Pending") // Pending | Approved | Rejected
-  requestedById  String?
-  requestedBy    String?
-  approvedById   String?
-  approvedBy     String?
-  approvedAt     DateTime?
-  rejectedAt     DateTime?
-  rejectionNote  String?
-  customerApproved Boolean @default(false) // Customer approval obtained before work begins (10.14.4)
-  franchiseId    String?
-  isDeleted      Boolean   @default(false)
-  deletedAt      DateTime?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @default(now()) @updatedAt
-  job            Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  id               String    @id
+  jobId            String
+  description      String
+  estimatedCost    Float
+  status           String    @default("Pending") // Pending | Approved | Rejected
+  requestedById    String?
+  requestedBy      String?
+  approvedById     String?
+  approvedBy       String?
+  approvedAt       DateTime?
+  rejectedAt       DateTime?
+  rejectionNote    String?
+  customerApproved Boolean   @default(false) // Customer approval obtained before work begins (10.14.4)
+  franchiseId      String?
+  isDeleted        Boolean   @default(false)
+  deletedAt        DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @default(now()) @updatedAt
+  job              Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
 }
 
 model OutPass {
@@ -681,62 +679,95 @@ model OutPass {
 }
 
 model Setting {
-  id                String    @id @default("default")
-  companyName       String
-  companyLogo       String?
-  gstin             String
-  panNumber         String?
-  registeredAddress String?
-  branchAddress     String?
-  city              String?
-  state             String?
-  country           String?
-  pinCode           String?
-  address           String
-  phone             String
-  email             String
-  website           String?
-  gstPct            Float
-  currency          String
-  agents            String[]
-  categories        String[]
-  leadSources       String[]
-  leadStatuses      String[]
-  lostReasons       String[]
-  securityGuards    String[]
-  referralProgram   Json?
-  loyaltyProgram    Json?
-  workingHours      Json?
+  id                    String    @id @default("default")
+  companyName           String
+  companyLogo           String?
+  gstin                 String
+  panNumber             String?
+  registeredAddress     String?
+  branchAddress         String?
+  city                  String?
+  state                 String?
+  country               String?
+  pinCode               String?
+  address               String
+  phone                 String
+  email                 String
+  website               String?
+  gstPct                Float
+  currency              String
+  agents                String[]
+  categories            String[]
+  leadSources           String[]
+  leadStatuses          String[]
+  lostReasons           String[]
+  securityGuards        String[]
+  referralProgram       Json?
+  loyaltyProgram        Json?
+  workingHours          Json?
   notificationTemplates Json?
-  numberingSeries   Json?
-  isDeleted         Boolean   @default(false)
-  deletedAt         DateTime?
+  numberingSeries       Json?
+  // Initial-setup wizard (Super Admin / HQ) — flips true once the company
+  // info + tax details + services wizard is completed from /setup. Defaults
+  // false so the single "default" row this table ever has starts unset;
+  // there is no per-row backfill concern since Setting has exactly one row.
+  isSetupComplete       Boolean   @default(false)
+  isDeleted             Boolean   @default(false)
+  deletedAt             DateTime?
+}
+
+// Server-side cache for GSTIN lookups (GstVerify) — the setup wizard's
+// "fetch details from GSTIN" auto-fill. Keyed on the GSTIN itself so a
+// repeat lookup (any user, any franchise) never spends another upstream
+// credit. city/pinCode are deliberately not columns here — GstVerify only
+// returns one combined address string, so they're derived from `address`
+// on every read instead of stored (see GstinLookupService.deriveLocation).
+model GstinCache {
+  gstin             String   @id
+  legalName         String?
+  tradeName         String?
+  status            String?
+  constitution      String?
+  taxpayerType      String?
+  registrationDate  String?
+  pan               String?
+  address           String?
+  state             String?
+  natureOfBusiness  String[]
+  raw               Json?
+  fetchedAt         DateTime @default(now()) @updatedAt
 }
 
 model Employee {
-  id           String          @id
-  name         String
-  phone        String?
-  email        String?
-  status       String          @default("Active")
-  approvalStatus String        @default("Approved")
-  username     String?         @unique
-  password     String?
-  role         String          @default("TECHNICIAN")
-  hqControlled Boolean         @default(false)
-  franchiseId  String?
-  isDeleted    Boolean         @default(false)
-  deletedAt    DateTime?
-  attendances  Attendance[]
-  franchise    Franchise?      @relation(fields: [franchiseId], references: [id])
-  permission   UserPermission?
-  sessions     Session[]
-  leaveRequests LeaveRequest[]
-  gender        String?
-  dob           DateTime?
-  doj           DateTime?
-  department    String?
-  designation   String?
+  id               String          @id
+  name             String
+  phone            String?
+  email            String?
+  status           String          @default("Active")
+  approvalStatus   String          @default("Approved")
+  username         String?         @unique
+  password         String?
+  role             String          @default("TECHNICIAN")
+  hqControlled     Boolean         @default(false)
+  franchiseId      String?
+  // Initial-setup wizard (Branch/Franchise Admin) — set true only at
+  // creation for FRANCHISE_ADMIN/BRANCH_MANAGER accounts (see
+  // EmployeeRepository.create), flipped false once they complete the
+  // welcome/review wizard from /setup via POST /auth/complete-onboarding.
+  // Defaults false for every other role, which never sees that wizard.
+  needsOnboarding  Boolean         @default(false)
+  isDeleted        Boolean         @default(false)
+  deletedAt        DateTime?
+  attendances      Attendance[]
+  franchise        Franchise?      @relation(fields: [franchiseId], references: [id])
+  permission       UserPermission?
+  sessions         Session[]
+  leaveRequests    LeaveRequest[]
+  gender           String?
+  dob              DateTime?
+  doj              DateTime?
+  department       String?
+  designation      String?
   reportingManager String?
 }
 
@@ -808,11 +839,11 @@ model InventoryRequest {
 // after MaterialConsumption's request/approve/reject pattern: single-step,
 // stock only changes at approval, requester and approver always distinct.
 model InventoryAdjustmentRequest {
-  id            String    @id @default(cuid())
+  id            String     @id @default(cuid())
   itemId        String
-  requestedQty  Int       // signed: positive adds stock, negative removes it
+  requestedQty  Int // signed: positive adds stock, negative removes it
   reason        String
-  status        String    @default("Pending") // Pending | Approved | Rejected | Cancelled
+  status        String     @default("Pending") // Pending | Approved | Rejected | Cancelled
   requestedById String?
   requestedBy   String?
   approvedById  String?
@@ -820,10 +851,10 @@ model InventoryAdjustmentRequest {
   approvedAt    DateTime?
   rejectionNote String?
   franchiseId   String?
-  isDeleted     Boolean   @default(false)
+  isDeleted     Boolean    @default(false)
   deletedAt     DateTime?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @default(now()) @updatedAt
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @default(now()) @updatedAt
   franchise     Franchise? @relation(fields: [franchiseId], references: [id])
 }
 
@@ -834,7 +865,7 @@ model Appointment {
   vehicle         String
   scheduledDate   DateTime
   service         String
-  status          String     // "Scheduled", "Confirmed", "Rescheduled", "Cancelled", "Completed", "No Show"
+  status          String // "Scheduled", "Confirmed", "Rescheduled", "Cancelled", "Completed", "No Show"
   assignedStaff   String?
   assignedStaffId String?
   franchiseId     String?
@@ -846,9 +877,9 @@ model Appointment {
 }
 
 model UserPermission {
-  id         String   @id @default(cuid())
-  employeeId String   @unique
-  modules    String[]
+  id              String   @id @default(cuid())
+  employeeId      String   @unique
+  modules         String[]
   // Pre-flight Patch C (Phase 1) — action-level override, Option 1 (sentinel
   // boolean + native array; Prisma has no nullable-list type, P1012).
   //   actionsOverride=false            -> no employee override, inherit RolePermission.actions
@@ -856,9 +887,9 @@ model UserPermission {
   //   actionsOverride=true, actions=[..] -> explicit employee-specific grants
   actions         String[] @default([])
   actionsOverride Boolean  @default(false)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  employee        Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 }
 
 model RolePermission {
@@ -894,9 +925,9 @@ model MemberTransferRequest {
 
 model AuditLog {
   id        String   @id @default(cuid())
-  module    String   // "LEAD", "INVOICE", "CUSTOMER", "JOB", "INVENTORY", "LICENSE", "TRANSFER"
+  module    String // "LEAD", "INVOICE", "CUSTOMER", "JOB", "INVENTORY", "LICENSE", "TRANSFER"
   recordId  String
-  action    String   // "CREATE", "UPDATE", "DELETE", "RESTORE", "APPROVE", "REJECT", "TRANSFER"
+  action    String // "CREATE", "UPDATE", "DELETE", "RESTORE", "APPROVE", "REJECT", "TRANSFER"
   userId    String
   branchId  String?
   oldValue  Json?
@@ -913,8 +944,8 @@ model AuditLog {
 model InventoryMovement {
   id          String   @id @default(cuid())
   itemId      String
-  type        String   // "ADD", "ADJUST", "DISPATCH", "RECEIVE", "CONSUME", "PURCHASE_RECEIPT"
-  reference   String   // e.g. "INV-001", "REQ-002"
+  type        String // "ADD", "ADJUST", "DISPATCH", "RECEIVE", "CONSUME", "PURCHASE_RECEIPT"
+  reference   String // e.g. "INV-001", "REQ-002"
   quantity    Int
   balance     Int
   performedBy String
@@ -944,25 +975,25 @@ model License {
 }
 
 model ServiceMaster {
-  id             String   @id @default(cuid())
-  code           String   @unique
+  id             String  @id @default(cuid())
+  code           String  @unique
   name           String
   category       String
   standardPrice  Float
   estimatedTime  String
   warranty       String
-  status         String   @default("Active")
-  allowPriceEdit Boolean  @default(false)
+  status         String  @default("Active")
+  allowPriceEdit Boolean @default(false)
 }
 
 model PriceMaster {
-  id          String   @id @default(cuid())
-  itemType    String   // "LABOR", "PARTS", "OIL", "ACCESSORIES"
-  code        String   @unique
+  id          String  @id @default(cuid())
+  itemType    String // "LABOR", "PARTS", "OIL", "ACCESSORIES"
+  code        String  @unique
   name        String
   price       Float
   franchiseId String?
-  status      String   @default("Active")
+  status      String  @default("Active")
 }
 
 // GST-01 — this model already existed (name/percentage/franchiseId/status)
@@ -985,27 +1016,27 @@ model TaxMaster {
 // string) rather than an enforced foreign key, consistent with how master
 // data is referenced elsewhere in this schema.
 model HsnSacMaster {
-  id             String    @id @default(cuid())
-  code           String    @unique
+  id             String   @id @default(cuid())
+  code           String   @unique
   description    String
-  type           String    // "SAC" | "HSN"
+  type           String // "SAC" | "HSN"
   defaultGstRate Float?
-  status         String    @default("Active")
-  createdAt      DateTime  @default(now())
+  status         String   @default("Active")
+  createdAt      DateTime @default(now())
 }
 
 model DiscountMaster {
-  id          String   @id @default(cuid())
+  id          String  @id @default(cuid())
   name        String
   percentage  Float
   maxDiscount Float
   franchiseId String?
-  status      String   @default("Active")
+  status      String  @default("Active")
 }
 
 model Approval {
   id            String   @id @default(cuid())
-  module        String   // "INVENTORY", "TRANSFER", "CREDIT", "LEAVE", "DISCOUNT", "PURCHASE"
+  module        String // "INVENTORY", "TRANSFER", "CREDIT", "LEAVE", "DISCOUNT", "PURCHASE"
   targetId      String
   requesterId   String
   requesterName String
@@ -1023,24 +1054,24 @@ model Notification {
   title     String
   message   String
   read      Boolean  @default(false)
-  type      String?  // e.g. JOB_ASSIGNED, PRIORITY_CHANGE, ADDITIONAL_WORK_APPROVAL, UPCOMING_DELIVERY
-  link      String?  // optional deep-link for the frontend
+  type      String? // e.g. JOB_ASSIGNED, PRIORITY_CHANGE, ADDITIONAL_WORK_APPROVAL, UPCOMING_DELIVERY
+  link      String? // optional deep-link for the frontend
   createdAt DateTime @default(now())
 }
 
 model LeaveRequest {
-  id           String     @id @default(cuid())
-  employeeId   String
-  startDate    DateTime
-  endDate      DateTime
-  reason       String
-  status       String     @default("Pending") // "Pending", "Approved", "Rejected"
-  franchiseId  String?
-  isDeleted    Boolean    @default(false)
-  deletedAt    DateTime?
-  createdAt    DateTime   @default(now())
-  employee     Employee   @relation(fields: [employeeId], references: [id])
-  franchise    Franchise? @relation(fields: [franchiseId], references: [id])
+  id          String     @id @default(cuid())
+  employeeId  String
+  startDate   DateTime
+  endDate     DateTime
+  reason      String
+  status      String     @default("Pending") // "Pending", "Approved", "Rejected"
+  franchiseId String?
+  isDeleted   Boolean    @default(false)
+  deletedAt   DateTime?
+  createdAt   DateTime   @default(now())
+  employee    Employee   @relation(fields: [employeeId], references: [id])
+  franchise   Franchise? @relation(fields: [franchiseId], references: [id])
 }
 
 // REP-01C (D-REP5) — minimum viable dashboard widget configuration:
@@ -1066,107 +1097,107 @@ model DashboardWidgetConfig {
 }
 
 model Callback {
-  id               String    @id @default(cuid())
-  leadId           String?              // optional — callbacks can be standalone
-  leadName         String?
-  customerId       String?
-  customerName     String?
-  scheduledAt      DateTime             // exact date & time
-  reminderNotes    String
-  assignedToId     String               // employee responsible
-  assignedTo       String               // employee name
-  status           String  @default("Pending") // "Pending", "Completed", "Rescheduled", "Overdue"
-  rescheduledTo    DateTime?
-  completedAt      DateTime?
-  completedBy      String?
-  completedNotes   String?
-  franchiseId      String?
-  isDeleted        Boolean @default(false)
-  deletedAt        DateTime?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @default(now()) @updatedAt
-  createdBy        String?
+  id             String    @id @default(cuid())
+  leadId         String? // optional — callbacks can be standalone
+  leadName       String?
+  customerId     String?
+  customerName   String?
+  scheduledAt    DateTime // exact date & time
+  reminderNotes  String
+  assignedToId   String // employee responsible
+  assignedTo     String // employee name
+  status         String    @default("Pending") // "Pending", "Completed", "Rescheduled", "Overdue"
+  rescheduledTo  DateTime?
+  completedAt    DateTime?
+  completedBy    String?
+  completedNotes String?
+  franchiseId    String?
+  isDeleted      Boolean   @default(false)
+  deletedAt      DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @default(now()) @updatedAt
+  createdBy      String?
 }
 
 model CalendarEvent {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   title       String
   description String?
   start       DateTime
   end         DateTime
-  type        String   // "MEETING", "HOLIDAY", "MAINTENANCE", "OTHER"
+  type        String // "MEETING", "HOLIDAY", "MAINTENANCE", "OTHER"
   franchiseId String?
-  isDeleted   Boolean  @default(false)
-  deletedAt   DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-}
-
-model Referral {
-  id                 String    @id @default(cuid())
-  referringCustomerId String
-  referringCustomer  String
-  referredLeadId     String?   @unique
-  referredCustomerId String?   @unique
-  referredName       String
-  referredPhone      String
-  referralDate       DateTime  @default(now())
-  status             String    @default("Pending") // "Pending", "Converted", "Lost"
-  rewardPointsApplied Int      @default(0)
-  franchiseId        String?
-  isDeleted          Boolean   @default(false)
-  deletedAt          DateTime?
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
-}
-
-model CustomerVehicle {
-  id          String    @id @default(cuid())
-  customerId  String
-  vehicleNo   String    @unique
-  make        String
-  model       String
-  variant     String?
-  year        Int?
-  fuelType    String?
-  color       String?
-  chassisNo   String?
-  engineNo    String?
-  odometer    Int?
-  vin         String?
   isDeleted   Boolean   @default(false)
   deletedAt   DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
-  customer    Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+}
+
+model Referral {
+  id                  String    @id @default(cuid())
+  referringCustomerId String
+  referringCustomer   String
+  referredLeadId      String?   @unique
+  referredCustomerId  String?   @unique
+  referredName        String
+  referredPhone       String
+  referralDate        DateTime  @default(now())
+  status              String    @default("Pending") // "Pending", "Converted", "Lost"
+  rewardPointsApplied Int       @default(0)
+  franchiseId         String?
+  isDeleted           Boolean   @default(false)
+  deletedAt           DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+}
+
+model CustomerVehicle {
+  id         String    @id @default(cuid())
+  customerId String
+  vehicleNo  String    @unique
+  make       String
+  model      String
+  variant    String?
+  year       Int?
+  fuelType   String?
+  color      String?
+  chassisNo  String?
+  engineNo   String?
+  odometer   Int?
+  vin        String?
+  isDeleted  Boolean   @default(false)
+  deletedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  customer   Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
 }
 
 model Warranty {
-  id            String    @id @default(cuid())
-  warrantyNo    String?   @unique // e.g. WR-2026-0001
-  customerId    String
-  vehicleNo     String
-  jobId         String?
-  invoiceId     String?
-  itemName      String
-  durationDays  Int
-  startDate     DateTime  @default(now())
-  expiryDate    DateTime
-  status        String    @default("Active") // "Active", "Expired", "Claimed", "Void"
-  notes         String?
-  claims        String?   // JSON string: array of claim history records
-  isDeleted     Boolean   @default(false)
-  deletedAt     DateTime?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  customer      Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  id           String    @id @default(cuid())
+  warrantyNo   String?   @unique // e.g. WR-2026-0001
+  customerId   String
+  vehicleNo    String
+  jobId        String?
+  invoiceId    String?
+  itemName     String
+  durationDays Int
+  startDate    DateTime  @default(now())
+  expiryDate   DateTime
+  status       String    @default("Active") // "Active", "Expired", "Claimed", "Void"
+  notes        String?
+  claims       String? // JSON string: array of claim history records
+  isDeleted    Boolean   @default(false)
+  deletedAt    DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  customer     Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
 }
 
 model ServiceReminder {
   id            String    @id @default(cuid())
   customerId    String
   vehicleNo     String
-  reminderType  String    // e.g. "Periodic Maintenance", "Oil Change", "Insurance Renewal", "Wheel Alignment"
+  reminderType  String // e.g. "Periodic Maintenance", "Oil Change", "Insurance Renewal", "Wheel Alignment"
   scheduledDate DateTime
   status        String    @default("Pending") // "Pending", "Sent", "Completed", "Cancelled"
   notes         String?
@@ -1178,15 +1209,15 @@ model ServiceReminder {
 }
 
 model Estimate {
-  id          String     @id
-  customerId  String?
-  customerName String
-  phone       String
-  vehicle     String
-  model       String
-  amount      Float
-  status      String     @default("Pending") // "Pending", "Approved", "Rejected"
-  date        DateTime   @default(now())
+  id                String     @id
+  customerId        String?
+  customerName      String
+  phone             String
+  vehicle           String
+  model             String
+  amount            Float
+  status            String     @default("Pending") // "Pending", "Approved", "Rejected"
+  date              DateTime   @default(now())
   items             Json?
   estimatedDelivery DateTime?
   warranty          String?
@@ -1200,17 +1231,17 @@ model Estimate {
 }
 
 model CustomerComplaint {
-  id          String     @id @default(cuid())
+  id          String   @id @default(cuid())
   customerId  String
   title       String
   description String
-  status      String     @default("Open") // "Open", "InProgress", "Resolved", "Closed"
-  severity    String     @default("Medium") // "Low", "Medium", "High"
-  jobId       String?    // Optional link to the Job this complaint relates to (10.11 per-employee complaint count)
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
-  customer    Customer   @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  job         Job?       @relation(fields: [jobId], references: [id])
+  status      String   @default("Open") // "Open", "InProgress", "Resolved", "Closed"
+  severity    String   @default("Medium") // "Low", "Medium", "High"
+  jobId       String? // Optional link to the Job this complaint relates to (10.11 per-employee complaint count)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  job         Job?     @relation(fields: [jobId], references: [id])
 }
 
 // ─── Workshop Operations (PRD §10) ─────────────────────────────────────────────
@@ -1220,7 +1251,7 @@ model WorkflowStage {
   name        String
   order       Int
   isDefault   Boolean    @default(false)
-  franchiseId String?    // null = global stage, visible to all franchises
+  franchiseId String? // null = global stage, visible to all franchises
   isDeleted   Boolean    @default(false)
   createdAt   DateTime   @default(now())
   franchise   Franchise? @relation(fields: [franchiseId], references: [id])
@@ -1230,12 +1261,12 @@ model JobPhoto {
   id             String        @id @default(cuid())
   jobId          String
   url            String
-  category       String   // BEFORE_SERVICE | DURING_SERVICE | AFTER_SERVICE | SPECIAL_WORK | ADDITIONAL_DAMAGE | (QC categories: FRONT_VIEW | REAR_VIEW | LEFT_SIDE | RIGHT_SIDE | INTERIOR | COMPLETED_SERVICE | SPECIAL_WORK)
+  category       String // BEFORE_SERVICE | DURING_SERVICE | AFTER_SERVICE | SPECIAL_WORK | ADDITIONAL_DAMAGE | (QC categories: FRONT_VIEW | REAR_VIEW | LEFT_SIDE | RIGHT_SIDE | INTERIOR | COMPLETED_SERVICE | SPECIAL_WORK)
   caption        String?
   uploadedById   String?
   uploadedBy     String?
   franchiseId    String?
-  qcInspectionId String?       // set only for QC inspection photos (12.5); null = work photo
+  qcInspectionId String? // set only for QC inspection photos (12.5); null = work photo
   createdAt      DateTime      @default(now())
   job            Job           @relation(fields: [jobId], references: [id], onDelete: Cascade)
   qcInspection   QCInspection? @relation(fields: [qcInspectionId], references: [id])
@@ -1277,18 +1308,18 @@ model MaterialConsumption {
 
 model QCChecklistTemplate {
   id          String     @id @default(cuid())
-  category    String     // Exterior | Interior | Accessories | Final Inspection
+  category    String // Exterior | Interior | Accessories | Final Inspection
   label       String
   order       Int
   isDefault   Boolean    @default(false)
-  franchiseId String?    // null = global
+  franchiseId String? // null = global
   isDeleted   Boolean    @default(false)
   createdAt   DateTime   @default(now())
   franchise   Franchise? @relation(fields: [franchiseId], references: [id])
 
   // Phase 4B-2C — default false preserves current behavior for all existing
   // rows (nothing was ever enforced as mandatory before this phase existed).
-  mandatory   Boolean    @default(false)
+  mandatory Boolean @default(false)
 
   // Phase 4B-2D-C — stable logical identity, independent of this row's own
   // `id`. Generated once at creation and never reassigned (not exposed on
@@ -1301,7 +1332,7 @@ model QCChecklistTemplate {
   // references, so the same logical item can be traced across multiple
   // immutable published versions once versioning is actually wired up (not
   // yet, in this phase — see QCChecklistTemplateVersion).
-  logicalItemId String   @default(uuid())
+  logicalItemId String @default(uuid())
 
   // Phase 4B-2C closure fix — a partial, case-insensitive unique index named
   // "QCChecklistTemplate_scope_category_label_ci_key" exists on
@@ -1326,18 +1357,18 @@ model QCChecklistTemplate {
 // version.ts) for how the current 18 live global rows become "HQ Version 1,
 // Published."
 model QCChecklistTemplateVersion {
-  id            String    @id @default(cuid())
-  franchiseId   String?   // null = HQ/global scope, same convention as QCChecklistTemplate
-  versionNumber Int       // unique WITHIN this scope only — see the migration-managed partial index below, not a global counter
-  status        String    @default("Draft") // Draft | Published | Superseded
-  createdById   String?
-  createdAt     DateTime  @default(now())
-  publishedById String?
-  publishedAt   DateTime?
-  franchise     Franchise? @relation(fields: [franchiseId], references: [id])
-  items         QCChecklistTemplateVersionItem[]
-  inspections   QCInspection[] @relation("QCInspectionHqTemplateVersion")
-  franchiseInspections QCInspection[] @relation("QCInspectionFranchiseTemplateVersion")
+  id                   String                           @id @default(cuid())
+  franchiseId          String? // null = HQ/global scope, same convention as QCChecklistTemplate
+  versionNumber        Int // unique WITHIN this scope only — see the migration-managed partial index below, not a global counter
+  status               String                           @default("Draft") // Draft | Published | Superseded
+  createdById          String?
+  createdAt            DateTime                         @default(now())
+  publishedById        String?
+  publishedAt          DateTime?
+  franchise            Franchise?                       @relation(fields: [franchiseId], references: [id])
+  items                QCChecklistTemplateVersionItem[]
+  inspections          QCInspection[]                   @relation("QCInspectionHqTemplateVersion")
+  franchiseInspections QCInspection[]                   @relation("QCInspectionFranchiseTemplateVersion")
 
   // Phase 4B-2D-C — two raw-SQL partial/functional unique indexes exist on
   // this table (Prisma's schema DSL can't express either declaratively —
@@ -1366,7 +1397,7 @@ model QCChecklistTemplateVersion {
 // version item must remain fully reconstructable even after the live row it
 // came from is later deleted.
 model QCChecklistTemplateVersionItem {
-  id            String   @id @default(cuid())
+  id            String                     @id @default(cuid())
   versionId     String
   logicalItemId String
   label         String
@@ -1379,14 +1410,14 @@ model QCChecklistTemplateVersionItem {
 }
 
 model QCInspection {
-  id             String    @id @default(cuid())
-  jobId          String
-  attemptNumber  Int
-  inspectorId    String?
-  inspectorName  String?
-  scheduledAt    DateTime?   // Inspection Date & Time (12.3)
-  priority       String?
-  assignRemarks  String?
+  id                         String                      @id @default(cuid())
+  jobId                      String
+  attemptNumber              Int
+  inspectorId                String?
+  inspectorName              String?
+  scheduledAt                DateTime? // Inspection Date & Time (12.3)
+  priority                   String?
+  assignRemarks              String?
   // Phase 4B-2C: array of {id, result, remark, label, category} for
   // whichever items the inspector has actually submitted a result for —
   // REPLACED wholesale on every QcService.submitChecklist call (this exact
@@ -1395,7 +1426,7 @@ model QCInspection {
   // `category` are enrichment copied from checklistDefinition below, not
   // re-derived from QCChecklistTemplate. Starts null; an item never yet
   // submitted simply has no entry here (equivalent to "Unanswered").
-  checklist      Json?
+  checklist                  Json?
   // Phase 4B-2D-A — the complete effective checklist frozen at Start
   // (QcRepository.buildFrozenChecklist): one array element per item,
   // {id, label, category, order, mandatory}, captured once from
@@ -1407,7 +1438,7 @@ model QCInspection {
   // unanswered. Kept as a second field (rather than merged into `checklist`
   // itself) specifically so `checklist`'s existing submitted-items-only
   // contract above did not have to change.
-  checklistDefinition Json?
+  checklistDefinition        Json?
   // Phase 4B-2D-D — historical traceability: "which published HQ version,
   // and (if any) which published franchise version, together produced this
   // attempt's checklistDefinition." Two independent nullable references,
@@ -1424,20 +1455,20 @@ model QCInspection {
   // exactly the versions that produced this attempt's frozen items, never a
   // stale or mismatched pair. checklistDefinition remains the authoritative
   // frozen content; these fields are the reference to where it came from.
-  templateVersionId String?
-  templateVersion QCChecklistTemplateVersion? @relation("QCInspectionHqTemplateVersion", fields: [templateVersionId], references: [id])
+  templateVersionId          String?
+  templateVersion            QCChecklistTemplateVersion? @relation("QCInspectionHqTemplateVersion", fields: [templateVersionId], references: [id])
   franchiseTemplateVersionId String?
-  franchiseTemplateVersion QCChecklistTemplateVersion? @relation("QCInspectionFranchiseTemplateVersion", fields: [franchiseTemplateVersionId], references: [id])
-  result         String    @default("Pending") // Pending | Passed | Failed
-  reason         String?     // failure reason (12.6)
-  remarks        String?     // decision remarks (12.6)
-  reworkRequired Boolean   @default(false)
-  decidedAt      DateTime?
-  franchiseId    String?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @default(now()) @updatedAt
-  job            Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  photos         JobPhoto[]
+  franchiseTemplateVersion   QCChecklistTemplateVersion? @relation("QCInspectionFranchiseTemplateVersion", fields: [franchiseTemplateVersionId], references: [id])
+  result                     String                      @default("Pending") // Pending | Passed | Failed
+  reason                     String? // failure reason (12.6)
+  remarks                    String? // decision remarks (12.6)
+  reworkRequired             Boolean                     @default(false)
+  decidedAt                  DateTime?
+  franchiseId                String?
+  createdAt                  DateTime                    @default(now())
+  updatedAt                  DateTime                    @default(now()) @updatedAt
+  job                        Job                         @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  photos                     JobPhoto[]
 
   // Phase 4A — DB-level guard against concurrent lazy-start/assign requests
   // allocating the same attempt number for a job (see QcRepository.getOrCreateOpenInspection).
@@ -1449,41 +1480,41 @@ model QCInspection {
 // ═══════════════════════════════════════════════════════════════
 
 model Vendor {
-  id         String          @id @default(cuid())
-  code       String          @unique
-  name       String
-  gstNumber  String?
-  contact    String?
-  phone      String?
-  email      String?
-  address    String?
-  state      String?   // GST-08 — needed alongside gstNumber to determine intra/inter-state on a purchase, same role Franchise/Customer.state already play for sales
-  status     String          @default("Active")
-  isDeleted  Boolean         @default(false)
-  deletedAt  DateTime?
-  createdAt  DateTime        @default(now())
-  purchases  PurchaseOrder[]
+  id        String          @id @default(cuid())
+  code      String          @unique
+  name      String
+  gstNumber String?
+  contact   String?
+  phone     String?
+  email     String?
+  address   String?
+  state     String? // GST-08 — needed alongside gstNumber to determine intra/inter-state on a purchase, same role Franchise/Customer.state already play for sales
+  status    String          @default("Active")
+  isDeleted Boolean         @default(false)
+  deletedAt DateTime?
+  createdAt DateTime        @default(now())
+  purchases PurchaseOrder[]
 }
 
 model PurchaseOrder {
-  id             String    @id @default(cuid())
-  orderNumber    String    @unique // e.g. PO-2026-0001
-  vendorId       String
-  vendor         Vendor    @relation(fields: [vendorId], references: [id])
-  vendorName     String
-  stage          String    @default("REQUESTED") // REQUESTED -> ORDERED -> RECEIVED -> INVOICED -> PAID
-  items          String    // JSON string: [{ name, sku, qty, unitPrice, total }]
-  totalAmount    Float
-  paidAmount     Float     @default(0)
-  invoiceNumber  String?   // Purchase Invoice Number
-  receivedAt     DateTime? // Goods Receipt Timestamp
-  paidAt         DateTime? // Supplier Payment Timestamp
-  notes          String?
-  createdBy      String
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @default(now()) @updatedAt
-  isDeleted      Boolean   @default(false)
-  deletedAt      DateTime?
+  id            String              @id @default(cuid())
+  orderNumber   String              @unique // e.g. PO-2026-0001
+  vendorId      String
+  vendor        Vendor              @relation(fields: [vendorId], references: [id])
+  vendorName    String
+  stage         String              @default("REQUESTED") // REQUESTED -> ORDERED -> RECEIVED -> INVOICED -> PAID
+  items         String // JSON string: [{ name, sku, qty, unitPrice, total }]
+  totalAmount   Float
+  paidAmount    Float               @default(0)
+  invoiceNumber String? // Purchase Invoice Number
+  receivedAt    DateTime? // Goods Receipt Timestamp
+  paidAt        DateTime? // Supplier Payment Timestamp
+  notes         String?
+  createdBy     String
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @default(now()) @updatedAt
+  isDeleted     Boolean             @default(false)
+  deletedAt     DateTime?
   // GST-08 — input-GST snapshot for the attached purchase invoice, same
   // immutability principle as the sales-side Invoice snapshot (GST-01).
   // Nullable throughout: existing purchase orders keep working with none of
@@ -1492,17 +1523,17 @@ model PurchaseOrder {
   // vendor's GSTIN/state, how the GST breakdown gets computed, and what
   // makes a line ITC-eligible is a business-workflow question, deferred the
   // same way GST-04 deferred CN/DN issuance.
-  vendorGstin    String?
-  vendorState    String?
-  invoiceDate    DateTime?
-  hsnSac         String?    // simplified single-group snapshot, same limitation as Invoice.hsnSac — see PurchaseOrderLine for the real per-line breakdown
-  taxableValue   Float?
-  cgst           Float?
-  sgst           Float?
-  igst           Float?
-  cess           Float?
-  itcEligible    Boolean?
-  itcClaimed     Boolean   @default(false)
+  vendorGstin   String?
+  vendorState   String?
+  invoiceDate   DateTime?
+  hsnSac        String? // simplified single-group snapshot, same limitation as Invoice.hsnSac — see PurchaseOrderLine for the real per-line breakdown
+  taxableValue  Float?
+  cgst          Float?
+  sgst          Float?
+  igst          Float?
+  cess          Float?
+  itcEligible   Boolean?
+  itcClaimed    Boolean             @default(false)
   // Purchase GST/ITC foundation — snapshot at invoice-attachment time,
   // mirroring Invoice.placeOfSupply/supplyType exactly (frozen so a later
   // change to Vendor.state or the company's own GST config never alters an
@@ -1510,9 +1541,9 @@ model PurchaseOrder {
   // explicitly out of scope for this phase — no field added for it; every
   // purchase this system resolves GST for is treated as a standard (non-RCM)
   // supply until a future phase decides otherwise.
-  placeOfSupply  String?
-  supplyType     String?    // "B2B" | "B2C"
-  lines          PurchaseOrderLine[]
+  placeOfSupply String?
+  supplyType    String? // "B2B" | "B2C"
+  lines         PurchaseOrderLine[]
 }
 
 // Purchase GST/ITC foundation — additive alongside the existing `items` Json
@@ -1554,24 +1585,20 @@ model PurchaseOrderLine {
 //                      BUSINESS_HOURS, HOLIDAY_CALENDAR
 // ──────────────────────────────────────────────────────────────
 model MasterData {
-  id          String    @id @default(cuid())
-  category    String    // e.g. "VEHICLE_BRAND", "FUEL_TYPE", "GST_RATE"
-  code        String?   // optional short code / slug
-  name        String    // display name
-  value       String?   // optional additional value (e.g. tax %, hours JSON)
-  parentId    String?   // for hierarchical masters (e.g. Model → Brand)
-  sortOrder   Int       @default(0)
-  status      String    @default("Active") // "Active" | "Inactive"
-  createdBy   String?
-  isDeleted   Boolean   @default(false)
-  deletedAt   DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id        String    @id @default(cuid())
+  category  String // e.g. "VEHICLE_BRAND", "FUEL_TYPE", "GST_RATE"
+  code      String? // optional short code / slug
+  name      String // display name
+  value     String? // optional additional value (e.g. tax %, hours JSON)
+  parentId  String? // for hierarchical masters (e.g. Model → Brand)
+  sortOrder Int       @default(0)
+  status    String    @default("Active") // "Active" | "Inactive"
+  createdBy String?
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 
   @@index([category])
   @@index([parentId])
 }
-
-
-
-
