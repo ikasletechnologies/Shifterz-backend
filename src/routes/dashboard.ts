@@ -231,7 +231,7 @@ dashboardRouter.get("/employee{/:id}", async (req: Request, res: Response): Prom
       const isManager = targetEmp?.reportingManager === reqUser.name ||
         reqUser.role === "SUPER_ADMIN" ||
         reqUser.role === "HQ_USER" ||
-        reqUser.role === "FRANCHISE_ADMIN";
+        (reqUser.role === "FRANCHISE_ADMIN" && targetEmp?.franchiseId === reqUser.franchiseId);
       if (!isManager) {
         res.status(403).json({ error: "Access denied. Only reporting managers or administrators can access this employee's dashboard." });
         return;

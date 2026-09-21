@@ -1074,10 +1074,15 @@ export class ReportService {
     return Array.from(byTechnician.values());
   }
 
-  async getBranchQcReport() {
+  async getBranchQcReport(franchiseId?: string) {
+    // Fix — previously always queried getFranchises()/getQcInspections()
+    // with no scope at all, so a franchise-scoped caller (gated by the
+    // same reports:qc:view action as the other QC reports, all of which
+    // do pass franchiseId) received every franchise's data instead of
+    // just their own.
     const [franchises, inspections] = await Promise.all([
-      this.repository.getFranchises(),
-      this.repository.getQcInspections(),
+      this.repository.getFranchises(franchiseId),
+      this.repository.getQcInspections(franchiseId),
     ]);
     return franchises.map(f => {
       const own = inspections.filter(i => i.franchiseId === f.id);
@@ -1167,7 +1172,7 @@ export class ReportService {
       case 'rework':           rows = await this.getReworkReport(franchiseId); break;
       case 'performance':      rows = await this.getQcPerformanceReport(franchiseId, from, to); break;
       case 'employee-rework':  rows = await this.getEmployeeReworkReport(franchiseId); break;
-      case 'branch':           rows = await this.getBranchQcReport(); break;
+      case 'branch':           rows = await this.getBranchQcReport(franchiseId); break;
       default: throw new Error(`Unknown report type: ${type}`);
     }
 
@@ -2129,22 +2134,37 @@ export class ReportService {
 
   async getOutstandingReport(franchiseId?: string, from?: string, to?: string) {
     const invoices = await this.repository.getInvoicesInRange(franchiseId, parseDate(from), parseDate(to));
-    return invoices
-      .filter(i => i.status !== 'Paid' && i.status !== 'Cancelled')
-      .map(i => {
-        const net = this.invoiceNet(i);
-        const paid = i.status === 'Paid' ? net : 0;
-        return {
-          invoiceNo: i.id,
-          date: i.date?.toISOString().split('T')[0] ?? '',
-          customer: i.client,
-          phone: i.phone,
-          totalAmount: net,
-          amountPaid: paid,
-          outstandingAmount: net - paid,
-          status: i.status,
-        };
-      });
+    const outstandingInvoices = invoices.filter(i => i.status !== 'Paid' && i.status !== 'Cancelled');
+
+    // Fix — `i.status === 'Paid'` can never be true here: the filter above
+    // already excludes every 'Paid' invoice from `outstandingInvoices`, so
+    // `paid` was always 0 and `outstandingAmount` always equalled the full
+    // invoice total, even for an invoice with a real partial payment on
+    // record (status e.g. 'Partial'/'Pending' with money already collected
+    // against it). Actual paid-to-date now comes from summing that
+    // invoice's own Payment rows, the same source of truth
+    // billing.service.ts's getAllInvoices() already uses for paidAmount.
+    const payments = await this.repository.getPaymentsForInvoices(outstandingInvoices.map(i => i.id));
+    const paidByInvoice = new Map<string, number>();
+    payments.forEach(p => {
+      if (!p.invoiceId) return;
+      paidByInvoice.set(p.invoiceId, (paidByInvoice.get(p.invoiceId) || 0) + p.amount);
+    });
+
+    return outstandingInvoices.map(i => {
+      const net = this.invoiceNet(i);
+      const paid = paidByInvoice.get(i.id) || 0;
+      return {
+        invoiceNo: i.id,
+        date: i.date?.toISOString().split('T')[0] ?? '',
+        customer: i.client,
+        phone: i.phone,
+        totalAmount: net,
+        amountPaid: paid,
+        outstandingAmount: net - paid,
+        status: i.status,
+      };
+    });
   }
 
   async getCollectionReport(franchiseId?: string, from?: string, to?: string) {

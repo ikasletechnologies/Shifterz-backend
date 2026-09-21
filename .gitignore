@@ -59,3 +59,10 @@ logs/
 # storage lives outside the repo (see UPLOAD_DIR in src/config/env.ts)
 public/uploads/*
 !public/uploads/.gitkeep
+
+# db dumps and ad-hoc debug/scratch scripts — never commit real data or throwaway tooling
+*.sql
+/scratch/
+/scratch_check/
+scratch_*.log
+*_test_output.txt

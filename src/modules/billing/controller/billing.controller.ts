@@ -6,18 +6,11 @@ import { resolveDataScope } from '../../../shared/scope/dataScope.js';
 export class BillingController {
   constructor(private readonly service: BillingService = new BillingService()) {}
 
-  private resolveScope(req: AuthRequest): string | null | undefined {
-    const role = req.user?.role || '';
-    if (role === 'SUPER_ADMIN' || role === 'HQ_USER') {
-      return req.query.franchiseId ? String(req.query.franchiseId) : undefined;
-    }
-    return req.user?.franchiseId ?? undefined;
-  }
-
   getAllInvoices = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const franchiseId = this.resolveScope(req);
-      const list = await this.service.getAllInvoices(franchiseId);
+      const scope = resolveDataScope(req.user);
+      const explicitFranchiseId = scope.unrestricted && req.query.franchiseId ? String(req.query.franchiseId) : undefined;
+      const list = await this.service.getAllInvoices(scope, explicitFranchiseId);
       res.json(list);
     } catch (error) {
       next(error);

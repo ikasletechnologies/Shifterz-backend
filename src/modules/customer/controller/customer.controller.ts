@@ -154,6 +154,8 @@ export class CustomerController {
     try {
       const id = String(req.params.id);
       const vehicleId = String(req.params.vehicleId);
+      const customer = await this.service.getCustomerById(id);
+      this.checkCustomerAccess(customer, req);
       const vehicle = await this.service.updateVehicle(id, vehicleId, req.body);
       res.json(vehicle);
     } catch (error) {
@@ -165,6 +167,8 @@ export class CustomerController {
     try {
       const id = String(req.params.id);
       const vehicleId = String(req.params.vehicleId);
+      const customer = await this.service.getCustomerById(id);
+      this.checkCustomerAccess(customer, req);
       await this.service.deleteVehicle(id, vehicleId);
       res.json({ success: true, message: "Vehicle removed" });
     } catch (error) {

@@ -2,6 +2,7 @@ import { AppointmentsRepository } from './appointments.repository.js';
 import type { CreateAppointmentDTO, UpdateAppointmentDTO } from './appointments.validation.js';
 import { generateUid } from '../../shared/utils/idGenerator.js';
 import { db } from '../../lib/db.js';
+import { NotFoundError } from '../../shared/errors/NotFoundError.js';
 import {
   notifyAppointmentConfirmation,
   notifyAppointmentStatusChange,
@@ -17,7 +18,7 @@ export class AppointmentsService {
   async getAppointmentById(id: string) {
     const appointment = await this.repository.findById(id);
     if (!appointment) {
-      throw new Error(`Appointment ${id} not found`);
+      throw new NotFoundError(`Appointment ${id} not found`);
     }
     return appointment;
   }
@@ -33,7 +34,7 @@ export class AppointmentsService {
         select: { name: true, phone: true, email: true },
       });
       if (!customer) {
-        throw new Error(`Customer ${data.customerId} not found`);
+        throw new NotFoundError(`Customer ${data.customerId} not found`);
       }
     }
 
@@ -43,7 +44,7 @@ export class AppointmentsService {
         where: { id: data.assignedStaffId, isDeleted: false },
       });
       if (!staff) {
-        throw new Error(`Assigned staff member not found`);
+        throw new NotFoundError(`Assigned staff member not found`);
       }
     }
 
@@ -76,7 +77,7 @@ export class AppointmentsService {
         select: { name: true, phone: true, email: true },
       });
       if (data.customerId && !customer) {
-        throw new Error(`Customer ${data.customerId} not found`);
+        throw new NotFoundError(`Customer ${data.customerId} not found`);
       }
     }
 
@@ -85,7 +86,7 @@ export class AppointmentsService {
         where: { id: data.assignedStaffId, isDeleted: false },
       });
       if (!staff) {
-        throw new Error(`Assigned staff member not found`);
+        throw new NotFoundError(`Assigned staff member not found`);
       }
     }
 

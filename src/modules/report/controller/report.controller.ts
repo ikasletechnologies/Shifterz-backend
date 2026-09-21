@@ -411,7 +411,15 @@ export class ReportController {
 
   getBranchQcReport = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const data = await this.service.getBranchQcReport();
+      // Fix — this previously called service.getBranchQcReport() with no
+      // franchiseId at all, unlike every sibling QC report on this
+      // controller, which all pass resolveScope()'s franchiseId through.
+      // Since the route is gated by the same reports:qc:view action a
+      // franchise-scoped actor (e.g. FRANCHISE_ADMIN) also holds, that
+      // meant any franchise-scoped caller received every franchise's QC
+      // data, not just their own — a franchise-scope leak.
+      const { franchiseId } = this.resolveScope(req);
+      const data = await this.service.getBranchQcReport(franchiseId);
       res.json(data);
     } catch (error) { next(error); }
   };

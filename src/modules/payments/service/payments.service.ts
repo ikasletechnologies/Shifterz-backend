@@ -151,7 +151,10 @@ export class PaymentsService {
     // Update customer spend
     if (clientName) {
       try {
-        const cust = await this.repository.findCustomerByPhone(data.ref || "");
+        // `data.ref` is the payment reference (cheque/UTR number), not a
+        // phone number — looking the customer up by it meant this almost
+        // never matched and totalSpend silently never updated.
+        const cust = await this.repository.findCustomerByPhone(data.phone || "");
         if (cust) {
           await this.repository.incrementCustomerSpend(cust.id, amount);
         }
@@ -172,6 +175,21 @@ export class PaymentsService {
     const original = await this.repository.findById(data.originalPaymentId, scopeWhere(scope));
     if (!original) {
       throw new NotFoundError("Original payment not found");
+    }
+
+    // This route has no request-body schema (see payments.routes.ts), so
+    // `amount` reaches here as whatever the client sent, only coerced with
+    // Number() by the controller. Without this check a missing/non-numeric
+    // amount silently became a NaN-amount payment row, and any positive
+    // number — including one larger than what was actually paid — was
+    // accepted as a valid refund.
+    if (!Number.isFinite(data.amount) || data.amount <= 0) {
+      throw new ValidationError("Refund amount must be a positive number");
+    }
+    if (data.amount > original.amount) {
+      throw new ValidationError(
+        `Refund amount (${data.amount}) cannot exceed the original payment amount (${original.amount})`
+      );
     }
 
     const prefix = "RCPT-25-26-";

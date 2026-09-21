@@ -29,8 +29,16 @@ export function resolveMovementScope(
   scopedItemIds: string[]
 ): MovementScopeResult {
   const isUnrestricted = userRole === 'SUPER_ADMIN' || userRole === 'HQ_USER';
-  if (isUnrestricted || !userFranchiseId) {
+  if (isUnrestricted) {
     return { empty: false, where: itemId ? { itemId } : {} };
+  }
+
+  // A non-HQ actor with no franchiseId at all has no franchise whose
+  // movements they could legitimately see — this must deny (empty result),
+  // not fall through to the unrestricted branch above, which would hand
+  // them every franchise's movement history.
+  if (!userFranchiseId) {
+    return { empty: true, where: {} };
   }
 
   const scopeCondition = {

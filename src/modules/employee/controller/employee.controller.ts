@@ -29,7 +29,9 @@ export class EmployeeController {
 
   getTechnicians = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const list = await this.service.getTechnicians();
+      const userRole = req.user?.role || "UNKNOWN";
+      const userFranchiseId = req.user?.franchiseId || undefined;
+      const list = await this.service.getTechnicians(userRole, userFranchiseId);
       res.json(list);
     } catch (error) {
       next(error);

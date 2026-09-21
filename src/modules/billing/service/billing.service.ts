@@ -8,7 +8,7 @@ import { logAudit } from '../../../shared/services/audit.service.js';
 import { notifyCustomer, notifyManagers } from '../../../shared/services/notification.service.js';
 import { WarrantyService } from '../../warranty/service/warranty.service.js';
 import { applyServiceWarrantyDefaults, type InvoiceLineItemLike } from './serviceWarrantyDefault.helper.js';
-import { resolveDataScope, scopeWhere } from '../../../shared/scope/dataScope.js';
+import { resolveDataScope, scopeWhere, type DataScope } from '../../../shared/scope/dataScope.js';
 import { GstInvoiceResolverService } from '../../gst/service/gstInvoiceResolver.service.js';
 import type { GstCalculationResult } from '../../gst/service/gstCalculation.service.js';
 import { GstTransactionLedgerService } from '../../gst/service/gstTransactionLedger.service.js';
@@ -71,8 +71,20 @@ export class BillingService {
     }
   }
 
-  async getAllInvoices(franchiseId?: string | null) {
-    const list = await this.repository.findAll(franchiseId);
+  // Previously took a raw `franchiseId?: string | null` and the repository
+  // dropped the filter entirely whenever it was falsy. That collapsed two
+  // different callers into the same "no filter" behavior: an unrestricted
+  // HQ actor who deliberately wants every franchise (fine), and a
+  // franchise-scoped actor whose own franchiseId happens to be null/unset
+  // (not fine — that actor would see every franchise's invoices). Now takes
+  // the canonical DataScope, matching every other method in this file
+  // (updateInvoice/convertInvoice/cancelInvoice/etc.), plus an optional
+  // explicit franchiseId that only an unrestricted actor may supply.
+  async getAllInvoices(scope: DataScope, explicitFranchiseId?: string) {
+    const franchiseFilter = scope.unrestricted && explicitFranchiseId
+      ? { franchiseId: explicitFranchiseId }
+      : scopeWhere(scope);
+    const list = await this.repository.findAll(franchiseFilter);
     const payments = await this.repository.findAllPayments();
 
     return list.map(inv => {

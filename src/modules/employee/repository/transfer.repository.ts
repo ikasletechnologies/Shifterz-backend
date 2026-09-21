@@ -2,9 +2,9 @@ import { db } from '../../../lib/db.js';
 import type { CreateTransferDTO, UpdateTransferDTO } from '../validation/transfer.validation.js';
 
 export class TransferRepository {
-  async findAll() {
+  async findAll(tenantFilter: any = {}) {
     return db.memberTransferRequest.findMany({
-      where: { isDeleted: false },
+      where: { isDeleted: false, ...tenantFilter },
       orderBy: { createdAt: "desc" }
     });
   }
@@ -24,6 +24,11 @@ export class TransferRepository {
   }
 
   async create(data: CreateTransferDTO, requester: string) {
+    // panNumber/aadharNumber/address/panDocUrl/aadharDocUrl are accepted by
+    // the request schema but do not exist as columns on MemberTransferRequest
+    // (see prisma/schema.prisma) — passing them here makes Prisma reject the
+    // whole create() call at runtime ("Unknown argument"), so every transfer
+    // request would fail. Only pass fields the model actually has.
     return db.memberTransferRequest.create({
       data: {
         employeeId: data.employeeId || null,
@@ -32,11 +37,6 @@ export class TransferRepository {
         newMemberName: data.newMemberName || null,
         newMemberPhone: data.newMemberPhone || null,
         newMemberEmail: data.newMemberEmail || null,
-        panNumber: data.panNumber || null,
-        aadharNumber: data.aadharNumber || null,
-        address: data.address || null,
-        panDocUrl: data.panDocUrl || null,
-        aadharDocUrl: data.aadharDocUrl || null,
         username: data.username || null,
         password: data.password || null,
         role: data.role || "TECHNICIAN",

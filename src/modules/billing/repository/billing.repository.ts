@@ -6,9 +6,9 @@ import type { Prisma } from '@prisma/client';
 type FranchiseScopeWhere = { franchiseId?: string | null };
 
 export class BillingRepository {
-  async findAll(franchiseId?: string | null) {
+  async findAll(scopeWhere: FranchiseScopeWhere = {}) {
     return db.invoice.findMany({
-      where: { isDeleted: false, ...(franchiseId ? { franchiseId } : {}) },
+      where: { isDeleted: false, ...scopeWhere },
       orderBy: { date: "desc" },
     });
   }

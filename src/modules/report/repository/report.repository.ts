@@ -297,6 +297,19 @@ export class ReportRepository {
     return db.payment.findMany({ where, orderBy: { date: 'desc' } });
   }
 
+  // Fix (getOutstandingReport) — a payment's own date can fall outside the
+  // invoice's from/to window (e.g. an invoice dated inside the range, paid
+  // later), so this is deliberately not date-bounded like getPaymentsInRange
+  // above; it must find every payment ever made against these invoices.
+  // Mirrors billing.service.ts's getAllInvoices()/findAllPayments() pattern
+  // for computing paidAmount, the one already-established source of truth
+  // for "how much of this invoice has actually been paid" elsewhere in this
+  // codebase.
+  async getPaymentsForInvoices(invoiceIds: string[]) {
+    if (invoiceIds.length === 0) return [];
+    return db.payment.findMany({ where: { invoiceId: { in: invoiceIds }, isDeleted: false } });
+  }
+
   async getLeadsInRange(franchiseId?: string, from?: Date, to?: Date) {
     const where: any = { isDeleted: false };
     if (franchiseId) where.franchiseId = franchiseId;

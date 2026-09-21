@@ -9,7 +9,9 @@ export class TransferController {
 
   getAllTransfers = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const list = await this.service.getAllTransfers();
+      const role = req.user?.role || "UNKNOWN";
+      const franchiseId = req.user?.franchiseId || undefined;
+      const list = await this.service.getAllTransfers(role, franchiseId);
       res.json(list);
     } catch (error) {
       next(error);

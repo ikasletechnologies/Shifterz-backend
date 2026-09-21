@@ -3,6 +3,7 @@ import { LeadService } from '../service/lead.service.js';
 import type { AuthRequest } from '../../../middleware/auth.middleware.js';
 import { db } from '../../../lib/db.js';
 import { logAudit } from '../../../shared/services/audit.service.js';
+import { resolveDataScope, scopeWhere } from '../../../shared/scope/dataScope.js';
 
 export class LeadController {
   private service: LeadService;
@@ -13,12 +14,7 @@ export class LeadController {
 
   getLeads = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      let tenantFilter = {};
-      if (req.user) {
-        if (req.user.role !== "SUPER_ADMIN" && req.user.role !== "HQ_USER" && req.user.franchiseId) {
-          tenantFilter = { franchiseId: req.user.franchiseId };
-        }
-      }
+      const tenantFilter = scopeWhere(resolveDataScope(req.user));
 
       const leads = await this.service.getLeads(tenantFilter);
       res.json(leads);

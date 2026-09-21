@@ -108,12 +108,17 @@ export class PaymentsRepository {
 
   async incrementCustomerSpend(id: string, amountToAdd: number, tx?: import('@prisma/client').Prisma.TransactionClient) {
     const client = tx || db;
-    const cust = await client.customer.findUnique({ where: { id } });
-    if (!cust) return null;
-    return client.customer.update({
-      where: { id },
-      data: { totalSpend: cust.totalSpend + amountToAdd },
-    });
+    // Atomic increment — the previous read-then-write (findUnique, then
+    // update with the read value + amountToAdd) lost updates whenever two
+    // payments for the same customer were recorded concurrently.
+    try {
+      return await client.customer.update({
+        where: { id },
+        data: { totalSpend: { increment: amountToAdd } },
+      });
+    } catch {
+      return null;
+    }
   }
 
   async softDelete(id: string) {

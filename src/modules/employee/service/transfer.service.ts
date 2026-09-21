@@ -6,6 +6,7 @@ import { ApiError } from '../../../shared/errors/ApiError.js';
 import { NotFoundError } from '../../../shared/errors/NotFoundError.js';
 import { generateUid } from '../../../shared/utils/idGenerator.js';
 import { sendNotification } from '../../../shared/services/notification.service.js';
+import { redactSensitive } from '../../../shared/services/audit.service.js';
 import bcrypt from 'bcrypt';
 
 export class TransferService {
@@ -14,13 +15,26 @@ export class TransferService {
     private readonly employeeService: EmployeeService = new EmployeeService()
   ) {}
 
-  async getAllTransfers() {
-    const requests = await this.repository.findAll();
-    
+  // This request row can carry a plaintext password for a not-yet-provisioned
+  // new member (see EPB §2.13 in the controller) plus PAN/Aadhar numbers and
+  // document URLs, and the route (GET /api/transfers) is only gated by
+  // `authenticate` — no role/franchise check. Every other "get all X" in this
+  // codebase (getAllEmployees, getLeaves, getAllAttendance, getAllOutpasses)
+  // scopes non-HQ roles to their own franchise; this one didn't, so it was
+  // returning every franchise's pending transfers, plaintext credentials
+  // included, to any authenticated user. redactSensitive strips the
+  // password field the same way the audit log already does.
+  async getAllTransfers(userRole?: string, userFranchiseId?: string) {
+    const tenantFilter: any = {};
+    if (userRole && userRole !== "SUPER_ADMIN" && userRole !== "HQ_USER" && userFranchiseId) {
+      tenantFilter.toFranchiseId = userFranchiseId;
+    }
+    const requests = await this.repository.findAll(tenantFilter);
+
     return Promise.all(requests.map(async (r) => {
       let empName = r.newMemberName || "Unknown";
       let empRole = r.role || "TECHNICIAN";
-      
+
       if (r.employeeId) {
         const emp = await this.repository.findEmployeeById(r.employeeId);
         if (emp) {
@@ -34,13 +48,13 @@ export class TransferService {
         toFranchise = await this.repository.findFranchiseById(r.toFranchiseId);
       }
 
-      return {
+      return redactSensitive({
         ...r,
         employeeName: empName,
         employeeRole: empRole,
         toFranchiseName: toFranchise?.name || "Unknown",
         toFranchiseCity: toFranchise?.city || "Unknown"
-      };
+      });
     }));
   }
 

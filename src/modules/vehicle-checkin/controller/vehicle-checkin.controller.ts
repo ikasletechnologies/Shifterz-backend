@@ -50,6 +50,7 @@ export class VehicleCheckinController {
     try {
       const id = String(req.params.id);
       await this.service.checkTechnicianAccess(id, req.user);
+      await this.service.assertFranchiseAccess(id, req.user);
       const updated = await this.service.updateCheckin(id, req.body);
 
       // Rule 10: Record in Audit Trail
@@ -85,6 +86,7 @@ export class VehicleCheckinController {
     try {
       const id = String(req.params.id);
       await this.service.checkTechnicianAccess(id, req.user);
+      await this.service.assertFranchiseAccess(id, req.user);
       const result = await this.service.checkout(id, req.body);
 
       // Rule 10: Record in Audit Trail

@@ -56,8 +56,21 @@ export class EmployeeService {
     });
   }
 
-  async getTechnicians() {
-    return this.repository.findTechnicians();
+  async getTechnicians(userRole?: string, userFranchiseId?: string) {
+    // Was previously unscoped (db.employee.findMany() with no where clause)
+    // and returned the raw password hash — any authenticated user hitting
+    // GET /api/technicians got every employee across every franchise,
+    // credentials included. Bring it in line with getAllEmployees: scope by
+    // franchise for non-HQ roles and strip the password before returning.
+    const tenantFilter: any = {};
+    if (userRole && userRole !== "SUPER_ADMIN" && userRole !== "HQ_USER" && userFranchiseId) {
+      tenantFilter.franchiseId = userFranchiseId;
+    }
+    const list = await this.repository.findTechnicians(tenantFilter);
+    return list.map(emp => {
+      const { password, ...rest } = emp;
+      return rest;
+    });
   }
 
   async getTechnicianManagement(userRole: string, userFranchiseId: string | undefined, query: StaffManagementQuery) {

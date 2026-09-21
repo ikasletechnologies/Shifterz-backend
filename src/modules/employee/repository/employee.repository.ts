@@ -24,8 +24,8 @@ export class EmployeeRepository {
     });
   }
 
-  async findTechnicians() {
-    return db.employee.findMany(); // The original GET /technicians returned all employees for some reason
+  async findTechnicians(tenantFilter: any) {
+    return db.employee.findMany({ where: tenantFilter });
   }
 
   async countFranchiseUsers(franchiseId: string) {

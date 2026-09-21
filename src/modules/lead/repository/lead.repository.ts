@@ -4,7 +4,10 @@ type FranchiseScopeWhere = { franchiseId?: string | null };
 
 export class LeadRepository {
   async findAll(tenantFilter: any) {
-    return db.lead.findMany({ where: tenantFilter, orderBy: { date: "desc" } });
+    // Soft-deleted leads must not resurface in the main list — every other
+    // lead query in this module (dashboard, reports, follow-up lookups)
+    // excludes isDeleted rows; this one was missing that filter.
+    return db.lead.findMany({ where: { ...tenantFilter, isDeleted: false }, orderBy: { date: "desc" } });
   }
 
   async findById(id: string, scopeWhere: FranchiseScopeWhere = {}) {

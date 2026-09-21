@@ -667,6 +667,19 @@ export class JobCardService {
       throw new ValidationError(`"${stage}" is not a configured work stage. Ask HQ to add it if it's new.`);
     }
 
+    // Same QC-controlled-status gate as updateJob() above — a configured
+    // WorkflowStage can share a name with a QC-controlled status (e.g. an
+    // HQ/franchise admin names a stage "Ready For Billing" or "QC Passed"),
+    // and without this check this endpoint would let any job-card caller set
+    // Job.status to that value directly, bypassing the QC decision pipeline
+    // entirely (no QCInspection required). This endpoint must remain unable
+    // to reach any status that updateJob() itself refuses to set directly.
+    if (QC_TRANSITION_STATUSES.includes(workflowStage.name)) {
+      throw new ValidationError(
+        `"${workflowStage.name}" is a QC-controlled status and cannot be set through the work-stage endpoint. Use the QC module (POST /api/qc/:jobId/decision) to record a Pass/Fail decision.`
+      );
+    }
+
     return this.repository.update(jobId, { status: workflowStage.name, ...(notes ? { notes } : {}) });
   }
 
