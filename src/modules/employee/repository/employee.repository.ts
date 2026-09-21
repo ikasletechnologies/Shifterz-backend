@@ -52,6 +52,10 @@ export class EmployeeRepository {
         role: data.role || "TECHNICIAN",
         franchiseId,
         hqControlled: franchiseId === null,
+        // Only a Franchise Admin / Branch Manager gets the branch-scoped
+        // first-time setup wizard (see /setup on the frontend) — everyone
+        // else defaults to false and never sees it.
+        needsOnboarding: data.role === "FRANCHISE_ADMIN" || data.role === "BRANCH_MANAGER",
         gender: data.gender || null,
         dob: data.dob ? new Date(data.dob) : null,
         doj: data.doj ? new Date(data.doj) : null,

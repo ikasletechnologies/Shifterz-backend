@@ -12,6 +12,7 @@ router.post("/login", loginRateLimiter, validate(loginSchema), authController.lo
 
 // Protected routes
 router.get("/me", authenticate, authController.getMe);
+router.post("/complete-onboarding", authenticate, authController.completeOnboarding);
 router.post("/logout", authenticate, authController.logout);
 router.put("/profile", authenticate, validate(updateProfileSchema), authController.updateProfile);
 

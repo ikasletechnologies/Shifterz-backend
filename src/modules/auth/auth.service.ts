@@ -87,7 +87,12 @@ export class AuthService {
 
     const { token, tokenPayload } = await this.issueSession(user, meta);
 
-    return { token, user: { ...tokenPayload, branch: resolveBranch(user) } };
+    // Not part of the signed JWT payload (same treatment as `branch` above)
+    // — this is UX-only routing to the /setup wizard, not an authorization
+    // decision, so it doesn't need to survive in the token itself. Read
+    // fresh from the DB on every login/getMe instead of trusting a
+    // potentially stale token claim.
+    return { token, user: { ...tokenPayload, branch: resolveBranch(user), needsOnboarding: user.needsOnboarding } };
   }
 
   // Phase 0.5 — revokes exactly the session backing the current request so
@@ -129,9 +134,19 @@ export class AuthService {
       actions: resolvedActions,
       franchiseId: user.franchiseId,
       hqControlled: user.hqControlled,
+      needsOnboarding: user.needsOnboarding,
       branch: resolveBranch(user),
       ...(baseRole === "TECHNICIAN" || baseRole === "QUALITY_INSPECTOR" ? { technicianId: user.id } : {})
     };
+  }
+
+  // Marks the current user's first-time setup wizard (see /setup on the
+  // frontend) as done. Only ever meaningful for FRANCHISE_ADMIN/BRANCH_MANAGER
+  // accounts (the only roles EmployeeRepository.create ever sets
+  // needsOnboarding=true for), but harmless as a no-op for anyone else.
+  async completeOnboarding(userId: string) {
+    await authRepository.updateEmployee(userId, { needsOnboarding: false });
+    return this.getMe(userId);
   }
 
   async updateProfile(userId: string, data: any, meta: SessionMeta = {}) {

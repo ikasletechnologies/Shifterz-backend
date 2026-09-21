@@ -20,6 +20,11 @@ const envSchema = z.object({
   // tracked in git. Falls back to <cwd>/public/uploads when unset so local
   // setups without this configured still work.
   UPLOAD_DIR: z.string().optional(),
+  // GSTIN verification lookup (setup wizard auto-fill) — optional so
+  // deployments without it configured still start; GstinLookupService fails
+  // closed with a clear error at call time when it's unset, same pattern as
+  // SCHEDULER_SECRET above.
+  GSTVERIFY_API_KEY: z.string().optional(),
 });
 
 const _env = envSchema.safeParse(process.env);
