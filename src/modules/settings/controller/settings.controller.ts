@@ -5,7 +5,7 @@ import type { AuthRequest } from '../../../middleware/auth.middleware.js';
 import { logAudit, redactSensitive } from '../../../shared/services/audit.service.js';
 
 export class SettingsController {
-  constructor(private readonly service: SettingsService = new SettingsService()) {}
+  constructor(private readonly service: SettingsService = new SettingsService()) { }
 
   getSettings = async (req: Request, res: Response, next: NextFunction) => {
     try {

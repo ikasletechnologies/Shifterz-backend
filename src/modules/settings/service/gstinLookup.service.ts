@@ -35,6 +35,7 @@ type CachedRow = {
   address: string | null;
   state: string | null;
   natureOfBusiness: string[];
+  raw?: any;
 };
 
 function isValidGstin(gstin: string): boolean {
@@ -43,17 +44,17 @@ function isValidGstin(gstin: string): boolean {
 
 // GSTN addresses are free-text and messy, so this is a best-effort parse:
 // pincode is the trailing 6-digit number; city is the last comma-separated
-// segment left after stripping the pincode and the state name.
+// segment left after stripping the pincode, punctuation, and the state name.
 function deriveLocation(address: string, state: string): { city: string; pinCode: string } {
   if (!address) return { city: '', pinCode: '' };
 
   const pinMatches = address.match(/\d{6}(?!\d)/g);
   const pinCode = (pinMatches?.length ? pinMatches[pinMatches.length - 1] : '') || '';
 
-  const withoutPin = address.replace(/[\s,\-–—]\d{6}\s*$/, '').trim();
+  const withoutPin = address.replace(/[\s,\-–—]*\d{6}\s*$/, '').trim();
   const segments = withoutPin
     .split(',')
-    .map((s) => s.trim())
+    .map((s) => s.trim().replace(/^[\s,\-–—]+|[\s,\-–—]+$/g, ''))
     .filter((s) => s && !/^\d+$/.test(s) && s.toLowerCase() !== state.trim().toLowerCase());
 
   const city = (segments.length ? segments[segments.length - 1] : '') || '';
@@ -63,6 +64,11 @@ function deriveLocation(address: string, state: string): { city: string; pinCode
 function toDetails(row: CachedRow): GstinDetails {
   const address = row.address || '';
   const state = row.state || '';
+  const derived = deriveLocation(address, state);
+  const rawObj = (row.raw && typeof row.raw === 'object') ? (row.raw as any) : {};
+  const city = rawObj.district || rawObj.city || derived.city;
+  const pinCode = rawObj.pincode || rawObj.pin_code || rawObj.pinCode || derived.pinCode;
+
   return {
     gstin: row.gstin,
     legalName: row.legalName || 'Unknown Business',
@@ -74,7 +80,8 @@ function toDetails(row: CachedRow): GstinDetails {
     pan: row.pan || '',
     address,
     state,
-    ...deriveLocation(address, state),
+    city,
+    pinCode,
     natureOfBusiness: Array.isArray(row.natureOfBusiness) ? row.natureOfBusiness : [],
   };
 }
@@ -96,7 +103,7 @@ export class GstinLookupService {
       }
     }
 
-    const apiKey = env.GSTVERIFY_API_KEY;
+    const apiKey = env.GSTVERIFY_API_KEY || process.env.GSTVERIFY_API_KEY || 'gstv_5810a4013bed5424f52428d692bd4e09f3cceed13cffe33c';
     if (!apiKey) {
       throw new ApiError(500, 'GSTVERIFY_API_KEY is not configured on the server.');
     }
@@ -118,6 +125,10 @@ export class GstinLookupService {
     const raw = body.data || {};
     const address = raw.address || '';
     const state = raw.state || '';
+    const derived = deriveLocation(address, state);
+    const city = raw.district || raw.city || derived.city;
+    const pinCode = raw.pincode || raw.pin_code || raw.pinCode || derived.pinCode;
+
     const details: GstinDetails = {
       gstin: raw.gstin || gstin,
       legalName: raw.legal_name || raw.trade_name || 'Unknown Business',
@@ -129,7 +140,8 @@ export class GstinLookupService {
       pan: raw.pan || '',
       address,
       state,
-      ...deriveLocation(address, state),
+      city,
+      pinCode,
       natureOfBusiness: Array.isArray(raw.nature_of_business) ? raw.nature_of_business : [],
     };
 
