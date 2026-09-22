@@ -23,6 +23,52 @@ export class LeadService {
   }
 
   async createLead(data: any, franchiseId: string | null, createdBy?: string) {
+    const cleanedPhone = (data.phone || "").trim().replace(/\D/g, "");
+    if (cleanedPhone) {
+      const existing = await db.lead.findFirst({
+        where: {
+          isDeleted: false,
+          phone: { contains: cleanedPhone },
+          ...(franchiseId ? { franchiseId } : {}),
+        },
+      });
+      if (existing) {
+        throw new ValidationError(`A lead with mobile number ${data.phone} already exists (${existing.name} - ${existing.id})`);
+      }
+    }
+
+    const cleanedVehicle = (data.vehicle || "").trim().replace(/\s+/g, "").toUpperCase();
+    if (cleanedVehicle) {
+      const activeVehicles = await db.lead.findMany({
+        where: {
+          isDeleted: false,
+          vehicle: { not: "" },
+          ...(franchiseId ? { franchiseId } : {}),
+        },
+        select: { id: true, name: true, vehicle: true },
+      });
+      const existingVehicle = activeVehicles.find(
+        (l) => l.vehicle.trim().replace(/\s+/g, "").toUpperCase() === cleanedVehicle
+      );
+      if (existingVehicle) {
+        throw new ValidationError(`A lead with vehicle number "${data.vehicle}" already exists (${existingVehicle.name} - ${existingVehicle.id})`);
+      }
+    }
+
+    const cleanedEmail = (data.email || "").trim().toLowerCase();
+    if (cleanedEmail) {
+      const existingEmail = await db.lead.findFirst({
+        where: {
+          isDeleted: false,
+          email: { equals: cleanedEmail, mode: "insensitive" },
+          ...(franchiseId ? { franchiseId } : {}),
+        },
+      });
+      if (existingEmail) {
+        throw new ValidationError(`A lead with email ID "${data.email}" already exists (${existingEmail.name} - ${existingEmail.id})`);
+      }
+    }
+
     const leadId = await generateSequentialId("L");
     const leadDate = data.date ? new Date(data.date) : new Date();
     const validDate = isNaN(leadDate.getTime()) ? new Date() : leadDate;
@@ -106,6 +152,61 @@ export class LeadService {
     const scope = actor ? resolveDataScope(actor) : { unrestricted: true, franchiseId: null };
     const existing = await this.repository.findById(id, scopeWhere(scope));
     if (!existing) throw new NotFoundError("Lead not found");
+
+    if (data.phone) {
+      const cleanedPhone = data.phone.trim().replace(/\D/g, "");
+      if (cleanedPhone) {
+        const duplicate = await db.lead.findFirst({
+          where: {
+            id: { not: id },
+            isDeleted: false,
+            phone: { contains: cleanedPhone },
+            ...(scope.franchiseId ? { franchiseId: scope.franchiseId } : {}),
+          },
+        });
+        if (duplicate) {
+          throw new ValidationError(`A lead with mobile number ${data.phone} already exists (${duplicate.name} - ${duplicate.id})`);
+        }
+      }
+    }
+
+    if (data.vehicle) {
+      const cleanedVehicle = data.vehicle.trim().replace(/\s+/g, "").toUpperCase();
+      if (cleanedVehicle) {
+        const activeVehicles = await db.lead.findMany({
+          where: {
+            id: { not: id },
+            isDeleted: false,
+            vehicle: { not: "" },
+            ...(scope.franchiseId ? { franchiseId: scope.franchiseId } : {}),
+          },
+          select: { id: true, name: true, vehicle: true },
+        });
+        const duplicateVehicle = activeVehicles.find(
+          (l) => l.vehicle.trim().replace(/\s+/g, "").toUpperCase() === cleanedVehicle
+        );
+        if (duplicateVehicle) {
+          throw new ValidationError(`A lead with vehicle number "${data.vehicle}" already exists (${duplicateVehicle.name} - ${duplicateVehicle.id})`);
+        }
+      }
+    }
+
+    if (data.email) {
+      const cleanedEmail = data.email.trim().toLowerCase();
+      if (cleanedEmail) {
+        const duplicateEmail = await db.lead.findFirst({
+          where: {
+            id: { not: id },
+            isDeleted: false,
+            email: { equals: cleanedEmail, mode: "insensitive" },
+            ...(scope.franchiseId ? { franchiseId: scope.franchiseId } : {}),
+          },
+        });
+        if (duplicateEmail) {
+          throw new ValidationError(`A lead with email ID "${data.email}" already exists (${duplicateEmail.name} - ${duplicateEmail.id})`);
+        }
+      }
+    }
 
     const updatedLead = await this.repository.update(id, {
       name: data.name,
