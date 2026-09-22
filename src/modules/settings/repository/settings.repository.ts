@@ -2,10 +2,10 @@ import { db } from '../../../lib/db.js';
 import type { UpdateSettingDTO } from '../validation/settings.validation.js';
 
 const DEFAULT_SETTINGS_DATA = {
-  companyName: "ERP Shifterz",
-  address: "123 Main St",
-  phone: "1234567890",
-  email: "contact@shifterz.com",
+  companyName: "",
+  address: "",
+  phone: "",
+  email: "",
   gstin: "",
   gstPct: 18,
   currency: "INR",
