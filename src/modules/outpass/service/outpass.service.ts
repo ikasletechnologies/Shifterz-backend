@@ -1,6 +1,6 @@
 import { OutpassRepository } from '../repository/outpass.repository.js';
 import type { CreateOutpassDTO, UpdateOutpassDTO } from '../validation/outpass.validation.js';
-import { generateUid } from '../../../shared/utils/idGenerator.js';
+import { generateSequentialId, generateUid } from '../../../shared/utils/idGenerator.js';
 import { db } from '../../../lib/db.js';
 import { ValidationError } from '../../../shared/errors/ValidationError.js';
 import { NotFoundError } from '../../../shared/errors/NotFoundError.js';
@@ -165,7 +165,7 @@ export class OutpassService {
       );
     }
 
-    const passId = generateUid("OP");
+    const passId = await generateSequentialId("OP");
     const statusUpper = (invoice?.status || "").toUpperCase();
     const paymentStatusStr =
       statusUpper.includes("CREDIT")

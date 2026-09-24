@@ -7,6 +7,7 @@ const getMaxExistingId = async (prefix: string, prisma: any): Promise<number> =>
     JOB: prisma.job,
     L: prisma.lead,
     INV: prisma.invoice,
+    OP: prisma.outPass,
   };
   const model = modelMap[prefix];
   let maxId = 0;
