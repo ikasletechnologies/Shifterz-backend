@@ -25,7 +25,9 @@ const normalizeRole = (role?: string) => (role || '').toUpperCase().replace(/[\s
 // this codebase's existing pattern of not cross-importing between the qc and
 // job-card modules for a handful of literals (see job-card.service.ts's own
 // comment on QC_ROLES for the same rationale).
-const QC_STARTABLE_JOB_STATUSES = ['Waiting for Quality Check', 'Rework Required'];
+// "Completed"/"Work Completed" are included so a job enters QC as soon as the
+// technician finishes — there is no separate "Send to QC" step.
+const QC_STARTABLE_JOB_STATUSES = ['Waiting for Quality Check', 'Rework Required', 'Completed', 'Work Completed'];
 
 type ActingUser = { id?: string; name?: string; role?: string; franchiseId?: string | null; hqControlled?: boolean };
 
@@ -60,7 +62,7 @@ export class QcService {
   private assertStartableStatus(job: { status: string }) {
     if (!QC_STARTABLE_JOB_STATUSES.includes(job.status)) {
       throw new ValidationError(
-        `QC inspection cannot be started for a job in "${job.status}" status. Job must be in "Waiting for Quality Check" or "Rework Required".`
+        `QC inspection cannot be started for a job in "${job.status}" status. Job must be completed by the technician (or in "Rework Required").`
       );
     }
   }

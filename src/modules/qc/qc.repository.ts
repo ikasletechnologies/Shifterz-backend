@@ -4,7 +4,8 @@ import type { DataScope } from '../../shared/scope/dataScope.js';
 import { scopeWhere } from '../../shared/scope/dataScope.js';
 import { QcTemplateVersionRepository } from './qc-template-version.repository.js';
 
-const QC_QUEUE_STATUSES = ['Waiting for Quality Check', 'Inspecting', 'Rework Required'];
+// A job joins the queue as soon as the technician marks it Completed.
+const QC_QUEUE_STATUSES = ['Completed', 'Work Completed', 'Waiting for Quality Check', 'Inspecting', 'Rework Required'];
 
 // Phase 4B-2D-A — one item of the checklist DEFINITION frozen onto
 // QCInspection.checklistDefinition at Start: id/label/category/order/
