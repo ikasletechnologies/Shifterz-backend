@@ -1,13 +1,14 @@
 import { Router } from 'express';
 import { OutpassController } from '../controller/outpass.controller.js';
 import { validate } from '../../../middleware/validate.middleware.js';
-import { authenticate, requireAction } from '../../../middleware/auth.middleware.js';
+import { authenticate, requireAction, requirePermission } from '../../../middleware/auth.middleware.js';
 import { createOutpassSchema, updateOutpassSchema } from '../validation/outpass.validation.js';
 
 export const outpassRouter = Router();
 const controller = new OutpassController();
 
 outpassRouter.use(authenticate);
+outpassRouter.use(requirePermission('outpass'));
 
 outpassRouter.get('/', controller.getAllOutpasses);
 outpassRouter.post('/', validate(createOutpassSchema), controller.createOutpass);

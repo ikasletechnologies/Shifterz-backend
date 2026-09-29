@@ -10,18 +10,23 @@ import type {
 
 export class CustomerRepository {
   async findAll(tenantFilter: any) {
-    return db.customer.findMany({
+    const customers = await db.customer.findMany({
       where: {
         ...tenantFilter,
         isDeleted: false,
       },
       include: {
+        franchise: { select: { id: true, name: true, businessName: true } },
         vehicles: {
-          where: { isDeleted: false }
-        }
+          where: { isDeleted: false },
+        },
       },
       orderBy: { totalSpend: "desc" },
     });
+    return customers.map((c: any) => ({
+      ...c,
+      franchiseName: c.franchise?.name || null,
+    }));
   }
 
   async findById(id: string) {

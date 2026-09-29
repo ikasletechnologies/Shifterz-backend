@@ -14,52 +14,94 @@ export interface AuthRequest extends Request {
   };
 }
 
-// Helper to resolve user permissions based on user-specific overrides or role defaults
+export const ALL_MODULES = [
+  "dashboard", "carin", "jobs", "outpass", "leads", "customers",
+  "billing", "payments", "inventory", "reports", "employees",
+  "attendance", "settings", "roles"
+];
+
+export const FALLBACK_ROLE_MATRIX: Record<string, string[]> = {
+  SUPER_ADMIN: [
+    "dashboard", "carin", "jobs", "outpass", "leads", "customers",
+    "billing", "payments", "inventory", "reports", "employees",
+    "attendance", "settings", "roles"
+  ],
+  HQ_USER: [
+    "dashboard", "carin", "jobs", "outpass", "leads", "customers",
+    "billing", "payments", "inventory", "reports", "employees",
+    "attendance", "settings"
+  ],
+  FRANCHISE_ADMIN: [
+    "dashboard", "carin", "jobs", "outpass", "leads", "customers",
+    "billing", "payments", "inventory", "reports", "employees",
+    "attendance"
+  ],
+  BRANCH_MANAGER: [
+    "dashboard", "carin", "jobs", "outpass", "leads", "customers",
+    "billing", "payments", "inventory", "reports", "attendance"
+  ],
+  RECEPTION_EXECUTIVE: [
+    "dashboard", "carin", "outpass", "customers", "leads", "attendance"
+  ],
+  SERVICE_ADVISOR: [
+    "dashboard", "carin", "jobs", "outpass", "customers", "leads", "attendance"
+  ],
+  TECHNICIAN: [
+    "dashboard", "jobs", "attendance"
+  ],
+  QUALITY_INSPECTOR: [
+    "dashboard", "jobs", "carin"
+  ],
+  BILLING_EXECUTIVE: [
+    "dashboard", "billing", "payments", "reports"
+  ],
+  INVENTORY_EXECUTIVE: [
+    "dashboard", "inventory", "reports"
+  ],
+};
+
+export function normalizeRole(role: string): string {
+  const base = ((role || "").split("|")[0] ?? "").trim().toUpperCase();
+  const aliasMap: Record<string, string> = {
+    RECEPTIONIST: "RECEPTION_EXECUTIVE",
+    QC: "QUALITY_INSPECTOR",
+    QC_INSPECTOR: "QUALITY_INSPECTOR",
+    QUALITY_ASSURANCE: "QUALITY_INSPECTOR",
+    BILLING: "BILLING_EXECUTIVE",
+    INVENTORY: "INVENTORY_EXECUTIVE",
+  };
+  return aliasMap[base] || base;
+}
+
+// Centralized role permission resolver
 export async function resolveUserPermissions(userId: string, role: string): Promise<string[]> {
+  const canonicalRole = normalizeRole(role);
+
+  // Super Admin retains full, unconditional system access
+  if (canonicalRole === "SUPER_ADMIN") {
+    return ALL_MODULES;
+  }
+
   try {
-    const user = await db.employee.findUnique({
-      where: { id: userId },
-      include: { permission: true },
-    });
-    
-    if (user?.permission?.modules && user.permission.modules.length > 0) {
-      return user.permission.modules;
-    }
-    
-    const baseRole = role.split("|")[0] || "";
     const rp = await db.rolePermission.findUnique({
-      where: { role: baseRole },
+      where: { role: canonicalRole },
     });
     
-    if (rp?.permissions) {
+    if (rp && Array.isArray(rp.permissions)) {
       return rp.permissions;
     }
   } catch (err) {
     logger.error(`Error resolving user permissions: ${err}`);
   }
   
-  const fallbackMatrix: Record<string, string[]> = {
-    SUPER_ADMIN: ["dashboard", "carin", "jobs", "outpass", "leads", "customers", "billing", "payments", "inventory", "reports", "employees", "attendance", "settings", "roles"],
-    HQ_USER: ["dashboard", "carin", "jobs", "outpass", "leads", "customers", "billing", "payments", "inventory", "reports", "employees", "attendance", "settings"],
-    FRANCHISE_ADMIN: ["dashboard", "carin", "jobs", "outpass", "leads", "customers", "billing", "payments", "inventory", "reports", "employees", "attendance"],
-    BRANCH_MANAGER: ["dashboard", "carin", "jobs", "outpass", "leads", "customers", "billing", "payments", "inventory", "reports", "attendance"],
-    RECEPTION_EXECUTIVE: ["dashboard", "carin", "outpass", "customers", "leads", "attendance"],
-    SERVICE_ADVISOR: ["dashboard", "carin", "jobs", "outpass", "customers", "leads", "attendance"],
-    TECHNICIAN: ["dashboard", "jobs", "attendance"],
-    QUALITY_INSPECTOR: ["dashboard", "jobs", "carin"],
-    BILLING_EXECUTIVE: ["dashboard", "billing", "payments", "reports"],
-    INVENTORY_EXECUTIVE: ["dashboard", "inventory", "reports"],
-  };
-  
-  const base = role.split("|")[0] || "";
-  return fallbackMatrix[base] || [];
+  return FALLBACK_ROLE_MATRIX[canonicalRole] || [];
 }
 
 // Sentinel representing "every action is allowed" for the action-level
 // permission model (Phase 1B). SUPER_ADMIN is unconditional by design
 // throughout this codebase (see requireRole/requirePermission); the future
-// requireAction() middleware (Phase 1A) must treat this sentinel — or the
-// SUPER_ADMIN role itself, ahead of consulting this list — as "always allow",
+// requireAction() middleware (Phase 1A) must treat this sentinel - or the
+// SUPER_ADMIN role itself, ahead of consulting this list - as "always allow",
 // consistent with how requirePermission() already bypasses SUPER_ADMIN before
 // checking membership in any list.
 export const ALL_ACTIONS = "*";
@@ -70,16 +112,6 @@ export interface ActionPermissionInputs {
   rolePermission?: { actions: string[] } | null;
 }
 
-// Pre-flight Patch C — pure resolver for the action-level permission model.
-// Deliberately takes plain data rather than fetching from the DB itself, so
-// it can be unit-tested with zero database dependency. The DB-backed wrapper
-// (resolveActionPermissions below) is what real call sites use.
-//
-// Precedence:
-//   1. SUPER_ADMIN                                -> ALL_ACTIONS
-//   2. UserPermission exists AND actionsOverride   -> that employee's actions, verbatim (even [])
-//   3. otherwise                                   -> RolePermission.actions for the role
-//   4. no RolePermission row for the role          -> [] (fail closed)
 export function resolveActionPermissionsPure(input: ActionPermissionInputs): string[] {
   const baseRole = (input.role || "").split("|")[0] || "";
 
@@ -94,10 +126,6 @@ export function resolveActionPermissionsPure(input: ActionPermissionInputs): str
   return input.rolePermission?.actions ?? [];
 }
 
-// DB-backed wrapper — resolves the same way resolveUserPermissions() does
-// for the legacy module list, but for the new action-level list. Not yet
-// called from any route or middleware (Phase 1A wires requireAction() to
-// this); adding it here is inert until that happens.
 export async function resolveActionPermissions(userId: string, role: string): Promise<string[]> {
   try {
     const baseRole = role.split("|")[0] || "";
@@ -111,5 +139,3 @@ export async function resolveActionPermissions(userId: string, role: string): Pr
     return []; // fail closed, not fail open
   }
 }
-
-

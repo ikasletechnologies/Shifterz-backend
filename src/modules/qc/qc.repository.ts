@@ -109,7 +109,7 @@ export class QcRepository {
 
   async getQueue(franchiseId: string | null) {
     const where: any = { isDeleted: false, status: { in: QC_QUEUE_STATUSES } };
-    if (franchiseId) where.franchiseId = franchiseId;
+    if (franchiseId !== null) where.franchiseId = franchiseId;
     return db.job.findMany({ where, orderBy: { updatedAt: 'asc' } });
   }
 

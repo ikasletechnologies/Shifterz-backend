@@ -8,11 +8,15 @@ export class QcController {
   constructor(private readonly service: QcService = new QcService()) {}
 
   private resolveScope(req: AuthRequest): string | null {
-    const userRole = req.user?.role || 'UNKNOWN';
+    const userRole = (req.user?.role || 'UNKNOWN').toUpperCase().replace(/[\s_]+/g, '_');
     if (userRole === 'SUPER_ADMIN' || userRole === 'HQ_USER') {
-      return req.query.franchiseId ? String(req.query.franchiseId) : null;
+      const qf = req.query.franchiseId ? String(req.query.franchiseId) : null;
+      // Treat "all" / "All" as HQ-wide (no filter)
+      return qf && qf !== 'all' && qf !== 'All' ? qf : null;
     }
-    return req.user?.franchiseId || null;
+    // Non-HQ users must always be scoped to their own franchise.
+    // Return sentinel so callers never accidentally return all rows.
+    return req.user?.franchiseId || '__NO_FRANCHISE__';
   }
 
   // ─── QC Queue ─────────────────────────────────────────────────────────────

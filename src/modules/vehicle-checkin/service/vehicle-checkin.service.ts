@@ -78,16 +78,26 @@ export class VehicleCheckinService {
     }
     if (!car) throw new NotFoundError("Car entry not found");
 
-    const requiredFranchiseId = user.franchiseId ?? null;
-    if (car.franchiseId !== requiredFranchiseId) {
+    if (!user.franchiseId || car.franchiseId !== user.franchiseId) {
       throw new ForbiddenError("You do not have permission to access this vehicle");
     }
   }
 
-  async getAllCheckins(user?: { id?: string; name?: string; role?: string; franchiseId?: string | null }) {
+  async getAllCheckins(user?: { id?: string; name?: string; role?: string; franchiseId?: string | null }, filterFranchiseId?: string) {
     const userRole = user ? (user.role || "").toUpperCase().replace(/[\s_]+/g, "_") : "";
     const isHQ = userRole === "SUPER_ADMIN" || userRole === "HQ_USER";
-    const scopeFranchiseId = user && !isHQ ? user.franchiseId : undefined;
+    let scopeFranchiseId: string | undefined;
+
+    if (isHQ) {
+      if (filterFranchiseId && filterFranchiseId !== "all" && filterFranchiseId !== "All") {
+        scopeFranchiseId = filterFranchiseId;
+      }
+    } else {
+      if (!user?.franchiseId) {
+        return [];
+      }
+      scopeFranchiseId = user.franchiseId;
+    }
 
     const checkins = await this.repository.findAll(scopeFranchiseId);
     const jobCardIds = checkins.map((c) => c.jobCardId).filter(Boolean);
@@ -97,10 +107,12 @@ export class VehicleCheckinService {
     });
     const jobMap = new Map(jobs.map((j) => [j.id, j]));
 
-    const checkinsWithTech = checkins.map((c) => {
+    const checkinsWithTech = checkins.map((c: any) => {
       const job = jobMap.get(c.jobCardId);
       return {
         ...c,
+        franchiseName: c.franchise?.name || null,
+        branchName: c.franchise?.name || null,
         entryId: c.id,
         technician: job?.technician || "",
         technicianId: job?.technicianId || null,
@@ -137,13 +149,63 @@ export class VehicleCheckinService {
   async createCheckin(data: CreateCheckinDTO, franchiseId: string | null) {
     const normVehicle = normalizeVehicleNo(data.vehicle);
 
-    const recentEntry = await this.repository.findRecentCheckinByVehicle(normVehicle, 24);
-    if (recentEntry) {
+    const activeEntry = await this.repository.findActiveCheckinByVehicle(normVehicle);
+    if (activeEntry) {
       throw new ValidationError(
-        `Vehicle ${normVehicle} was already checked.`
+        `Vehicle ${data.vehicle} is already checked in.`
       );
     }
 
+    // Estimate-to-Car-In validation & relationship linking
+    let linkedInvoice: any = null;
+    if (data.estimateId) {
+      linkedInvoice = await db.invoice.findUnique({
+        where: { id: data.estimateId },
+      });
+
+      if (!linkedInvoice) {
+        const altEstimate = await db.estimate.findUnique({
+          where: { id: data.estimateId },
+        });
+        if (altEstimate) {
+          linkedInvoice = altEstimate;
+        }
+      }
+
+      if (linkedInvoice) {
+        // Backend authorization & franchise isolation:
+        // Franchise Admin (franchiseId provided from authenticated user session)
+        // cannot convert an estimate belonging to another franchise.
+        if (franchiseId && linkedInvoice.franchiseId && linkedInvoice.franchiseId !== franchiseId) {
+          throw new ForbiddenError("You do not have permission to convert an estimate belonging to another franchise.");
+        }
+
+        // Duplicate prevention:
+        // If estimate already has a jobId linked to an active job
+        if (linkedInvoice.jobId) {
+          const existingJob = await db.job.findFirst({
+            where: { id: linkedInvoice.jobId, isDeleted: false },
+          });
+          if (existingJob) {
+            throw new ValidationError("Car In already created for this Estimate.");
+          }
+        }
+
+        // Also check if any existing active CarIn references this estimate
+        const existingCarIn = await db.carIn.findFirst({
+          where: {
+            notes: { contains: data.estimateId },
+            isDeleted: false,
+            status: { notIn: ['Delivered', 'Out'] },
+          },
+        });
+        if (existingCarIn) {
+          throw new ValidationError("Car In already created for this Estimate.");
+        }
+      }
+    }
+
+    const effectiveFranchiseId = franchiseId || (linkedInvoice?.franchiseId ?? data.franchiseId ?? null);
     const carId = generateUid("CAR");
     const jobCardId = await generateSequentialId("JOB");
 
@@ -166,9 +228,9 @@ export class VehicleCheckinService {
           inTime: validInTimeISO,
           status: (checkinData as any).status || "Pending",
           odometer: String(checkinData.odometer || "0"),
-          notes: checkinData.notes || "",
+          notes: checkinData.notes || (data.estimateId ? `Converted from Estimate ${data.estimateId}` : ""),
           jobCardId,
-          franchiseId,
+          franchiseId: effectiveFranchiseId,
           receivedById: checkinData.receivedById || null,
           receivedByName: checkinData.receivedByName || null,
           fuelLevel: checkinData.fuelLevel || null,
@@ -200,23 +262,51 @@ export class VehicleCheckinService {
         }
       });
 
+      // Carry over estimated services and items into Job Card
+      let carriedServices: any[] = [];
+      if (Array.isArray(linkedInvoice?.items)) {
+        carriedServices = linkedInvoice.items.map((it: any) => ({
+          name: it.desc || it.name || "Service Item",
+          price: Number(it.price || it.amount || 0),
+          qty: Number(it.qty || 1),
+          warranty: it.warranty || "",
+        }));
+      }
+
       // Auto-create Job Card
       await tx.job.create({
         data: {
           id: jobCardId,
           vehicle: normVehicle,
           customer: checkinData.customer || "",
-          service: checkinData.service || "",
+          service: checkinData.service || (carriedServices.length > 0 ? carriedServices.map(s => s.name).join(", ") : ""),
+          services: carriedServices.length > 0 ? carriedServices : undefined,
           technician: "",
           status: "Pending",
           priority: "Medium",
           startDate: validInTimeISO,
           estCompletion: validInTimeISO,
-          notes: (checkinData.notes && checkinData.notes.trim()) ? checkinData.notes.trim() : "Auto-created from check-in",
-          franchiseId,
+          notes: (checkinData.notes && checkinData.notes.trim())
+            ? checkinData.notes.trim()
+            : (data.estimateId ? `Auto-created from check-in (Estimate ${data.estimateId})` : "Auto-created from check-in"),
+          franchiseId: effectiveFranchiseId,
           carInId: carId,
         }
       });
+
+      // Link estimate to the generated Job Card and update estimate status
+      if (linkedInvoice && linkedInvoice.id) {
+        const isInvoiceTable = await tx.invoice.findUnique({ where: { id: linkedInvoice.id } });
+        if (isInvoiceTable) {
+          await tx.invoice.update({
+            where: { id: linkedInvoice.id },
+            data: {
+              jobId: jobCardId,
+              status: "Converted to Car In",
+            },
+          });
+        }
+      }
 
       // Write CREATED history record so getJobHistory always finds this event
       await tx.jobHistory.create({
@@ -227,7 +317,8 @@ export class VehicleCheckinService {
           payload: {
             vehicle: normVehicle,
             customer: checkinData.customer || "",
-            source: 'vehicle-checkin',
+            source: data.estimateId ? `estimate:${data.estimateId}` : 'vehicle-checkin',
+            services: carriedServices,
           },
         },
       });
@@ -261,7 +352,7 @@ export class VehicleCheckinService {
               visits: 1,
               totalSpend: 0,
               lastVisit: new Date(),
-              franchiseId,
+              franchiseId: effectiveFranchiseId,
             }
           });
         }
@@ -301,7 +392,7 @@ export class VehicleCheckinService {
       }
 
       notifyJobAssigned({
-        franchiseId,
+        franchiseId: effectiveFranchiseId,
         jobId: jobCardId,
         vehicle: normVehicle,
         customerName: checkinData.customer || 'Customer',

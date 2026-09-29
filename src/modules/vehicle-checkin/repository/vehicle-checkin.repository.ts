@@ -15,6 +15,11 @@ export class VehicleCheckinRepository {
       where: franchiseId
         ? { isDeleted: false, status: { notIn: ["Out", "Delivered", "Issued"] }, franchiseId }
         : { isDeleted: false, status: { notIn: ["Out", "Delivered", "Issued"] } },
+      include: {
+        franchise: {
+          select: { id: true, name: true, businessName: true },
+        },
+      },
       orderBy: { inTime: "desc" },
     });
   }
@@ -23,22 +28,60 @@ export class VehicleCheckinRepository {
     return db.carIn.findFirst({ where: { id, isDeleted: false } });
   }
 
-  async findRecentCheckinByVehicle(vehicleNo: string, hours = 24) {
-    const cutoffDate = new Date(Date.now() - hours * 60 * 60 * 1000);
-    const normalizedInput = vehicleNo.replace(/\s+/g, "").toUpperCase();
+  async findActiveCheckinByVehicle(vehicleNo: string) {
+    const normalizedInput = vehicleNo.replace(/[^A-Z0-9]/gi, "").toUpperCase();
 
+    // 1. Check for any active, non-delivered CarIn records
     const checkins = await db.carIn.findMany({
       where: {
         isDeleted: false,
-        inTime: { gte: cutoffDate },
+        status: { notIn: ["Delivered", "Out"] },
+        outTime: null,
       },
       orderBy: { inTime: "desc" },
     });
 
-    return checkins.find((car) => {
-      const norm = car.vehicle.replace(/\s+/g, "").toUpperCase();
+    const activeCar = checkins.find((car) => {
+      const norm = (car.vehicle || "").replace(/[^A-Z0-9]/gi, "").toUpperCase();
       return norm === normalizedInput;
     });
+
+    if (activeCar) return activeCar;
+
+    // 2. Also check if there is an active Job that has not reached final delivery/checkout
+    const activeJobs = await db.job.findMany({
+      where: {
+        status: { notIn: ["Delivered", "Out"] },
+      },
+      orderBy: { startDate: "desc" },
+    });
+
+    const activeJob = activeJobs.find((j) => {
+      const norm = (j.vehicle || "").replace(/[^A-Z0-9]/gi, "").toUpperCase();
+      return norm === normalizedInput;
+    });
+
+    if (activeJob) {
+      if (activeJob.carInId) {
+        const linkedCar = await db.carIn.findFirst({
+          where: { id: activeJob.carInId, isDeleted: false },
+        });
+        if (linkedCar) return linkedCar;
+      }
+      return {
+        id: activeJob.carInId || activeJob.id,
+        vehicle: activeJob.vehicle,
+        jobCardId: activeJob.id,
+        status: activeJob.status,
+        inTime: activeJob.startDate,
+      };
+    }
+
+    return null;
+  }
+
+  async findRecentCheckinByVehicle(vehicleNo: string, hours = 24) {
+    return this.findActiveCheckinByVehicle(vehicleNo);
   }
 
   async create(id: string, data: CreateCheckinDTO, jobCardId: string, franchiseId: string | null) {

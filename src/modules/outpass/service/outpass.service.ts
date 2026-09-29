@@ -64,7 +64,7 @@ export class OutpassService {
     assertInvoicePaidOrCredit(invoice, totalPaid);
   }
 
-  async getAllOutpasses(userRole?: string, franchiseId?: string) {
+  async getAllOutpasses(userRole?: string, userFranchiseId?: string, queryFranchiseId?: string) {
     // Deduplicate any existing duplicate OutPass records (same invoiceId or same normalized vehicle)
     try {
       const activePasses = await db.outPass.findMany({
@@ -106,16 +106,34 @@ export class OutpassService {
       console.error("Deduplication cleanup error:", cleanErr);
     }
 
-
-
     const conditions: any = { isDeleted: false };
-    if (userRole && userRole !== "SUPER_ADMIN" && userRole !== "HQ_USER" && franchiseId) {
-      conditions.franchiseId = franchiseId;
+    const normalizedRole = (userRole || "").toUpperCase().replace(/[\s_]+/g, "_");
+    const isHQ = normalizedRole === "SUPER_ADMIN" || normalizedRole === "HQ_USER";
+
+    if (isHQ) {
+      if (queryFranchiseId && queryFranchiseId !== "all" && queryFranchiseId !== "All") {
+        conditions.franchiseId = queryFranchiseId;
+      }
+    } else {
+      if (!userFranchiseId) {
+        return [];
+      }
+      conditions.franchiseId = userFranchiseId;
     }
-    return db.outPass.findMany({
+
+    const passes = await db.outPass.findMany({
       where: conditions,
-      orderBy: { outTime: "desc" }
+      include: {
+        franchise: { select: { id: true, name: true, businessName: true } },
+      },
+      orderBy: { outTime: "desc" },
     });
+
+    return passes.map((pass: any) => ({
+      ...pass,
+      franchiseName: pass.franchise?.name || null,
+      branchName: pass.franchise?.name || null,
+    }));
   }
 
   async createOutpass(

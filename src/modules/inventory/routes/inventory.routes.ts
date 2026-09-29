@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { InventoryController } from '../controller/inventory.controller.js';
 import { InventoryAdjustmentController } from '../controller/inventoryAdjustment.controller.js';
 import { validate } from '../../../middleware/validate.middleware.js';
-import { authenticate, requireRole } from '../../../middleware/auth.middleware.js';
+import { authenticate, requireRole, requirePermission, type AuthRequest } from '../../../middleware/auth.middleware.js';
 import { createInventorySchema, updateInventorySchema, createProductRequestSchema, approveProductRequestSchema } from '../validation/inventory.validation.js';
 import { createAdjustmentSchema, rejectAdjustmentSchema } from '../validation/inventoryAdjustment.validation.js';
 
@@ -11,9 +11,15 @@ const controller = new InventoryController();
 const adjustmentController = new InventoryAdjustmentController();
 
 inventoryRouter.use(authenticate);
+// Allow users with inventory OR billing permissions to list items (properly scoped by franchise)
+inventoryRouter.get('/', (req: AuthRequest, res, next) => {
+  if (req.user?.role === 'SUPER_ADMIN' || req.user?.permissions?.includes('inventory') || req.user?.permissions?.includes('billing')) {
+    return next();
+  }
+  return res.status(403).json({ error: 'Forbidden: Missing required permission (inventory or billing)' });
+}, controller.getAllItems);
 
-// Standard Inventory Items CRUD
-inventoryRouter.get('/', controller.getAllItems);
+inventoryRouter.use(requirePermission('inventory'));
 inventoryRouter.post('/', validate(createInventorySchema), controller.createItem);
 inventoryRouter.put('/:id', validate(updateInventorySchema), controller.updateItem);
 inventoryRouter.delete('/:id', controller.deleteItem);

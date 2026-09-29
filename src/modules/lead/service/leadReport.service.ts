@@ -32,7 +32,7 @@ export class LeadReportService {
     const leads = await db.lead.findMany({
       where: {
         isDeleted: false,
-        ...(isHQ ? {} : franchiseId ? { franchiseId } : {}),
+        ...(isHQ ? {} : { franchiseId: franchiseId || "__NONE__" }),
       },
       orderBy: { date: 'desc' },
     });
@@ -60,7 +60,7 @@ export class LeadReportService {
   async getFollowUpReport(franchiseId: string | null, isHQ: boolean) {
     const followUps = await db.leadFollowUp.findMany({
       where: {
-        ...(isHQ ? {} : franchiseId ? { franchiseId } : {}),
+        ...(isHQ ? {} : { franchiseId: franchiseId || "__NONE__" }),
       },
       include: { lead: true },
       orderBy: { followUpDate: 'desc' },
@@ -86,7 +86,7 @@ export class LeadReportService {
     const callbacks = await db.callback.findMany({
       where: {
         isDeleted: false,
-        ...(isHQ ? {} : franchiseId ? { franchiseId } : {}),
+        ...(isHQ ? {} : { franchiseId: franchiseId || "__NONE__" }),
       },
       orderBy: { scheduledAt: 'desc' },
     });
@@ -111,7 +111,7 @@ export class LeadReportService {
       where: {
         isDeleted: false,
         status: 'Converted',
-        ...(isHQ ? {} : franchiseId ? { franchiseId } : {}),
+        ...(isHQ ? {} : { franchiseId: franchiseId || "__NONE__" }),
       },
       orderBy: { convertedAt: 'desc' },
     });
@@ -135,7 +135,7 @@ export class LeadReportService {
       where: {
         isDeleted: false,
         status: 'Lost',
-        ...(isHQ ? {} : franchiseId ? { franchiseId } : {}),
+        ...(isHQ ? {} : { franchiseId: franchiseId || "__NONE__" }),
       },
       orderBy: { date: 'desc' },
     });
@@ -157,7 +157,7 @@ export class LeadReportService {
     const leads = await db.lead.findMany({
       where: {
         isDeleted: false,
-        ...(isHQ ? {} : franchiseId ? { franchiseId } : {}),
+        ...(isHQ ? {} : { franchiseId: franchiseId || "__NONE__" }),
       },
     });
 
@@ -184,7 +184,7 @@ export class LeadReportService {
     const leads = await db.lead.findMany({
       where: {
         isDeleted: false,
-        ...(isHQ ? {} : franchiseId ? { franchiseId } : {}),
+        ...(isHQ ? {} : { franchiseId: franchiseId || "__NONE__" }),
       },
     });
 
@@ -214,7 +214,7 @@ export class LeadReportService {
     const leads = await db.lead.findMany({
       where: {
         isDeleted: false,
-        ...(isHQ ? {} : franchiseId ? { franchiseId } : {}),
+        ...(isHQ ? {} : { franchiseId: franchiseId || "__NONE__" }),
       },
     });
 

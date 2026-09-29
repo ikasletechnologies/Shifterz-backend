@@ -14,7 +14,11 @@ export class LeadController {
 
   getLeads = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const tenantFilter = scopeWhere(resolveDataScope(req.user));
+      const scope = resolveDataScope(req.user);
+      let tenantFilter: any = scopeWhere(scope);
+      if (scope.unrestricted && req.query.franchiseId && req.query.franchiseId !== "all" && req.query.franchiseId !== "All") {
+        tenantFilter = { franchiseId: String(req.query.franchiseId) };
+      }
 
       const leads = await this.service.getLeads(tenantFilter);
       res.json(leads);
@@ -25,7 +29,9 @@ export class LeadController {
 
   createLead = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const franchiseId = req.user?.franchiseId || null;
+      const userRole = (req.user?.role || "").toUpperCase().replace(/[\s_]+/g, "_");
+      const isHQ = userRole === "SUPER_ADMIN" || userRole === "HQ_USER";
+      const franchiseId = req.user?.franchiseId || (isHQ ? req.body?.franchiseId || null : null);
       const createdBy = req.user?.name || req.user?.id || "System";
       const lead = await this.service.createLead(req.body, franchiseId, createdBy);
       await logAudit({

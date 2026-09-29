@@ -10,8 +10,9 @@ export class OutpassController {
   getAllOutpasses = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const role = req.user?.role || "UNKNOWN";
-      const franchiseId = req.user?.franchiseId || undefined;
-      const list = await this.service.getAllOutpasses(role, franchiseId);
+      const userFranchiseId = req.user?.franchiseId || undefined;
+      const queryFranchiseId = req.query.franchiseId ? String(req.query.franchiseId) : undefined;
+      const list = await this.service.getAllOutpasses(role, userFranchiseId, queryFranchiseId);
       res.json(list);
     } catch (error) {
       next(error);
@@ -20,7 +21,9 @@ export class OutpassController {
 
   createOutpass = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const franchiseId = req.user?.franchiseId || null;
+      const userRole = (req.user?.role || "").toUpperCase().replace(/[\s_]+/g, "_");
+      const isHQ = userRole === "SUPER_ADMIN" || userRole === "HQ_USER";
+      const franchiseId = req.user?.franchiseId || (isHQ ? req.body?.franchiseId || null : null);
       const result = await this.service.createOutpass(req.body, franchiseId, req.user?.id, req.user?.name);
       await logAudit({
         module: "OUTPASS",

@@ -308,7 +308,7 @@ export class CustomerService {
         orderBy: { scheduledDate: 'desc' }
       }),
       db.carIn.findMany({
-        where: { phone: customer.phone, isDeleted: false },
+        where: { isDeleted: false, ...(customer.vehicle ? { vehicleNo: customer.vehicle } : { customerName: customer.name }) },
         orderBy: { inTime: 'desc' }
       }),
       db.warranty.findMany({

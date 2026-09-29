@@ -23,7 +23,19 @@ export class InventoryService {
   // fixed for ReportController during GST-11).
   async getAllItems(actor?: ScopeActor) {
     const scope = resolveDataScope(actor);
-    return this.repository.findAll({ isDeleted: false, ...scopeWhere(scope) });
+    if (scope.unrestricted) {
+      return this.repository.findAll({ isDeleted: false });
+    }
+    if (!scope.franchiseId) {
+      return [];
+    }
+    return this.repository.findAll({
+      isDeleted: false,
+      OR: [
+        { franchiseId: scope.franchiseId },
+        { franchiseId: null },
+      ],
+    });
   }
 
   // INV-02 — atomicity fix. The stock-affecting write and its movement

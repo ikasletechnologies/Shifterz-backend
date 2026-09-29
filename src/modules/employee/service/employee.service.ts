@@ -33,9 +33,11 @@ export class EmployeeService {
   constructor(private readonly repository: EmployeeRepository = new EmployeeRepository()) { }
 
   async getAllEmployees(userRole: string, userFranchiseId?: string) {
+    const role = (userRole || "").toUpperCase().replace(/[\s_]+/g, "_");
+    const isHQ = role === "SUPER_ADMIN" || role === "HQ_USER";
     let tenantFilter: any = { isDeleted: false };
-    if (userRole !== "SUPER_ADMIN" && userRole !== "HQ_USER" && userFranchiseId) {
-      tenantFilter.franchiseId = userFranchiseId;
+    if (!isHQ) {
+      tenantFilter.franchiseId = userFranchiseId || "__NO_FRANCHISE__";
     }
 
     const list = await this.repository.findAllEmployees(tenantFilter);
@@ -62,9 +64,11 @@ export class EmployeeService {
     // GET /api/technicians got every employee across every franchise,
     // credentials included. Bring it in line with getAllEmployees: scope by
     // franchise for non-HQ roles and strip the password before returning.
+    const role = (userRole || "").toUpperCase().replace(/[\s_]+/g, "_");
+    const isHQ = role === "SUPER_ADMIN" || role === "HQ_USER";
     const tenantFilter: any = {};
-    if (userRole && userRole !== "SUPER_ADMIN" && userRole !== "HQ_USER" && userFranchiseId) {
-      tenantFilter.franchiseId = userFranchiseId;
+    if (!isHQ) {
+      tenantFilter.franchiseId = userFranchiseId || "__NO_FRANCHISE__";
     }
     const list = await this.repository.findTechnicians(tenantFilter);
     return list.map(emp => {
@@ -74,9 +78,11 @@ export class EmployeeService {
   }
 
   async getTechnicianManagement(userRole: string, userFranchiseId: string | undefined, query: StaffManagementQuery) {
+    const role = (userRole || "").toUpperCase().replace(/[\s_]+/g, "_");
+    const isHQ = role === "SUPER_ADMIN" || role === "HQ_USER";
     const tenantFilter: any = {};
-    if (userRole !== "SUPER_ADMIN" && userRole !== "HQ_USER" && userFranchiseId) {
-      tenantFilter.franchiseId = userFranchiseId;
+    if (!isHQ) {
+      tenantFilter.franchiseId = userFranchiseId || "__NO_FRANCHISE__";
     }
 
     return computeStaffPerformance({
@@ -86,7 +92,7 @@ export class EmployeeService {
       search: query.search,
       dateFrom: query.dateFrom,
       dateTo: query.dateTo,
-      franchiseId: query.franchiseId,
+      franchiseId: isHQ ? query.franchiseId : (userFranchiseId || "__NO_FRANCHISE__"),
       serviceType: query.serviceType,
       status: query.status,
       page: query.page ? parseInt(query.page, 10) : undefined,

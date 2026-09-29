@@ -45,7 +45,9 @@ export const createCheckinSchema = z.object({
     hasFastag: z.boolean().optional().default(false),
     hasDashCam: z.boolean().optional().default(false),
     hasUsbCharger: z.boolean().optional().default(false),
-    otherAccessories: z.string().optional().nullable()
+    otherAccessories: z.string().optional().nullable(),
+    franchiseId: z.string().optional().nullable(),
+    estimateId: z.string().optional().nullable(),
   })
 });
 
@@ -91,7 +93,8 @@ export const updateCheckinSchema = z.object({
     hasFastag: z.boolean().optional(),
     hasDashCam: z.boolean().optional(),
     hasUsbCharger: z.boolean().optional(),
-    otherAccessories: z.string().optional().nullable()
+    otherAccessories: z.string().optional().nullable(),
+    franchiseId: z.string().optional().nullable(),
   })
 });
 

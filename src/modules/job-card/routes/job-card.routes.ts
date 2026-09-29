@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { JobCardController } from '../controller/job-card.controller.js';
 import { validate } from '../../../middleware/validate.middleware.js';
-import { authenticate } from '../../../middleware/auth.middleware.js';
+import { authenticate, requirePermission } from '../../../middleware/auth.middleware.js';
 import { upload } from '../../upload/config/multer.config.js';
 import {
   createJobCardSchema,
@@ -18,6 +18,7 @@ export const jobCardRouter = Router();
 const controller = new JobCardController();
 
 jobCardRouter.use(authenticate);
+jobCardRouter.use(requirePermission('jobs'));
 
 // ─── Core Job Card CRUD ────────────────────────────────────────────────────────
 jobCardRouter.get('/',                controller.getJobs);

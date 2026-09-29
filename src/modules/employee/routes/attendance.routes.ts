@@ -1,13 +1,14 @@
 import { Router } from 'express';
 import { AttendanceController } from '../controller/attendance.controller.js';
 import { validate } from '../../../middleware/validate.middleware.js';
-import { authenticate, requireAction } from '../../../middleware/auth.middleware.js';
+import { authenticate, requireAction, requirePermission } from '../../../middleware/auth.middleware.js';
 import { checkInSchema, checkOutSchema, updateAttendanceSchema } from '../validation/attendance.validation.js';
 
 export const attendanceRouter = Router();
 const controller = new AttendanceController();
 
 attendanceRouter.use(authenticate);
+attendanceRouter.use(requirePermission('attendance'));
 
 attendanceRouter.get('/', controller.getAllAttendance);
 // Self-service check-in/out are deliberately NOT gated by attendance:edit —

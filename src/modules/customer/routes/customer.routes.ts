@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { CustomerController } from '../controller/customer.controller.js';
 import { validate } from '../../../middleware/validate.middleware.js';
-import { authenticate, requireAction } from '../../../middleware/auth.middleware.js';
+import { authenticate, requireAction, requirePermission } from '../../../middleware/auth.middleware.js';
 import { requireSystemCredential } from '../../../middleware/system-auth.middleware.js';
 import {
   createCustomerSchema,
@@ -29,6 +29,7 @@ customerRouter.post(
 );
 
 customerRouter.use(authenticate);
+customerRouter.use(requirePermission('customers'));
 
 // Vehicle lookup by vehicle registration number (existing)
 customerRouter.get('/vehicle/:vehicleNo', vehicleController.lookupVehicle);

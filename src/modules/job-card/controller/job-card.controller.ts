@@ -28,8 +28,14 @@ export class JobCardController {
 
         // Branch/franchise admins (and every other non-HQ role) must only see
         // their own branch's job cards, never HQ's or another branch's.
-        if (userRole !== "SUPER_ADMIN" && userRole !== "HQ_USER" && req.user.franchiseId) {
-          filter.franchiseId = req.user.franchiseId;
+        // HQ can view all or filter by a specific franchise.
+        const isHQ = userRole === "SUPER_ADMIN" || userRole === "HQ_USER";
+        if (isHQ) {
+          if (req.query.franchiseId && req.query.franchiseId !== "all" && req.query.franchiseId !== "All") {
+            filter.franchiseId = String(req.query.franchiseId);
+          }
+        } else {
+          filter.franchiseId = req.user.franchiseId || "__NO_FRANCHISE__";
         }
       }
       const list = await this.service.getJobs(filter);

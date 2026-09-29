@@ -1,13 +1,14 @@
 import { Router } from 'express';
 import { VehicleCheckinController } from '../controller/vehicle-checkin.controller.js';
 import { validate } from '../../../middleware/validate.middleware.js';
-import { authenticate, requireRole } from '../../../middleware/auth.middleware.js';
+import { authenticate, requireRole, requirePermission } from '../../../middleware/auth.middleware.js';
 import { createCheckinSchema, updateCheckinSchema, checkoutSchema } from '../validation/vehicle-checkin.validation.js';
 
 export const vehicleCheckinRouter = Router();
 const controller = new VehicleCheckinController();
 
 vehicleCheckinRouter.use(authenticate);
+vehicleCheckinRouter.use(requirePermission('carin'));
 
 // EPB 2.6 — deleting a check-in cascades to its Job Card and OutPass
 // records; restricted to the same management tier already used elsewhere

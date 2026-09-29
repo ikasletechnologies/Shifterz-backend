@@ -32,7 +32,8 @@ export async function computeStaffPerformance(params: StaffPerformanceParams) {
       employeeWhere.role = role;
     }
   }
-  if (franchiseId !== undefined) {
+  const isScoped = tenantFilter && Object.prototype.hasOwnProperty.call(tenantFilter, "franchiseId");
+  if (!isScoped && franchiseId !== undefined && franchiseId !== "all" && franchiseId !== "All") {
     employeeWhere.franchiseId = (franchiseId === "HQ" || franchiseId === "") ? null : franchiseId;
   }
   if (status) employeeWhere.status = status;
@@ -60,11 +61,10 @@ export async function computeStaffPerformance(params: StaffPerformanceParams) {
   // unscoped and leaking every franchise's jobs into this report. Only a
   // genuinely unrestricted scope omits the `franchiseId` key entirely (see
   // dataScope.ts's `scopeWhere`/the `tenant` middleware).
-  if (tenantFilter && Object.prototype.hasOwnProperty.call(tenantFilter, "franchiseId")) {
+  if (isScoped) {
     jobWhere.franchiseId = tenantFilter.franchiseId;
-  }
-  if (franchiseId !== undefined) {
-    jobWhere.franchiseId = franchiseId === "HQ" ? null : franchiseId;
+  } else if (franchiseId !== undefined && franchiseId !== "all" && franchiseId !== "All") {
+    jobWhere.franchiseId = (franchiseId === "HQ" || franchiseId === "") ? null : franchiseId;
   }
   if (serviceType) jobWhere.service = serviceType;
   if (dateFrom || dateTo) {

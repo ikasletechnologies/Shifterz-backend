@@ -11,7 +11,7 @@ export class LeadDashboardService {
     // Tenant filter
     const tenantFilter = {
       isDeleted: false,
-      ...(isHQ ? {} : franchiseId ? { franchiseId } : {}),
+      ...(isHQ ? {} : { franchiseId: franchiseId || "__NONE__" }),
     };
 
     // 1. Fetch all leads under this scope
@@ -32,7 +32,7 @@ export class LeadDashboardService {
           gte: todayStart,
           lte: todayEnd,
         },
-        ...(isHQ ? {} : franchiseId ? { franchiseId } : {}),
+        ...(isHQ ? {} : { franchiseId: franchiseId || "__NONE__" }),
       },
     });
 
@@ -43,7 +43,7 @@ export class LeadDashboardService {
           gte: todayStart,
           lte: todayEnd,
         },
-        ...(isHQ ? {} : franchiseId ? { franchiseId } : {}),
+        ...(isHQ ? {} : { franchiseId: franchiseId || "__NONE__" }),
       },
     });
 
@@ -58,7 +58,7 @@ export class LeadDashboardService {
         lead: {
           status: { notIn: ['Converted', 'Closed', 'Lost'] },
         },
-        ...(isHQ ? {} : franchiseId ? { franchiseId } : {}),
+        ...(isHQ ? {} : { franchiseId: franchiseId || "__NONE__" }),
       },
     });
 
@@ -68,7 +68,7 @@ export class LeadDashboardService {
         scheduledAt: {
           lt: todayStart,
         },
-        ...(isHQ ? {} : franchiseId ? { franchiseId } : {}),
+        ...(isHQ ? {} : { franchiseId: franchiseId || "__NONE__" }),
       },
     });
 

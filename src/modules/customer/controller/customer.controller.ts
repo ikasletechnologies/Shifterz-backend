@@ -2,23 +2,22 @@ import type { Response, NextFunction } from 'express';
 import { CustomerService } from '../service/customer.service.js';
 import type { AuthRequest } from '../../../middleware/auth.middleware.js';
 import { logAudit } from '../../../shared/services/audit.service.js';
-import { resolveDataScope, scopeWhere } from '../../../shared/scope/dataScope.js';
+import { resolveDataScope, scopeWhere, assertWithinScope } from '../../../shared/scope/dataScope.js';
 
 export class CustomerController {
   constructor(private readonly service: CustomerService = new CustomerService()) {}
 
   private getTenantFilter(req: AuthRequest) {
-    return scopeWhere(resolveDataScope(req.user));
+    const scope = resolveDataScope(req.user);
+    if (scope.unrestricted && req.query.franchiseId && req.query.franchiseId !== "all" && req.query.franchiseId !== "All") {
+      return { franchiseId: String(req.query.franchiseId) };
+    }
+    return scopeWhere(scope);
   }
 
   private checkCustomerAccess(customer: any, req: AuthRequest) {
-    if (req.user && req.user.role !== "SUPER_ADMIN" && req.user.role !== "HQ_USER" && req.user.franchiseId) {
-      if (customer.franchiseId !== req.user.franchiseId) {
-        const error: any = new Error("Access denied to this customer profile");
-        error.statusCode = 403;
-        throw error;
-      }
-    }
+    const scope = resolveDataScope(req.user);
+    assertWithinScope(scope, customer?.franchiseId, "Access denied to this customer profile");
   }
 
   getCustomers = async (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -44,7 +43,9 @@ export class CustomerController {
 
   createCustomer = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const franchiseId = req.user?.franchiseId || null;
+      const userRole = (req.user?.role || "").toUpperCase().replace(/[\s_]+/g, "_");
+      const isHQ = userRole === "SUPER_ADMIN" || userRole === "HQ_USER";
+      const franchiseId = req.user?.franchiseId || (isHQ ? req.body?.franchiseId || null : null);
       const customer = await this.service.createCustomer(req.body, franchiseId);
       await logAudit({
         module: "CUSTOMER",
@@ -67,11 +68,8 @@ export class CustomerController {
     try {
       const id = String(req.params.id);
       const oldVal = await this.service.getCustomerById(id);
-      if (req.user && req.user.role !== "SUPER_ADMIN" && req.user.role !== "HQ_USER" && req.user.franchiseId) {
-        if (oldVal.franchiseId !== req.user.franchiseId) {
-          return res.status(403).json({ error: "Access denied" });
-        }
-      }
+      const scope = resolveDataScope(req.user);
+      assertWithinScope(scope, oldVal?.franchiseId, "Access denied");
       const updated = await this.service.updateCustomer(id, req.body);
       await logAudit({
         module: "CUSTOMER",
@@ -94,11 +92,8 @@ export class CustomerController {
     try {
       const id = String(req.params.id);
       const oldValue = await this.service.getCustomerById(id);
-      if (req.user && req.user.role !== "SUPER_ADMIN" && req.user.role !== "HQ_USER" && req.user.franchiseId) {
-        if (oldValue.franchiseId !== req.user.franchiseId) {
-          return res.status(403).json({ error: "Access denied" });
-        }
-      }
+      const scope = resolveDataScope(req.user);
+      assertWithinScope(scope, oldValue?.franchiseId, "Access denied");
       await this.service.deleteCustomer(id);
       await logAudit({
         module: "CUSTOMER",
@@ -324,6 +319,8 @@ export class CustomerController {
   getCustomerDashboard = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const id = String(req.params.id);
+      const customer = await this.service.getCustomerById(id);
+      this.checkCustomerAccess(customer, req);
       const dashboardData = await this.service.getCustomerDashboard(id);
       res.json(dashboardData);
     } catch (error) {

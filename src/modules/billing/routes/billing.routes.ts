@@ -1,13 +1,14 @@
 import { Router } from 'express';
 import { BillingController } from '../controller/billing.controller.js';
 import { validate } from '../../../middleware/validate.middleware.js';
-import { authenticate, requireRole, requireAction } from '../../../middleware/auth.middleware.js';
+import { authenticate, requireRole, requireAction, requirePermission } from '../../../middleware/auth.middleware.js';
 import { createInvoiceSchema, updateInvoiceSchema, cancelInvoiceSchema, shareInvoiceSchema, deleteInvoiceSchema } from '../validation/billing.validation.js';
 
 export const billingRouter = Router();
 const controller = new BillingController();
 
 billingRouter.use(authenticate);
+billingRouter.use(requirePermission('billing'));
 
 billingRouter.get('/', controller.getAllInvoices);
 billingRouter.post('/', validate(createInvoiceSchema), controller.createInvoice);

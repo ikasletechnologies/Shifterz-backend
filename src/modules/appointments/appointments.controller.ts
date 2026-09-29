@@ -2,18 +2,23 @@ import type { Response, NextFunction } from 'express';
 import { AppointmentsService } from './appointments.service.js';
 import type { AuthRequest } from '../../middleware/auth.middleware.js';
 import { logAudit } from '../../shared/services/audit.service.js';
+import { resolveDataScope, assertWithinScope } from '../../shared/scope/dataScope.js';
 
 export class AppointmentsController {
   constructor(private readonly service: AppointmentsService = new AppointmentsService()) {}
 
   private getTenantFilter(req: AuthRequest) {
-    let tenantFilter: any = {};
-    if (req.user) {
-      if (req.user.role !== "SUPER_ADMIN" && req.user.role !== "HQ_USER" && req.user.franchiseId) {
-        tenantFilter = { franchiseId: req.user.franchiseId };
-      }
+    if (!req.user) return {};
+    const userRole = (req.user.role || '').toUpperCase().replace(/[\s_]+/g, '_');
+    const isHQ = userRole === 'SUPER_ADMIN' || userRole === 'HQ_USER';
+    if (isHQ) {
+      // HQ may optionally filter by a specific franchise via query param
+      const qf = req.query?.franchiseId ? String(req.query.franchiseId) : null;
+      return qf && qf !== 'all' && qf !== 'All' ? { franchiseId: qf } : {};
     }
-    return tenantFilter;
+    // Non-HQ users are always scoped to their own franchise.
+    // Sentinel prevents returning all rows when franchiseId is missing.
+    return { franchiseId: req.user.franchiseId || '__NO_FRANCHISE__' };
   }
 
   getAppointments = async (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -29,15 +34,9 @@ export class AppointmentsController {
   getAppointmentById = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const id = String(req.params.id);
+      const scope = resolveDataScope(req.user);
       const appointment = await this.service.getAppointmentById(id);
-
-      // Tenant isolation check
-      if (req.user && req.user.role !== "SUPER_ADMIN" && req.user.role !== "HQ_USER" && req.user.franchiseId) {
-        if (appointment.franchiseId !== req.user.franchiseId) {
-          return res.status(403).json({ error: "Access denied to this appointment" });
-        }
-      }
-
+      assertWithinScope(scope, appointment.franchiseId, 'Access denied to this appointment');
       res.json(appointment);
     } catch (error) {
       next(error);
@@ -70,14 +69,9 @@ export class AppointmentsController {
   updateAppointment = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const id = String(req.params.id);
+      const scope = resolveDataScope(req.user);
       const oldValue = await this.service.getAppointmentById(id);
-
-      // Tenant isolation check
-      if (req.user && req.user.role !== "SUPER_ADMIN" && req.user.role !== "HQ_USER" && req.user.franchiseId) {
-        if (oldValue.franchiseId !== req.user.franchiseId) {
-          return res.status(403).json({ error: "Access denied to modify this appointment" });
-        }
-      }
+      assertWithinScope(scope, oldValue.franchiseId, 'Access denied to modify this appointment');
 
       const updated = await this.service.updateAppointment(id, req.body);
 
@@ -102,14 +96,9 @@ export class AppointmentsController {
   deleteAppointment = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const id = String(req.params.id);
+      const scope = resolveDataScope(req.user);
       const oldValue = await this.service.getAppointmentById(id);
-
-      // Tenant isolation check
-      if (req.user && req.user.role !== "SUPER_ADMIN" && req.user.role !== "HQ_USER" && req.user.franchiseId) {
-        if (oldValue.franchiseId !== req.user.franchiseId) {
-          return res.status(403).json({ error: "Access denied to delete this appointment" });
-        }
-      }
+      assertWithinScope(scope, oldValue.franchiseId, 'Access denied to delete this appointment');
 
       const deleted = await this.service.deleteAppointment(id);
 

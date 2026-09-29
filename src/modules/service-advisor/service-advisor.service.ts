@@ -12,9 +12,11 @@ export interface ServiceAdvisorManagementQuery {
 
 export class ServiceAdvisorService {
   async getManagement(userRole: string, userFranchiseId: string | undefined, query: ServiceAdvisorManagementQuery) {
+    const role = (userRole || "").toUpperCase().replace(/[\s_]+/g, "_");
+    const isHQ = role === "SUPER_ADMIN" || role === "HQ_USER";
     const tenantFilter: any = {};
-    if (userRole !== "SUPER_ADMIN" && userRole !== "HQ_USER" && userFranchiseId) {
-      tenantFilter.franchiseId = userFranchiseId;
+    if (!isHQ) {
+      tenantFilter.franchiseId = userFranchiseId || "__NO_FRANCHISE__";
     }
 
     return computeStaffPerformance({
@@ -24,7 +26,7 @@ export class ServiceAdvisorService {
       search: query.search,
       dateFrom: query.dateFrom,
       dateTo: query.dateTo,
-      franchiseId: query.franchiseId,
+      franchiseId: isHQ ? query.franchiseId : (userFranchiseId || "__NO_FRANCHISE__"),
       status: query.status,
       page: query.page ? parseInt(query.page, 10) : undefined,
       pageSize: query.pageSize ? parseInt(query.pageSize, 10) : undefined,

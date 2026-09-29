@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { QcController } from './qc.controller.js';
 import { QcTemplateVersionController } from './qc-template-version.controller.js';
 import { validate } from '../../middleware/validate.middleware.js';
-import { authenticate, requireAction } from '../../middleware/auth.middleware.js';
+import { authenticate, requireAction, requirePermission } from '../../middleware/auth.middleware.js';
 import { upload } from '../upload/config/multer.config.js';
 import {
   assignQcSchema,
@@ -19,6 +19,7 @@ const controller = new QcController();
 const versionController = new QcTemplateVersionController();
 
 qcRouter.use(authenticate);
+qcRouter.use(requirePermission('jobs'));
 
 // ─── QC Queue ───────────────────────────────────────────────────────────────────
 qcRouter.get('/queue', controller.getQueue);

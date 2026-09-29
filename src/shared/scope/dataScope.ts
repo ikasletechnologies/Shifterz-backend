@@ -19,25 +19,44 @@ export interface DataScope {
 }
 
 export function resolveDataScope(actor?: ScopeActor | null): DataScope {
-  const role = (actor?.role ?? "").split("|")[0];
+  const role = ((actor?.role ?? "").split("|")[0] ?? "").toUpperCase().replace(/[\s_]+/g, "_");
   if (role === "SUPER_ADMIN" || role === "HQ_USER") {
     return { unrestricted: true, franchiseId: null };
   }
-  return { unrestricted: false, franchiseId: actor?.franchiseId ?? null };
+  return { unrestricted: false, franchiseId: actor?.franchiseId || null };
+}
+
+export function getDataScope(actor?: ScopeActor | null) {
+  const scope = resolveDataScope(actor);
+  return {
+    role: actor?.role,
+    franchiseId: scope.franchiseId,
+    unrestricted: scope.unrestricted,
+    scopeWhere: scopeWhere(scope),
+  };
 }
 
 // The Prisma `where` fragment that constrains a query to this scope. Spread
 // this into a query's `where` clause so the database itself excludes
 // out-of-scope rows — do not fetch by id first and check afterward.
 export function scopeWhere(scope: DataScope): { franchiseId?: string | null } {
-  return scope.unrestricted ? {} : { franchiseId: scope.franchiseId };
+  if (scope.unrestricted) {
+    return {};
+  }
+  if (!scope.franchiseId) {
+    // Non-HQ role without a franchiseId MUST NEVER match Super Admin records (franchiseId === null)
+    return { franchiseId: "__NO_FRANCHISE__" };
+  }
+  return { franchiseId: scope.franchiseId };
 }
 
 // Optional defense-in-depth check for callers that already hold a record
 // (e.g. after a repository call that didn't itself apply scopeWhere). Prefer
 // constraining the query itself; use this only as a second layer.
 export function isWithinScope(scope: DataScope, recordFranchiseId: string | null | undefined): boolean {
-  return scope.unrestricted || (recordFranchiseId ?? null) === scope.franchiseId;
+  if (scope.unrestricted) return true;
+  if (!scope.franchiseId) return false;
+  return recordFranchiseId === scope.franchiseId;
 }
 
 export function assertWithinScope(scope: DataScope, recordFranchiseId: string | null | undefined, notFoundMessage = "Resource not found"): void {

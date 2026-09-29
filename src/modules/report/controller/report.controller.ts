@@ -31,9 +31,10 @@ export class ReportController {
   private resolveScope(req: AuthRequest): { franchiseId?: string } {
     const scope = resolveDataScope({ role: req.user?.role, franchiseId: req.user?.franchiseId ?? null });
     if (scope.unrestricted) {
-      return { franchiseId: req.query.franchiseId ? String(req.query.franchiseId) : undefined };
+      const qf = req.query.franchiseId ? String(req.query.franchiseId) : undefined;
+      return { franchiseId: (qf === 'all' || qf === 'All') ? undefined : qf };
     }
-    return { franchiseId: scope.franchiseId ?? undefined };
+    return { franchiseId: scope.franchiseId || '__NO_FRANCHISE__' };
   }
 
   // REP-01C (D-REP6) — "authorized HQ opt-in": the caller must be the same

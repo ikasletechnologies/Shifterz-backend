@@ -3,7 +3,7 @@ import { LeadController } from '../controller/lead.controller.js';
 import { LeadDashboardController } from '../controller/leadDashboard.controller.js';
 import type { Response, NextFunction } from 'express';
 import { validate } from '../../../middleware/validate.middleware.js';
-import { authenticate, requireAction, type AuthRequest } from '../../../middleware/auth.middleware.js';
+import { authenticate, requireAction, requirePermission, type AuthRequest } from '../../../middleware/auth.middleware.js';
 import { createLeadSchema, updateLeadSchema } from '../validation/lead.validation.js';
 import { followUpRouter } from './followup.routes.js';
 
@@ -22,6 +22,7 @@ const controller = new LeadController();
 const dashboardController = new LeadDashboardController();
 
 leadRouter.use(authenticate);
+leadRouter.use(requirePermission('leads'));
 
 // REP-01C (D-REP4/D-REP7) — endpoint F (EPB §6.14 Lead Dashboard), read
 // in full during REP-01C's contract comparison: classified SPECIALIZED,

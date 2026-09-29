@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import { db } from "../lib/db.js";
 import { authenticate as requireAuth, tenant as tenantScope } from "../middleware/auth.middleware.js";
+import { resolveDataScope, scopeWhere } from "../shared/scope/dataScope.js";
 
 export const dashboardRouter = Router();
 
@@ -67,9 +68,17 @@ export function allowedDashboardSections(role?: string): string[] {
 dashboardRouter.get("/", async (req: Request, res: Response) => {
   try {
     const user = (req as any).user;
-    // Resolved by the `tenant` middleware: {} for HQ admins (cross-franchise),
-    // or { franchiseId } for a specific franchise / HQ-controlled employee (franchiseId: null).
-    const tenantFilter: any = { ...((req as any).tenantFilter || {}) };
+    const scope = resolveDataScope(user);
+
+    let tenantFilter: any = {};
+    if (scope.unrestricted) {
+      const qf = req.query.franchiseId ? String(req.query.franchiseId) : undefined;
+      if (qf && qf !== "all" && qf !== "All") {
+        tenantFilter.franchiseId = qf;
+      }
+    } else {
+      tenantFilter = scopeWhere(scope);
+    }
 
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
@@ -80,7 +89,7 @@ dashboardRouter.get("/", async (req: Request, res: Response) => {
     const todayStr = todayStart.toISOString().split("T")[0]; // For string date fields like Attendance
 
     // 1. CRM Metrics
-    const leadsToday = await db.lead.count({ where: { ...tenantFilter, date: { gte: todayStart, lte: todayEnd } } });
+    const leadsToday = await db.lead.count({ where: { ...tenantFilter, date: { gte: todayStart, lte: todayEnd }, isDeleted: false } });
 
     const customers = await db.customer.findMany({
       where: {
@@ -96,7 +105,7 @@ dashboardRouter.get("/", async (req: Request, res: Response) => {
     const newCustomersList = sortedCustomers.filter(c => c.visits <= 1).slice(0, 5);
 
     const appointmentsToday = await db.appointment.count({
-      where: { ...tenantFilter, scheduledDate: { gte: todayStart, lte: todayEnd } }
+      where: { ...tenantFilter, scheduledDate: { gte: todayStart, lte: todayEnd }, isDeleted: false }
     });
 
     const estimatesPending = await db.estimate.count({
@@ -115,16 +124,16 @@ dashboardRouter.get("/", async (req: Request, res: Response) => {
     });
 
     const jobCardsCreated = await db.job.count({
-      where: { ...tenantFilter, createdAt: { gte: todayStart, lte: todayEnd } }
+      where: { ...tenantFilter, createdAt: { gte: todayStart, lte: todayEnd }, isDeleted: false }
     });
 
-    const jobs = await db.job.findMany({ where: tenantFilter });
+    const jobs = await db.job.findMany({ where: { ...tenantFilter, isDeleted: false } });
     const vehiclesInProgress = jobs.filter(j => j.status === "In Progress" || j.status === "Assigned").length;
     const vehiclesReady = jobs.filter(j => j.status === "Completed").length;
-    const pendingQC = jobs.filter(j => j.status === "QC" || j.status === "Quality Check").length;
+    const pendingQC = jobs.filter(j => j.status === "QC" || j.status === "Quality Check" || j.status === "QC Pending" || j.status === "Work Completed").length;
 
     // 3. Financial Metrics
-    const invoices = await db.invoice.findMany({ where: tenantFilter });
+    const invoices = await db.invoice.findMany({ where: { ...tenantFilter, isDeleted: false } });
 
     const revenueToday = invoices
       .filter(i => i.status === "Paid" && new Date(i.date) >= todayStart && new Date(i.date) <= todayEnd)
@@ -142,10 +151,19 @@ dashboardRouter.get("/", async (req: Request, res: Response) => {
 
     // 4. HR Metrics
     const attendanceToday = await db.attendance.findMany({
-      where: { ...tenantFilter, date: { gte: todayStart, lte: todayEnd } }
+      where: { ...tenantFilter, date: { gte: todayStart, lte: todayEnd }, isDeleted: false }
     });
     const presentToday = attendanceToday.filter(a => a.status === "Present").length;
     const absentToday = attendanceToday.filter(a => a.status === "Absent").length;
+
+    const employees = await db.employee.findMany({
+      where: { ...tenantFilter, isDeleted: false, status: "Active" }
+    });
+    const totalEmployees = employees.length;
+    const technicianCount = employees.filter(e => {
+      const r = (e.role || "").toUpperCase().replace(/[\s_]+/g, "_");
+      return r === "TECHNICIAN";
+    }).length;
 
     let jobsAssigned = jobs.length;
     let jobsCompleted = vehiclesReady;
@@ -158,12 +176,12 @@ dashboardRouter.get("/", async (req: Request, res: Response) => {
     const productivity = jobsAssigned > 0 ? Math.round((jobsCompleted / jobsAssigned) * 100) : 0;
 
     // 5. Inventory Metrics
-    const inventory = await db.inventory.findMany({ where: tenantFilter });
+    const inventory = await db.inventory.findMany({ where: { ...tenantFilter, isDeleted: false } });
     const availableStock = inventory.reduce((sum, item) => sum + item.stock, 0);
     const lowStockItems = inventory.filter(item => item.stock <= item.reorder).length;
 
     const pendingStockRequests = await db.inventoryRequest.count({
-      where: { ...tenantFilter, status: "Pending" }
+      where: { ...tenantFilter, status: "Pending", isDeleted: false }
     });
 
     // D-21 — computed the same way as before (no query/business-logic
@@ -195,6 +213,8 @@ dashboardRouter.get("/", async (req: Request, res: Response) => {
       hr: {
         presentToday,
         absentToday,
+        totalEmployees,
+        technicianCount,
         jobsAssigned,
         jobsCompleted,
         productivity
@@ -228,10 +248,10 @@ dashboardRouter.get("/employee{/:id}", async (req: Request, res: Response): Prom
     // Managers or HQ can view dashboards of their reporting employees.
     if (targetEmployeeId !== reqUser.id) {
       const targetEmp = await db.employee.findUnique({ where: { id: targetEmployeeId } });
+      const scope = resolveDataScope(reqUser);
       const isManager = targetEmp?.reportingManager === reqUser.name ||
-        reqUser.role === "SUPER_ADMIN" ||
-        reqUser.role === "HQ_USER" ||
-        (reqUser.role === "FRANCHISE_ADMIN" && targetEmp?.franchiseId === reqUser.franchiseId);
+        scope.unrestricted ||
+        (!scope.unrestricted && Boolean(scope.franchiseId) && targetEmp?.franchiseId === scope.franchiseId && reqUser.role === "FRANCHISE_ADMIN");
       if (!isManager) {
         res.status(403).json({ error: "Access denied. Only reporting managers or administrators can access this employee's dashboard." });
         return;

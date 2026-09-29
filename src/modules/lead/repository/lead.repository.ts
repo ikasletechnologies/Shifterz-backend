@@ -7,7 +7,15 @@ export class LeadRepository {
     // Soft-deleted leads must not resurface in the main list — every other
     // lead query in this module (dashboard, reports, follow-up lookups)
     // excludes isDeleted rows; this one was missing that filter.
-    return db.lead.findMany({ where: { ...tenantFilter, isDeleted: false }, orderBy: { date: "desc" } });
+    const leads = await db.lead.findMany({
+      where: { ...tenantFilter, isDeleted: false },
+      include: { franchise: { select: { id: true, name: true, businessName: true } } },
+      orderBy: { date: "desc" },
+    });
+    return leads.map((l: any) => ({
+      ...l,
+      franchiseName: l.franchise?.name || null,
+    }));
   }
 
   async findById(id: string, scopeWhere: FranchiseScopeWhere = {}) {

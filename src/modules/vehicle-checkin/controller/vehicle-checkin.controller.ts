@@ -8,7 +8,8 @@ export class VehicleCheckinController {
 
   getAll = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const list = await this.service.getAllCheckins(req.user);
+      const filterFranchiseId = req.query.franchiseId ? String(req.query.franchiseId) : undefined;
+      const list = await this.service.getAllCheckins(req.user, filterFranchiseId);
       res.json(list);
     } catch (error) {
       next(error);
@@ -17,7 +18,9 @@ export class VehicleCheckinController {
 
   create = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const franchiseId = req.user?.franchiseId || null;
+      const userRole = (req.user?.role || '').toUpperCase().replace(/[\s_]+/g, '_');
+      const isHQ = userRole === 'SUPER_ADMIN' || userRole === 'HQ_USER';
+      const franchiseId = req.user?.franchiseId || (isHQ ? req.body?.franchiseId || null : null);
       const result = await this.service.createCheckin(req.body, franchiseId);
 
       // Rule 10: Record in Audit Trail

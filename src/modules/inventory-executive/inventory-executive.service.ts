@@ -12,10 +12,11 @@ export interface InventoryExecutiveManagementQuery {
 
 export class InventoryExecutiveService {
   async getManagement(userRole: string, userFranchiseId: string | undefined, query: InventoryExecutiveManagementQuery) {
-    const isUnrestricted = userRole === "SUPER_ADMIN" || userRole === "HQ_USER";
+    const role = (userRole || "").toUpperCase().replace(/[\s_]+/g, "_");
+    const isUnrestricted = role === "SUPER_ADMIN" || role === "HQ_USER";
     const tenantFilter: any = {};
-    if (!isUnrestricted && userFranchiseId) {
-      tenantFilter.franchiseId = userFranchiseId;
+    if (!isUnrestricted) {
+      tenantFilter.franchiseId = userFranchiseId || "__NO_FRANCHISE__";
     }
 
     // A non-HQ actor's franchiseId is pinned to their own franchise — the
@@ -31,7 +32,7 @@ export class InventoryExecutiveService {
       search: query.search,
       dateFrom: query.dateFrom,
       dateTo: query.dateTo,
-      franchiseId: isUnrestricted ? query.franchiseId : userFranchiseId,
+      franchiseId: isUnrestricted ? query.franchiseId : (userFranchiseId || "__NO_FRANCHISE__"),
       status: query.status,
       page: query.page ? parseInt(query.page, 10) : undefined,
       pageSize: query.pageSize ? parseInt(query.pageSize, 10) : undefined,

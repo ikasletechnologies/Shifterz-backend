@@ -3,7 +3,8 @@ import jwt from "jsonwebtoken";
 import type { JwtPayload } from "jsonwebtoken";
 import { env } from "../config/env.js";
 import { db } from "../lib/db.js";
-import { resolveActionPermissions, ALL_ACTIONS } from "../lib/auth.js";
+import { resolveActionPermissions, ALL_ACTIONS, resolveUserPermissions } from "../lib/auth.js";
+import { resolveDataScope, scopeWhere } from "../shared/scope/dataScope.js";
 
 const JWT_SECRET = env.JWT_SECRET;
 
@@ -177,20 +178,14 @@ export const tenant = (req: AuthRequest, res: Response, next: NextFunction) => {
     return res.status(401).json({ error: "Unauthorized" });
   }
 
-  const isHQAdmin = req.user.role === "SUPER_ADMIN" || req.user.role === "HQ_USER";
-  const isHQControlled = req.user.hqControlled === true;
-
-  if (isHQAdmin) {
+  const scope = resolveDataScope(req.user);
+  if (scope.unrestricted) {
     // Full cross-franchise visibility — no scope restriction.
     req.tenantFilter = {};
     return next();
   }
 
-  if (!req.user.franchiseId && !isHQControlled) {
-    return res.status(403).json({ error: "Forbidden: No franchise assigned" });
-  }
-
-  // Either scoped to their own franchise, or to HQ's own records (franchiseId: null).
-  req.tenantFilter = { franchiseId: req.user.franchiseId ?? null };
+  // Non-HQ actors: strictly scope by their franchiseId, or __NO_FRANCHISE__ sentinel
+  req.tenantFilter = scopeWhere(scope);
   next();
 };

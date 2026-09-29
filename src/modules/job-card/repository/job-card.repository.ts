@@ -13,6 +13,9 @@ export class JobCardRepository {
 
     const jobs = await db.job.findMany({
       where: whereClause,
+      include: {
+        franchise: { select: { id: true, name: true, businessName: true } },
+      },
       orderBy: { createdAt: "desc" },
     });
 
@@ -23,6 +26,9 @@ export class JobCardRepository {
     const franchiseId = (filter as any)?.franchiseId;
     const carIns = await db.carIn.findMany({
       where: franchiseId ? { isDeleted: false, franchiseId } : { isDeleted: false },
+      include: {
+        franchise: { select: { id: true, name: true, businessName: true } },
+      },
     });
     const customers = await db.customer.findMany({ where: { isDeleted: false } });
 
@@ -41,7 +47,7 @@ export class JobCardRepository {
     const existingJobIds = new Set(jobs.map((j) => j.id));
     const existingVehicles = new Set(jobs.map((j) => (j.vehicle || "").trim().toUpperCase()));
 
-    const resultList = jobs.map((j) => {
+    const resultList = jobs.map((j: any) => {
       const ci = carInMapByJobId.get(j.id) || carInMapByVehicle.get((j.vehicle || "").trim().toUpperCase());
       const isDeliveredInCarIn = ci && (ci.status === "Delivered" || ci.status === "Out" || ci.outTime !== null);
       const finalStatus = isDeliveredInCarIn ? "Delivered" : j.status;
@@ -53,6 +59,7 @@ export class JobCardRepository {
 
       return {
         ...j,
+        franchiseName: j.franchise?.name || null,
         status: finalStatus,
         phone,
         customerPhone: phone,
@@ -60,7 +67,7 @@ export class JobCardRepository {
       };
     });
 
-    carIns.forEach((ci) => {
+    carIns.forEach((ci: any) => {
       const isDelivered = ci.status === "Delivered" || ci.status === "Out" || ci.outTime !== null;
       const vNorm = (ci.vehicle || "").trim().toUpperCase();
       const hasJob = (ci.jobCardId && existingJobIds.has(ci.jobCardId)) || existingVehicles.has(vNorm);
@@ -68,6 +75,8 @@ export class JobCardRepository {
       if (isDelivered && !hasJob) {
         resultList.push({
           id: ci.jobCardId || ci.id,
+          franchiseId: ci.franchiseId || null,
+          franchiseName: ci.franchise?.name || null,
           vehicle: ci.vehicle || "",
           customer: ci.customer || "",
           service: ci.service || "",

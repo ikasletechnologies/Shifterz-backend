@@ -12,9 +12,14 @@ export interface ReceptionManagementQuery {
 
 export class ReceptionService {
   async getManagement(userRole: string, userFranchiseId: string | undefined, query: ReceptionManagementQuery) {
+    const normalizedRole = (userRole || '').toUpperCase().replace(/[\s_]+/g, '_');
+    const isHQ = normalizedRole === 'SUPER_ADMIN' || normalizedRole === 'HQ_USER';
+
     const tenantFilter: any = {};
-    if (userRole !== "SUPER_ADMIN" && userRole !== "HQ_USER" && userFranchiseId) {
-      tenantFilter.franchiseId = userFranchiseId;
+    if (!isHQ) {
+      // Non-HQ users are always scoped to their own franchise.
+      // Sentinel prevents returning all rows if franchiseId is missing.
+      tenantFilter.franchiseId = userFranchiseId || '__NO_FRANCHISE__';
     }
 
     return computeStaffPerformance({

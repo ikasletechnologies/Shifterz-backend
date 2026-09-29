@@ -1,13 +1,14 @@
 import { Router } from 'express';
 import { PaymentsController } from '../controller/payments.controller.js';
 import { validate } from '../../../middleware/validate.middleware.js';
-import { authenticate, requireAction } from '../../../middleware/auth.middleware.js';
+import { authenticate, requireAction, requirePermission } from '../../../middleware/auth.middleware.js';
 import { createPaymentSchema } from '../validation/payments.validation.js';
 
 export const paymentsRouter = Router();
 const controller = new PaymentsController();
 
 paymentsRouter.use(authenticate);
+paymentsRouter.use(requirePermission('payments'));
 
 paymentsRouter.get('/', controller.getAllPayments);
 paymentsRouter.get('/customer/:customerId', controller.getPaymentsByCustomer);

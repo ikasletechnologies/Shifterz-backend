@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { WarrantyController } from "../controller/warranty.controller.js";
-import { authenticate } from "../../../middleware/auth.middleware.js";
+import { authenticate, requirePermission } from "../../../middleware/auth.middleware.js";
 import { validate } from "../../../middleware/validate.middleware.js";
 import { createWarrantySchema } from "../validation/warranty.validation.js";
 
@@ -8,6 +8,7 @@ export const warrantyRouter = Router();
 const controller = new WarrantyController();
 
 warrantyRouter.use(authenticate);
+warrantyRouter.use(requirePermission('billing'));
 
 // GET /api/warranties - List all warranties (filter by customerId, vehicleNo, status, search)
 warrantyRouter.get("/", controller.getWarranties);
@@ -31,3 +32,5 @@ warrantyRouter.post("/:id/claim", controller.addClaim);
 
 // DELETE /api/warranties/:id - Soft-delete a warranty
 warrantyRouter.delete("/:id", controller.deleteWarranty);
+
+

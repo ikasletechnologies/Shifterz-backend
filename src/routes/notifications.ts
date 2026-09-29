@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import { db } from "../lib/db.js";
 import { authenticate as requireAuth, requireRole } from "../middleware/auth.middleware.js";
+import { resolveDataScope } from "../shared/scope/dataScope.js";
 
 export const notificationsRouter = Router();
 
@@ -10,14 +11,19 @@ notificationsRouter.use(requireAuth);
 // Get notifications for current user or general HQ announcements
 notificationsRouter.get("/", async (req: Request, res: Response): Promise<void> => {
   try {
-    const userId = (req as any).user?.id || "HQ";
+    const user = (req as any).user;
+    const scope = resolveDataScope(user);
+    const userId = user?.id;
+    if (!userId) {
+      res.json([]);
+      return;
+    }
+    const where = scope.unrestricted
+      ? { OR: [{ userId }, { userId: "HQ" }] }
+      : { userId };
+
     const list = await db.notification.findMany({
-      where: {
-        OR: [
-          { userId },
-          { userId: "HQ" }
-        ]
-      },
+      where,
       orderBy: { createdAt: "desc" }
     });
     res.json(list);
@@ -30,13 +36,16 @@ notificationsRouter.get("/", async (req: Request, res: Response): Promise<void> 
 notificationsRouter.post("/:id/read", async (req: Request, res: Response): Promise<void> => {
   try {
     const id = String(req.params.id);
-    const userId = (req as any).user?.id || "HQ";
-    // Ownership check: without this, any authenticated user could mark any
-    // other user's (or another franchise's) notification as read just by
-    // guessing/enumerating its id — the same OR { userId }/{ userId: "HQ" }
-    // scope every other route in this file already applies.
+    const user = (req as any).user;
+    const scope = resolveDataScope(user);
+    const userId = user?.id;
+    if (!userId) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+
     const existing = await db.notification.findUnique({ where: { id } });
-    if (!existing || (existing.userId !== userId && existing.userId !== "HQ")) {
+    if (!existing || (!scope.unrestricted && existing.userId !== userId)) {
       res.status(404).json({ error: "Notification not found" });
       return;
     }
@@ -53,12 +62,20 @@ notificationsRouter.post("/:id/read", async (req: Request, res: Response): Promi
 // Mark all notifications as read
 notificationsRouter.post("/read-all", async (req: Request, res: Response): Promise<void> => {
   try {
-    const userId = (req as any).user?.id || "HQ";
+    const user = (req as any).user;
+    const scope = resolveDataScope(user);
+    const userId = user?.id;
+    if (!userId) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+
+    const where = scope.unrestricted
+      ? { OR: [{ userId }, { userId: "HQ" }], read: false }
+      : { userId, read: false };
+
     const updated = await db.notification.updateMany({
-      where: {
-        OR: [{ userId }, { userId: "HQ" }],
-        read: false
-      },
+      where,
       data: { read: true }
     });
     res.json(updated);
@@ -70,11 +87,20 @@ notificationsRouter.post("/read-all", async (req: Request, res: Response): Promi
 // Clear all notifications
 notificationsRouter.delete("/clear-all", async (req: Request, res: Response): Promise<void> => {
   try {
-    const userId = (req as any).user?.id || "HQ";
+    const user = (req as any).user;
+    const scope = resolveDataScope(user);
+    const userId = user?.id;
+    if (!userId) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+
+    const where = scope.unrestricted
+      ? { OR: [{ userId }, { userId: "HQ" }] }
+      : { userId };
+
     const deleted = await db.notification.deleteMany({
-      where: {
-        OR: [{ userId }, { userId: "HQ" }]
-      }
+      where
     });
     res.json(deleted);
   } catch (error: any) {

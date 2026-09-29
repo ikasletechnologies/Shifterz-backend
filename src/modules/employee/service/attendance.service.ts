@@ -8,12 +8,13 @@ export class AttendanceService {
 
   async getAllAttendance(userRole: string, userId: string, userFranchiseId?: string) {
     let tenantFilter: any = { isDeleted: false };
+    const role = (userRole || "").toUpperCase().replace(/[\s_]+/g, "_");
     
-    if (userRole === "SUPER_ADMIN" || userRole === "HQ_USER") {
+    if (role === "SUPER_ADMIN" || role === "HQ_USER") {
       // HQ sees all
-    } else if (userRole === "FRANCHISE_ADMIN" || userRole === "BRANCH_MANAGER") {
+    } else if (role === "FRANCHISE_ADMIN" || role === "BRANCH_MANAGER") {
       // Franchise Admin sees their franchise
-      tenantFilter.franchiseId = userFranchiseId;
+      tenantFilter.franchiseId = userFranchiseId || "__NO_FRANCHISE__";
     } else {
       // Normal employees see only their own attendance
       tenantFilter.employeeId = userId;
