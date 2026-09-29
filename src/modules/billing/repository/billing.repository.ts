@@ -5,6 +5,27 @@ import type { Prisma } from '@prisma/client';
 
 type FranchiseScopeWhere = { franchiseId?: string | null };
 
+// The New Document form's vehicle / job detail fields, normalised for storage.
+export function documentDetails(data: Partial<CreateInvoiceDTO>) {
+  const text = (v?: string | null) => (v && v.trim() ? v.trim() : null);
+  const advance = data.advanceAmount === undefined || data.advanceAmount === null || data.advanceAmount === "" ? null : Number(data.advanceAmount);
+  return {
+    model: text(data.model),
+    chassisNo: text(data.chassisNo),
+    engineNo: text(data.engineNo),
+    mileage: text(data.mileage),
+    fuelType: text(data.fuelType),
+    billingAddress: text(data.billingAddress),
+    serviceCategory: text(data.serviceCategory),
+    customerComplaint: text(data.customerComplaint),
+    workDescription: text(data.workDescription),
+    advanceAmount: advance !== null && Number.isFinite(advance) ? advance : null,
+    serviceAdvisor: text(data.serviceAdvisor),
+    technician: text(data.technician),
+    jobCardNo: text(data.jobCardNo),
+  };
+}
+
 export class BillingRepository {
   async findAll(scopeWhere: FranchiseScopeWhere = {}) {
     return db.invoice.findMany({
@@ -74,6 +95,10 @@ export class BillingRepository {
         authorizedSignatory: data.authorizedSignatory || null,
         warranty: data.warranty || null,
         discountReason: data.discountReason || null,
+        ...documentDetails(data),
+        // Invoices get buyerState from the GST snapshot below; keep what the
+        // form entered for Estimates/Quotations too.
+        buyerState: data.buyerState || null,
         franchiseId: data.franchiseId || null,
         jobId: data.jobId || null,
         createdBy: data.createdBy || null,

@@ -1,4 +1,4 @@
-import { BillingRepository } from '../repository/billing.repository.js';
+import { BillingRepository, documentDetails } from '../repository/billing.repository.js';
 import type { CreateInvoiceDTO, UpdateInvoiceDTO } from '../validation/billing.validation.js';
 import { db } from '../../../lib/db.js';
 import { ValidationError } from '../../../shared/errors/ValidationError.js';
@@ -245,6 +245,16 @@ export class BillingService {
       authorizedSignatory: data.authorizedSignatory !== undefined ? data.authorizedSignatory : undefined,
       warranty: data.warranty !== undefined ? data.warranty : undefined,
       discountReason: data.discountReason !== undefined ? data.discountReason : undefined,
+      // Only the detail fields actually sent — a status-only update must not wipe them.
+      ...Object.fromEntries(
+        Object.entries(documentDetails(data)).filter(([key]) => (data as Record<string, unknown>)[key] !== undefined)
+      ),
+      // An issued Invoice keeps its GST snapshot; buyer GSTIN/state stay editable
+      // only on Estimates/Quotations.
+      ...(existing.type !== "Invoice" ? {
+        gstNumber: data.gstNumber !== undefined ? data.gstNumber || null : undefined,
+        buyerState: data.buyerState !== undefined ? data.buyerState || null : undefined,
+      } : {}),
     };
 
     const updated = await this.repository.update(id, updateData);

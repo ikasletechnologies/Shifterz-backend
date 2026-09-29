@@ -25,6 +25,20 @@ export const createInvoiceSchema = z.object({
     franchiseId: z.string().nullable().optional(),
     warranty: z.string().nullable().optional(),
     discountReason: z.string().nullable().optional(),
+    // Vehicle / job details from the New Document form.
+    model: z.string().nullable().optional(),
+    chassisNo: z.string().nullable().optional(),
+    engineNo: z.string().nullable().optional(),
+    mileage: z.string().nullable().optional(),
+    fuelType: z.string().nullable().optional(),
+    billingAddress: z.string().nullable().optional(),
+    serviceCategory: z.string().nullable().optional(),
+    customerComplaint: z.string().nullable().optional(),
+    workDescription: z.string().nullable().optional(),
+    advanceAmount: z.union([z.string(), z.number()]).nullable().optional(),
+    serviceAdvisor: z.string().nullable().optional(),
+    technician: z.string().nullable().optional(),
+    jobCardNo: z.string().nullable().optional(),
     // GST-03 — inputs to GstInvoiceResolverService, not stored verbatim.
     // buyerState is only needed when no matching Customer record (by phone)
     // already has one on file. manualGstRate/manualHsnSac are required only
@@ -60,6 +74,22 @@ export const updateInvoiceSchema = z.object({
     approvedBy: z.string().nullable().optional(),
     warranty: z.string().nullable().optional(),
     discountReason: z.string().nullable().optional(),
+    gstNumber: z.string().nullable().optional(),
+    buyerState: z.string().nullable().optional(),
+    // Vehicle / job details from the New Document form.
+    model: z.string().nullable().optional(),
+    chassisNo: z.string().nullable().optional(),
+    engineNo: z.string().nullable().optional(),
+    mileage: z.string().nullable().optional(),
+    fuelType: z.string().nullable().optional(),
+    billingAddress: z.string().nullable().optional(),
+    serviceCategory: z.string().nullable().optional(),
+    customerComplaint: z.string().nullable().optional(),
+    workDescription: z.string().nullable().optional(),
+    advanceAmount: z.union([z.string(), z.number()]).nullable().optional(),
+    serviceAdvisor: z.string().nullable().optional(),
+    technician: z.string().nullable().optional(),
+    jobCardNo: z.string().nullable().optional(),
   })
 });
 

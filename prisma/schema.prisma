@@ -114,6 +114,21 @@ model Invoice {
   warranty            String?
   cancelReason        String?
   discountReason      String?
+  // Vehicle / job details entered on the New Document form — previously sent
+  // by the frontend but dropped by validation, so never saved.
+  model               String?
+  chassisNo           String?
+  engineNo            String?
+  mileage             String?
+  fuelType            String?
+  billingAddress      String?
+  serviceCategory     String?
+  customerComplaint   String?
+  workDescription     String?
+  advanceAmount       Float?
+  serviceAdvisor      String?
+  technician          String?
+  jobCardNo           String?
   numberPrefix        String? // e.g. "STZ-25-26-" — captured at creation so delete/cancel never re-parse the id
   sequenceNumber      Int? // the numeric suffix allocated from InvoiceSequence at creation
   isDeleted           Boolean       @default(false)
