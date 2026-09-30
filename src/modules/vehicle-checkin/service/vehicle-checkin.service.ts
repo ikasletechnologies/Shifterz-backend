@@ -149,13 +149,6 @@ export class VehicleCheckinService {
   async createCheckin(data: CreateCheckinDTO, franchiseId: string | null) {
     const normVehicle = normalizeVehicleNo(data.vehicle);
 
-    const activeEntry = await this.repository.findActiveCheckinByVehicle(normVehicle);
-    if (activeEntry) {
-      throw new ValidationError(
-        `Vehicle ${data.vehicle} is already checked in.`
-      );
-    }
-
     // Estimate-to-Car-In validation & relationship linking
     let linkedInvoice: any = null;
     if (data.estimateId) {
@@ -172,37 +165,82 @@ export class VehicleCheckinService {
         }
       }
 
-      if (linkedInvoice) {
-        // Backend authorization & franchise isolation:
-        // Franchise Admin (franchiseId provided from authenticated user session)
-        // cannot convert an estimate belonging to another franchise.
-        if (franchiseId && linkedInvoice.franchiseId && linkedInvoice.franchiseId !== franchiseId) {
-          throw new ForbiddenError("You do not have permission to convert an estimate belonging to another franchise.");
-        }
+      if (!linkedInvoice) {
+        throw new NotFoundError("Estimate not found");
+      }
 
-        // Duplicate prevention:
-        // If estimate already has a jobId linked to an active job
-        if (linkedInvoice.jobId) {
-          const existingJob = await db.job.findFirst({
-            where: { id: linkedInvoice.jobId, isDeleted: false },
-          });
-          if (existingJob) {
-            throw new ValidationError("Car In already created for this Estimate.");
-          }
-        }
+      if (linkedInvoice.isDeleted) {
+        throw new ValidationError("Cannot convert a deleted estimate.");
+      }
 
-        // Also check if any existing active CarIn references this estimate
-        const existingCarIn = await db.carIn.findFirst({
-          where: {
-            notes: { contains: data.estimateId },
-            isDeleted: false,
-            status: { notIn: ['Delivered', 'Out'] },
-          },
+      if (linkedInvoice.status === "Cancelled") {
+        throw new ValidationError("Cannot convert a cancelled estimate.");
+      }
+
+      // Backend authorization & franchise isolation:
+      // Franchise Admin (franchiseId provided from authenticated user session)
+      // cannot convert an estimate belonging to another franchise or an HQ-only estimate.
+      if (franchiseId && linkedInvoice.franchiseId !== franchiseId) {
+        throw new ForbiddenError("You do not have permission to convert an estimate belonging to another franchise.");
+      }
+
+      // Duplicate prevention:
+      // If estimate has already been converted
+      if (linkedInvoice.status === "Converted to Car In") {
+        throw new ValidationError("Car In already created for this Estimate.");
+      }
+
+      if (linkedInvoice.jobId) {
+        const existingJob = await db.job.findFirst({
+          where: { id: linkedInvoice.jobId, isDeleted: false, status: { notIn: ["Cancelled"] } },
         });
-        if (existingCarIn) {
+        if (existingJob) {
           throw new ValidationError("Car In already created for this Estimate.");
         }
       }
+
+      // Also check if any existing active CarIn references this estimate
+      const existingCarIn = await db.carIn.findFirst({
+        where: {
+          notes: { contains: data.estimateId },
+          isDeleted: false,
+          status: { notIn: ['Delivered', 'Out'] },
+        },
+      });
+      if (existingCarIn) {
+        throw new ValidationError("Car In already created for this Estimate.");
+      }
+    }
+
+    const activeEntry = await this.repository.findActiveCheckinByVehicle(normVehicle);
+    if (activeEntry) {
+      throw new ValidationError(
+        `Vehicle ${data.vehicle} is already checked in.`
+      );
+    }
+
+    // Auto-resolve model if not provided
+    let resolvedModel = (data.model || "").trim();
+    if (!resolvedModel && normVehicle) {
+      const cv = await db.customerVehicle.findFirst({
+        where: { vehicleNo: normVehicle, isDeleted: false },
+      });
+      if (cv?.model) {
+        resolvedModel = cv.model;
+      } else {
+        const cust = await db.customer.findFirst({
+          where: { vehicle: normVehicle, isDeleted: false },
+        });
+        if (cust?.model || cust?.vehicleModel) {
+          resolvedModel = cust.model || cust.vehicleModel || "";
+        }
+      }
+    }
+    if (!resolvedModel && (linkedInvoice as any)?.model) {
+      resolvedModel = (linkedInvoice as any).model;
+    }
+    if (!resolvedModel) {
+      resolvedModel = "Unknown";
     }
 
     const effectiveFranchiseId = franchiseId || (linkedInvoice?.franchiseId ?? data.franchiseId ?? null);
@@ -215,16 +253,32 @@ export class VehicleCheckinService {
       const checkinData = {
         ...data,
         vehicle: normVehicle,
+        model: resolvedModel,
       };
+
+      // Carry over estimated services and items into Job Card
+      let carriedServices: any[] = [];
+      if (Array.isArray(linkedInvoice?.items)) {
+        carriedServices = linkedInvoice.items.map((it: any) => ({
+          name: it.desc || it.name || "Service Item",
+          price: Number(it.price || it.amount || 0),
+          qty: Number(it.qty || 1),
+          warranty: it.warranty || "",
+        }));
+      }
+
+      const primaryService = checkinData.service && checkinData.service.trim() && checkinData.service !== "General Service"
+        ? checkinData.service.trim()
+        : (carriedServices.length > 0 ? carriedServices.map((s: any) => s.name).join(", ") : (checkinData.service || "General Service"));
 
       const newCar = await tx.carIn.create({
         data: {
           id: carId,
           vehicle: normVehicle,
-          model: checkinData.model || "",
+          model: resolvedModel,
           customer: checkinData.customer || "",
           phone: checkinData.phone || "",
-          service: checkinData.service || "",
+          service: primaryService,
           inTime: validInTimeISO,
           status: (checkinData as any).status || "Pending",
           odometer: String(checkinData.odometer || "0"),
@@ -262,24 +316,13 @@ export class VehicleCheckinService {
         }
       });
 
-      // Carry over estimated services and items into Job Card
-      let carriedServices: any[] = [];
-      if (Array.isArray(linkedInvoice?.items)) {
-        carriedServices = linkedInvoice.items.map((it: any) => ({
-          name: it.desc || it.name || "Service Item",
-          price: Number(it.price || it.amount || 0),
-          qty: Number(it.qty || 1),
-          warranty: it.warranty || "",
-        }));
-      }
-
       // Auto-create Job Card
       await tx.job.create({
         data: {
           id: jobCardId,
           vehicle: normVehicle,
           customer: checkinData.customer || "",
-          service: checkinData.service || (carriedServices.length > 0 ? carriedServices.map(s => s.name).join(", ") : ""),
+          service: primaryService,
           services: carriedServices.length > 0 ? carriedServices : undefined,
           technician: "",
           status: "Pending",
@@ -305,6 +348,13 @@ export class VehicleCheckinService {
               status: "Converted to Car In",
             },
           });
+        } else {
+          await tx.estimate.update({
+            where: { id: linkedInvoice.id },
+            data: {
+              status: "Converted to Car In",
+            },
+          }).catch(() => null);
         }
       }
 
@@ -324,10 +374,18 @@ export class VehicleCheckinService {
       });
 
       // Auto-upsert Customer & Vehicle association
-      if (checkinData.phone) {
-        let customer = await tx.customer.findFirst({
-          where: { phone: checkinData.phone }
-        });
+      if (checkinData.phone || data.customerId) {
+        let customer: any = null;
+        if (data.customerId) {
+          customer = await tx.customer.findFirst({
+            where: { id: data.customerId, isDeleted: false }
+          });
+        }
+        if (!customer && checkinData.phone) {
+          customer = await tx.customer.findFirst({
+            where: { phone: checkinData.phone, isDeleted: false }
+          });
+        }
 
         if (customer) {
           customer = await tx.customer.update({
@@ -348,7 +406,7 @@ export class VehicleCheckinService {
               phone: checkinData.phone || "",
               email: "",
               vehicle: normVehicle,
-              model: checkinData.model || "Unknown",
+              model: resolvedModel || "Unknown",
               visits: 1,
               totalSpend: 0,
               lastVisit: new Date(),
@@ -359,7 +417,7 @@ export class VehicleCheckinService {
 
         // Check if vehicle is already in CustomerVehicle master
         const existingVehicle = await tx.customerVehicle.findFirst({
-          where: { vehicleNo: normVehicle }
+          where: { vehicleNo: normVehicle, isDeleted: false }
         });
 
         const checkinOdometerNum = parseInt(String(checkinData.odometer || "0"), 10);
@@ -369,8 +427,8 @@ export class VehicleCheckinService {
             data: {
               customerId: customer.id,
               vehicleNo: normVehicle,
-              make: checkinData.model ? (checkinData.model.split(' ')[0] || 'Unknown') : 'Unknown',
-              model: checkinData.model || 'Unknown',
+              make: resolvedModel ? (resolvedModel.split(' ')[0] || 'Unknown') : 'Unknown',
+              model: resolvedModel || 'Unknown',
               odometer: !isNaN(checkinOdometerNum) ? checkinOdometerNum : 0
             }
           });

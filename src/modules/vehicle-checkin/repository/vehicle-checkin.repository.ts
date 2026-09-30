@@ -51,7 +51,8 @@ export class VehicleCheckinRepository {
     // 2. Also check if there is an active Job that has not reached final delivery/checkout
     const activeJobs = await db.job.findMany({
       where: {
-        status: { notIn: ["Delivered", "Out"] },
+        isDeleted: false,
+        status: { notIn: ["Delivered", "Out", "Cancelled"] },
       },
       orderBy: { startDate: "desc" },
     });
@@ -66,7 +67,10 @@ export class VehicleCheckinRepository {
         const linkedCar = await db.carIn.findFirst({
           where: { id: activeJob.carInId, isDeleted: false },
         });
-        if (linkedCar) return linkedCar;
+        if (!linkedCar || linkedCar.status === "Delivered" || linkedCar.status === "Out" || linkedCar.outTime !== null) {
+          return null;
+        }
+        return linkedCar;
       }
       return {
         id: activeJob.carInId || activeJob.id,

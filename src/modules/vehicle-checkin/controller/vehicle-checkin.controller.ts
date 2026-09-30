@@ -29,7 +29,7 @@ export class VehicleCheckinController {
         recordId: result.id,
         action: 'CHECK_IN',
         userId: req.user?.id || 'unknown',
-        branchId: franchiseId,
+        branchId: result.franchiseId || franchiseId,
         oldValue: null,
         newValue: {
           id: result.id,

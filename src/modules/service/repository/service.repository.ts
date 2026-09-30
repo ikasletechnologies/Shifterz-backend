@@ -2,9 +2,13 @@ import { db } from '../../../lib/db.js';
 import type { CreateServiceDTO, UpdateServiceDTO } from '../validation/service.validation.js';
 
 export class ServiceRepository {
-  async findAll() {
+  async findAll(status?: string) {
+    const where: any = { isDeleted: false };
+    if (status) {
+      where.status = status;
+    }
     return db.service.findMany({
-      where: { isDeleted: false },
+      where,
       orderBy: { name: 'asc' }
     });
   }

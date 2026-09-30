@@ -9,7 +9,8 @@ export class ServiceController {
 
   getAllServices = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const list = await this.service.getAllServices();
+      const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+      const list = await this.service.getAllServices(status);
       res.json(list);
     } catch (error) {
       next(error);

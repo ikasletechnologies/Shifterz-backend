@@ -6,8 +6,8 @@ import { NotFoundError } from '../../../shared/errors/NotFoundError.js';
 export class ServiceService {
   constructor(private readonly repository: ServiceRepository = new ServiceRepository()) {}
 
-  async getAllServices() {
-    return this.repository.findAll();
+  async getAllServices(status?: string) {
+    return this.repository.findAll(status);
   }
 
   async getServiceById(id: string) {

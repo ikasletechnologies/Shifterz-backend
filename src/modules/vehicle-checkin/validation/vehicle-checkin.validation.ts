@@ -3,12 +3,12 @@ import { z } from 'zod';
 export const createCheckinSchema = z.object({
   body: z.object({
     vehicle: z.string().min(1, "Vehicle number is required"),
-    model: z.string().min(1, "Model is required"),
+    model: z.string().optional().default(""),
     customer: z.string().min(1, "Customer name is required"),
     phone: z.string().min(1, "Phone number is required"),
-    service: z.string().min(1, "Requested service is required"),
+    service: z.string().optional().default("General Service"),
     inTime: z.string().optional().transform(val => val ? new Date(val) : new Date()),
-    odometer: z.union([z.string(), z.number()]).transform(val => String(val)),
+    odometer: z.union([z.string(), z.number()]).optional().default("0").transform(val => String(val)),
     notes: z.string().optional().default(""),
     
     // Check-In fields
@@ -48,6 +48,7 @@ export const createCheckinSchema = z.object({
     otherAccessories: z.string().optional().nullable(),
     franchiseId: z.string().optional().nullable(),
     estimateId: z.string().optional().nullable(),
+    customerId: z.string().optional().nullable(),
   })
 });
 
