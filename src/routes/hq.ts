@@ -13,6 +13,7 @@ import { RoleActionGrantService } from "../shared/rbac/roleActionGrant.service.j
 import { setRoleActionsSchema } from "../shared/rbac/roleActionGrant.validation.js";
 import { generateUid } from "../shared/utils/idGenerator.js";
 import { sendNotification } from "../shared/services/notification.service.js";
+import { normalizeFranchiseStatus } from "../modules/franchise/validation/franchise.validation.js";
 
 export const hqRouter = Router();
 
@@ -59,12 +60,23 @@ hqRouter.post("/franchises", async (req: Request, res: Response): Promise<void> 
   try {
     const {
       name, city, owner, phone, since, startDate, royaltyPct, royalty,
-      businessName, gstNumber, email, address, state, pinCode
+      businessName, gstNumber, email, address, state, pinCode, status, code
     } = req.body;
 
     // Generate a unique franchise ID (e.g. FRA001)
     const count = await db.franchise.count();
     const id = `FRA${String(count + 1).padStart(3, "0")}`;
+
+    let franchiseCode = code ? String(code).trim().toUpperCase() : null;
+    if (franchiseCode) {
+      const existing = await db.franchise.findFirst({ where: { code: franchiseCode } });
+      if (existing) {
+        res.status(400).json({ error: `Franchise code '${franchiseCode}' is already in use` });
+        return;
+      }
+    } else {
+      franchiseCode = `FRA${String(count + 1).padStart(2, "0")}`;
+    }
 
     // Auto-generate a unique license key (never entered by the user)
     const generateLicenseKey = (): string => {
@@ -89,6 +101,7 @@ hqRouter.post("/franchises", async (req: Request, res: Response): Promise<void> 
       const franchise = await tx.franchise.create({
         data: {
           id,
+          code: franchiseCode,
           name,
           city,
           owner,
@@ -97,14 +110,14 @@ hqRouter.post("/franchises", async (req: Request, res: Response): Promise<void> 
           revenue: 0,
           jobs: 0,
           royaltyPct: Number(royaltyPct !== undefined ? royaltyPct : royalty) || 10.0,
-          status: "Pending",
+          status: status ? normalizeFranchiseStatus(status) : "PENDING",
           businessName,
           gstNumber,
           email,
           address,
           state,
           pinCode,
-          licenseStatus: "Pending"
+          licenseStatus: (status && normalizeFranchiseStatus(status) === "ACTIVE") ? "Active" : "Pending"
         }
       });
 
@@ -112,7 +125,7 @@ hqRouter.post("/franchises", async (req: Request, res: Response): Promise<void> 
         data: {
           organizationId: id,
           licenseKey,
-          status: "Pending",
+          status: (status && normalizeFranchiseStatus(status) === "ACTIVE") ? "Active" : "Pending",
           maxSuperAdmins: 1,
           maxHQUsers: 6,
           maxFranchiseAdmins: 1,
@@ -217,7 +230,9 @@ hqRouter.post("/franchises/:id/approve", requireRole("SUPER_ADMIN"), async (req:
       const provisioned = await employeeService.createEmployee(
         { name: adminUsername, username: adminUsername, password: adminPassword, role: "FRANCHISE_ADMIN", franchiseId: id },
         authReq.user?.role || "UNKNOWN",
-        authReq.user?.franchiseId ?? undefined
+        authReq.user?.franchiseId ?? undefined,
+        false,
+        true
       );
       createdAdmin = await employeeService.approveRegistration(provisioned.id, authReq.user?.role || "UNKNOWN");
 
@@ -304,10 +319,11 @@ hqRouter.post("/franchises/:id/reject", requireRole("SUPER_ADMIN"), async (req: 
 // List all franchises
 hqRouter.get("/franchises", async (req: Request, res: Response): Promise<void> => {
   try {
+    const { status } = req.query;
     const franchises = await db.franchise.findMany({
       where: { isDeleted: false }
     });
-    const mapped = await Promise.all(franchises.map(async (f) => {
+    let mapped = await Promise.all(franchises.map(async (f) => {
       const totalEmployees = await db.employee.count({
         where: { franchiseId: f.id, isDeleted: false }
       });
@@ -317,12 +333,19 @@ hqRouter.get("/franchises", async (req: Request, res: Response): Promise<void> =
       });
       return {
         ...f,
+        status: normalizeFranchiseStatus(f.status),
         startDate: f.since ? new Date(f.since).toISOString().split('T')[0] : "",
         royalty: f.royaltyPct,
         totalEmployees,
         adminUsername: admin?.username || null
       };
     }));
+
+    if (status) {
+      const normalizedStatus = normalizeFranchiseStatus(String(status));
+      mapped = mapped.filter(f => f.status === normalizedStatus);
+    }
+
     res.json(mapped);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -336,9 +359,20 @@ hqRouter.put("/franchises/:id", async (req: Request, res: Response): Promise<voi
     const {
       name, city, owner, phone, since, startDate, royaltyPct, royalty, status,
       businessName, gstNumber, email, address, state, pinCode, licenseStatus,
-      adminPassword
+      adminPassword, code
     } = req.body;
     const adminUsername: string | undefined = req.body.adminUsername ? String(req.body.adminUsername).trim().toLowerCase() : undefined;
+
+    const formattedCode = code ? String(code).trim().toUpperCase() : undefined;
+    if (formattedCode) {
+      const existingCode = await db.franchise.findFirst({
+        where: { code: formattedCode, id: { not: id } }
+      });
+      if (existingCode) {
+        res.status(400).json({ error: `Franchise code '${formattedCode}' is already in use` });
+        return;
+      }
+    }
 
     if (adminUsername) {
       const existingUsername = await db.employee.findFirst({
@@ -370,11 +404,17 @@ hqRouter.put("/franchises/:id", async (req: Request, res: Response): Promise<voi
       res.status(404).json({ error: "Franchise not found" });
       return;
     }
-    if (existingFranchise.status === "Pending" && status !== undefined && status !== "Pending") {
-      res.status(400).json({
-        error: 'This franchise is Pending activation. Use POST /franchises/:id/approve or /reject to change its status, not a direct update.',
-      });
-      return;
+
+    const isSuperAdmin = authReq.user?.role === "SUPER_ADMIN";
+    const isHqUser = authReq.user?.role === "HQ_USER";
+
+    let finalStatus: string | undefined = undefined;
+    if (status !== undefined) {
+      if (!isSuperAdmin && !isHqUser) {
+        res.status(403).json({ error: "Only Super Admin or HQ can change franchise status." });
+        return;
+      }
+      finalStatus = normalizeFranchiseStatus(status);
     }
     // Provisioning a Franchise Admin is also part of the approval act, not
     // a plain field edit — a Pending franchise's admin (if any) should be
@@ -397,6 +437,18 @@ hqRouter.put("/franchises/:id", async (req: Request, res: Response): Promise<voi
 
     const dateVal = since || startDate;
     const updated = await db.$transaction(async (tx) => {
+      let finalLicenseStatus = licenseStatus;
+      if (finalStatus === "ACTIVE") {
+        finalLicenseStatus = "Active";
+        await tx.license.updateMany({ where: { organizationId: id }, data: { status: "Active" } });
+      } else if (finalStatus === "DEACTIVE") {
+        finalLicenseStatus = "Suspended";
+        await tx.license.updateMany({ where: { organizationId: id }, data: { status: "Suspended" } });
+      } else if (finalStatus === "PENDING") {
+        finalLicenseStatus = "Pending";
+        await tx.license.updateMany({ where: { organizationId: id }, data: { status: "Pending" } });
+      }
+
       const franchise = await tx.franchise.update({
         where: { id },
         data: {
@@ -406,14 +458,15 @@ hqRouter.put("/franchises/:id", async (req: Request, res: Response): Promise<voi
           phone,
           since: dateVal ? new Date(dateVal) : undefined,
           royaltyPct: (royaltyPct !== undefined || royalty !== undefined) ? Number(royaltyPct !== undefined ? royaltyPct : royalty) : undefined,
-          status,
+          status: finalStatus !== undefined ? finalStatus : undefined,
           businessName,
           gstNumber,
           email,
           address,
           state,
           pinCode,
-          licenseStatus
+          licenseStatus: finalLicenseStatus,
+          ...(formattedCode ? { code: formattedCode } : {})
         }
       });
 
@@ -453,7 +506,9 @@ hqRouter.put("/franchises/:id", async (req: Request, res: Response): Promise<voi
       const provisioned = await employeeService.createEmployee(
         { name: adminUsername, username: adminUsername, password: adminPassword, role: "FRANCHISE_ADMIN", franchiseId: id },
         authReq.user?.role || "UNKNOWN",
-        authReq.user?.franchiseId ?? undefined
+        authReq.user?.franchiseId ?? undefined,
+        false,
+        true
       );
       createdAdmin = await employeeService.approveRegistration(provisioned.id, authReq.user?.role || "UNKNOWN");
 

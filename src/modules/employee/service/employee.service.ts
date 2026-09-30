@@ -1,4 +1,5 @@
-import { EmployeeRepository } from '../repository/employee.repository.js';
+import { normalizeFranchiseStatus } from '../../franchise/validation/franchise.validation.js';
+﻿import { EmployeeRepository } from '../repository/employee.repository.js';
 import type { CreateEmployeeDTO, UpdateEmployeeDTO } from '../validation/employee.validation.js';
 import { generateUid } from '../../../shared/utils/idGenerator.js';
 import { db } from '../../../lib/db.js';
@@ -145,7 +146,10 @@ export class EmployeeService {
     }
   }
 
-  async createEmployee(data: CreateEmployeeDTO, userRole: string, userFranchiseId?: string, isTechnicianRoute = false) {
+  async createEmployee(data: CreateEmployeeDTO, userRole: string, userFranchiseId?: string, isTechnicianRoute = false, allowFranchiseAdmin = false) {
+    if (data.role && String(data.role).trim().toUpperCase() === "FRANCHISE_ADMIN" && !allowFranchiseAdmin) {
+      throw new ApiError(400, "The FRANCHISE_ADMIN role cannot be assigned to an employee.");
+    }
     let franchiseId: string | null = data.franchiseId || null;
 
     if (!isTechnicianRoute) {
@@ -187,10 +191,24 @@ export class EmployeeService {
     // TransferService.approveTransfer so employee creation via an approved
     // transfer request can't bypass the same caps a direct create goes through.
     return db.$transaction(async (tx) => {
-      const lockKey = franchiseId ? franchiseId : 'HQ';
+      const targetFranchiseId = (franchiseId && franchiseId !== "HQ") ? franchiseId : null;
+      if (targetFranchiseId) {
+        const franchise = await tx.franchise.findFirst({
+          where: { id: targetFranchiseId, isDeleted: false }
+        });
+        if (!franchise) {
+          throw new NotFoundError("Selected franchise not found.");
+        }
+        const franchiseStatus = normalizeFranchiseStatus(franchise.status);
+        if (franchiseStatus !== "ACTIVE") {
+          throw new ApiError(400, `Cannot assign employee to a ${franchiseStatus.toLowerCase()} franchise. Only ACTIVE franchises are permitted.`);
+        }
+      }
+
+      const lockKey = targetFranchiseId ? targetFranchiseId : 'HQ';
       await tx.$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))", 'LICENSE_' + lockKey);
 
-      await this.assertLicenseCapacity(roleToCheck, franchiseId, tx);
+      await this.assertLicenseCapacity(roleToCheck, targetFranchiseId, tx);
 
       const rawPassword = data.password || (isTechnicianRoute ? "tech123" : null);
       const hashedPassword = rawPassword ? await bcrypt.hash(rawPassword, 10) : null;
@@ -240,8 +258,15 @@ export class EmployeeService {
           ? generateUid("TECH")
           : `EMP${Date.now().toString().slice(-6)}`;
 
-      const targetFranchiseId = (franchiseId && franchiseId !== "HQ") ? franchiseId : null;
-      const newEmployee = await this.repository.create(empId, { ...data, franchiseId: targetFranchiseId }, hashedPassword, normalizedUsername, tx);
+      const businessEmployeeId = await EmployeeService.generateEmployeeId(targetFranchiseId, tx);
+
+      const newEmployee = await this.repository.create(
+        empId,
+        { ...data, franchiseId: targetFranchiseId, employeeId: businessEmployeeId },
+        hashedPassword,
+        normalizedUsername,
+        tx
+      );
       const { password, ...rest } = newEmployee;
 
       return {
@@ -249,6 +274,28 @@ export class EmployeeService {
         permissions: newEmployee.permission?.modules || []
       };
     });  }
+
+  static async generateEmployeeId(franchiseId: string | null, tx: import('@prisma/client').Prisma.TransactionClient | typeof db): Promise<string> {
+    let prefix = "EMPS";
+    if (franchiseId && franchiseId !== "HQ") {
+      const franchise = await tx.franchise.findFirst({
+        where: { id: franchiseId, isDeleted: false }
+      });
+      if (franchise?.code) {
+        prefix = franchise.code.trim().toUpperCase();
+      } else if (franchise?.id) {
+        prefix = franchise.id.trim().toUpperCase();
+      }
+    }
+
+    const seq = await tx.employeeSequence.upsert({
+      where: { prefix },
+      update: { counter: { increment: 1 } },
+      create: { prefix, counter: 1 }
+    });
+
+    return `${prefix}-${String(seq.counter).padStart(4, "0")}`;
+  }
 
   async updateEmployee(id: string, data: UpdateEmployeeDTO, userRole = "UNKNOWN", userFranchiseId?: string, userPermissions: string[] = []) {
     const existing = await db.employee.findUnique({ where: { id } });
@@ -261,6 +308,10 @@ export class EmployeeService {
     // already SUPER_ADMIN — so any authenticated employee (self or a
     // same-franchise colleague) could PUT {role:"SUPER_ADMIN"} and escalate.
     // Only an actor who is already a Super Administrator may assign it.
+    if (data.role && String(data.role).trim().toUpperCase() === "FRANCHISE_ADMIN" && existing.role !== "FRANCHISE_ADMIN") {
+      throw new ApiError(400, "The FRANCHISE_ADMIN role cannot be assigned to an employee.");
+    }
+
     if (data.role === "SUPER_ADMIN" && existing.role !== "SUPER_ADMIN" && userRole !== "SUPER_ADMIN") {
       throw new ApiError(403, "Only a Super Administrator can assign the Super Administrator role.");
     }

@@ -8,7 +8,12 @@ export const createEmployeeSchema = z.object({
     status: z.string().optional(),
     username: z.string().optional(),
     password: z.string().optional(),
-    role: z.string().optional(),
+    role: z.string()
+      .refine(
+        (val) => !val || !["FRANCHISE_ADMIN", "HQ_USER", "BRANCH_MANAGER"].includes(val.trim().toUpperCase().replace(/[\s_]+/g, "_")),
+        { message: "This role cannot be assigned to new employees" }
+      )
+      .optional(),
     franchiseId: z.string().nullable().optional(),
     permissions: z.array(z.string()).optional(),
     gender: z.string().optional(),

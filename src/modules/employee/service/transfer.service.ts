@@ -98,12 +98,14 @@ export class TransferService {
       await this.employeeService.assertLicenseCapacity(role, franchiseId);
 
       const empId = `EMP${Date.now().toString().slice(-6)}`;
+      const businessEmployeeId = await EmployeeService.generateEmployeeId(franchiseId, db);
       const rawPassword = request.password || "pass123";
       const hashedPassword = await bcrypt.hash(rawPassword, 10);
       const normalizedUsername = request.username ? String(request.username).trim().toLowerCase() : null;
 
       const newEmployee = await this.repository.createEmployeeFromTransfer({
         empId,
+        employeeId: businessEmployeeId,
         name: request.newMemberName || "New Member",
         phone: request.newMemberPhone || null,
         email: request.newMemberEmail || null,

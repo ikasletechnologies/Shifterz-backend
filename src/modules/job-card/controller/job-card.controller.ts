@@ -34,6 +34,9 @@ export class JobCardController {
           if (req.query.franchiseId && req.query.franchiseId !== "all" && req.query.franchiseId !== "All") {
             filter.franchiseId = String(req.query.franchiseId);
           }
+        } else if (userRole === "TECHNICIAN") {
+          // Technicians only see jobs assigned to them within their own franchise (or HQ if franchiseId is null)
+          filter.franchiseId = req.user.franchiseId || null;
         } else {
           filter.franchiseId = req.user.franchiseId || "__NO_FRANCHISE__";
         }

@@ -71,6 +71,7 @@ export class TransferRepository {
     return client.employee.create({
       data: {
         id: data.empId,
+        employeeId: data.employeeId || null,
         name: data.name,
         phone: data.phone,
         email: data.email,

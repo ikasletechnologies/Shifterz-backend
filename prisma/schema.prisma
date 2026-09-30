@@ -356,6 +356,11 @@ model JobSequence {
   counter Int    @default(0)
 }
 
+model EmployeeSequence {
+  prefix  String @id
+  counter Int    @default(0)
+}
+
 model Payment {
   id                 String     @id
   invoiceId          String?
@@ -425,6 +430,7 @@ model Service {
 
 model Franchise {
   id                          String                       @id
+  code                        String?                      @unique
   name                        String
   city                        String
   owner                       String
@@ -740,6 +746,7 @@ model GstinCache {
 
 model Employee {
   id               String          @id
+  employeeId       String?         @unique
   name             String
   phone            String?
   email            String?

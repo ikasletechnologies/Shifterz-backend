@@ -24,7 +24,8 @@ export class WorkshopRepository {
     return db.job.findMany({
       where: {
         isDeleted: false,
-        OR: conditions
+        OR: conditions,
+        franchiseId: employee?.franchiseId || null
       }
     });
   }

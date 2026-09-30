@@ -28,8 +28,15 @@ export class JobCardService {
   constructor(private readonly repository: JobCardRepository = new JobCardRepository()) { }
 
   async findScopedJob(jobId: string, user?: ScopeActor) {
-    const scope = resolveDataScope(user);
-    const job = await this.repository.findById(jobId, scopeWhere(scope));
+    const userRole = normalizeRole(user?.role);
+    let where: { franchiseId?: string | null };
+    if (userRole === "TECHNICIAN") {
+      where = { franchiseId: user?.franchiseId || null };
+    } else {
+      const scope = resolveDataScope(user);
+      where = scopeWhere(scope);
+    }
+    const job = await this.repository.findById(jobId, where);
     if (!job) throw new NotFoundError("Job card not found");
     return job;
   }

@@ -7,7 +7,7 @@ export class EmployeeRepository {
       where: tenantFilter,
       orderBy: { id: "asc" },
       include: {
-        franchise: { select: { id: true, name: true, city: true } },
+        franchise: { select: { id: true, name: true, city: true, code: true } },
         permission: true
       }
     });
@@ -42,6 +42,7 @@ export class EmployeeRepository {
     return client.employee.create({
       data: {
         id,
+        employeeId: data.employeeId || null,
         name: data.name,
         phone: data.phone || null,
         email: data.email || null,
@@ -86,7 +87,7 @@ export class EmployeeRepository {
       where,
       orderBy: { id: "desc" },
       include: {
-        franchise: { select: { id: true, name: true, city: true } },
+        franchise: { select: { id: true, name: true, city: true, code: true } },
         permission: true
       }
     });

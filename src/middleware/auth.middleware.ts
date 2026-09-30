@@ -1,4 +1,4 @@
-import type { Request, Response, NextFunction } from "express";
+﻿import type { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import type { JwtPayload } from "jsonwebtoken";
 import { env } from "../config/env.js";
@@ -15,6 +15,7 @@ export interface AuthRequest extends Request {
     name?: string;
     username?: string;
     franchiseId?: string | null;
+    franchiseStatus?: string;
     hqControlled?: boolean;
     permissions?: string[];
   };
@@ -63,7 +64,15 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
 
     const session = await db.session.findUnique({
       where: { jti: decoded.jti },
-      include: { employee: true },
+      include: {
+        employee: {
+          include: {
+            franchise: {
+              select: { id: true, status: true, isDeleted: true }
+            }
+          }
+        }
+      },
     });
 
     if (!session || session.revokedAt || session.expiresAt < new Date()) {
@@ -81,12 +90,39 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
       return res.status(401).json({ error: "Unauthorized: Account is no longer active" });
     }
 
+    const isHqRole = employee.role === "SUPER_ADMIN" || employee.role === "HQ_USER";
+    let franchiseStatus = "ACTIVE";
+    if (employee.franchiseId && employee.franchise) {
+      if (employee.franchise.isDeleted) {
+        return res.status(401).json({ error: "Unauthorized: Franchise has been deleted" });
+      }
+      const rawStatus = (employee.franchise.status || "").trim().toUpperCase();
+      franchiseStatus = (rawStatus === "DEACTIVE" || rawStatus === "INACTIVE" || rawStatus === "DEACTIVATED")
+        ? "DEACTIVE"
+        : (rawStatus === "ACTIVE" ? "ACTIVE" : "PENDING");
+
+      // Server-side enforcement for non-HQ users belonging to non-ACTIVE franchises
+      if (!isHqRole && !employee.hqControlled) {
+        if (franchiseStatus === "DEACTIVE" && req.method !== "GET" && !req.path.endsWith("/logout")) {
+          return res.status(403).json({
+            error: "Franchise is currently deactivated. Operational actions are disabled. Contact Headquarters."
+          });
+        }
+        if (franchiseStatus === "PENDING" && req.method !== "GET" && !req.path.endsWith("/logout")) {
+          return res.status(403).json({
+            error: "Franchise is pending activation. Operational actions are restricted until activated by Super Admin."
+          });
+        }
+      }
+    }
+
     req.user = {
       id: decoded.id,
       role: decoded.role,
       name: decoded.name || decoded.username,
       username: decoded.username,
       franchiseId: decoded.franchiseId || null,
+      franchiseStatus,
       hqControlled: decoded.hqControlled === true,
       permissions: decoded.permissions || [],
     };

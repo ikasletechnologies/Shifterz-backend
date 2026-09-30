@@ -24,6 +24,29 @@ export interface BillingActor {
   franchiseId?: string | null;
 }
 
+
+async function validateServiceItemCategories(items: any) {
+  if (!Array.isArray(items) || items.length === 0) return;
+  const services = await db.service.findMany({ where: { isDeleted: false }, select: { category: true } });
+  const validCategories = new Set(services.map((s) => s.category?.trim().toLowerCase()).filter(Boolean));
+  ['general service', 'bodywork & paint', 'ppf & coating', 'electrical & diagnostics', 'ac repair', 'mechanical', 'car top', 'car bottom', 'cleaning'].forEach((c) => validCategories.add(c));
+  const settings = await db.setting.findFirst();
+  if (settings?.categories && Array.isArray(settings.categories)) {
+    settings.categories.forEach((c: any) => {
+      if (typeof c === 'string' && c.trim()) validCategories.add(c.trim().toLowerCase());
+    });
+  }
+
+  for (const it of items) {
+    if (it && (it.type === 'SERVICE' || !it.type)) {
+      const cat = (it.category || '').trim().toLowerCase();
+      if (cat && !validCategories.has(cat)) {
+        throw new ValidationError(`Invalid service category: "${it.category}". Must be an existing service category.`);
+      }
+    }
+  }
+}
+
 export class BillingService {
   private readonly gstResolver = new GstInvoiceResolverService();
   private readonly gstLedger = new GstTransactionLedgerService();
@@ -116,6 +139,9 @@ export class BillingService {
   }
 
   async createInvoice(data: CreateInvoiceDTO, actor?: BillingActor) {
+    if (data.items) {
+      await validateServiceItemCategories(data.items);
+    }
     if (data.jobId) {
       await this.assertQcPassedForInvoice(data.jobId, data.type, data.franchiseId ?? null);
     }
@@ -215,6 +241,9 @@ export class BillingService {
   }
 
   async updateInvoice(id: string, data: UpdateInvoiceDTO, actor?: BillingActor) {
+    if (data.items) {
+      await validateServiceItemCategories(data.items);
+    }
     const scope = resolveDataScope(actor);
     const existing = await this.repository.findById(id, scopeWhere(scope));
     if (!existing) throw new NotFoundError("Invoice not found");

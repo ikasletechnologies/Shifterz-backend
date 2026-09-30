@@ -1,4 +1,4 @@
-import bcrypt from "bcrypt";
+﻿import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import { authRepository } from "./auth.repository.js";
@@ -17,18 +17,20 @@ export interface SessionMeta {
 // Identifies the employee's reporting branch: their own Franchise, or Head
 // Office when they have no franchise (either as an admin role or an
 // explicitly HQ-controlled employee).
-function resolveBranch(user: { franchiseId: string | null; franchise?: { id: string; name: string; city: string } | null }) {
+function resolveBranch(user: { franchiseId: string | null; franchise?: { id: string; name: string; city: string; status?: string } | null }) {
   if (user.franchiseId && user.franchise) {
-    return { id: user.franchise.id, type: "FRANCHISE" as const, name: user.franchise.name, city: user.franchise.city };
+    const raw = (user.franchise.status || "").trim().toUpperCase();
+    const status = (raw === "DEACTIVE" || raw === "INACTIVE" || raw === "DEACTIVATED") ? "DEACTIVE" : (raw === "ACTIVE" ? "ACTIVE" : "PENDING");
+    return { id: user.franchise.id, type: "FRANCHISE" as const, name: user.franchise.name, city: user.franchise.city, status };
   }
-  return { id: null, type: "HQ" as const, name: "Head Office", city: null };
+  return { id: null, type: "HQ" as const, name: "Head Office", city: null, status: "ACTIVE" };
 }
 
 export class AuthService {
   // Creates a server-side Session row and signs a JWT bound to it via `jti`.
   // Centralizing this lets both login() and the post-password-change reissue
   // in updateProfile() share the exact same, correct session-creation path.
-  private async issueSession(user: { id: string; username: string | null; role: string; franchiseId: string | null; hqControlled: boolean }, meta: SessionMeta = {}) {
+  private async issueSession(user: { id: string; username: string | null; role: string; franchiseId: string | null; franchise?: { status?: string } | null; hqControlled: boolean }, meta: SessionMeta = {}) {
     const baseRole = user.role.split("|")[0];
     const resolvedPermissions = await resolveUserPermissions(user.id, user.role);
     const jti = crypto.randomUUID();
@@ -44,12 +46,16 @@ export class AuthService {
       },
     });
 
+    const rawFran = (user.franchise?.status || "").trim().toUpperCase();
+    const franchiseStatus = user.franchise ? ((rawFran === "DEACTIVE" || rawFran === "INACTIVE" || rawFran === "DEACTIVATED") ? "DEACTIVE" : (rawFran === "ACTIVE" ? "ACTIVE" : "PENDING")) : "ACTIVE";
+
     const tokenPayload = {
       id: user.id,
       username: user.username,
       role: user.role,
       permissions: resolvedPermissions,
       franchiseId: user.franchiseId,
+      franchiseStatus,
       hqControlled: user.hqControlled,
       jti,
       ...(baseRole === "TECHNICIAN" || baseRole === "QUALITY_INSPECTOR" ? { technicianId: user.id } : {})
@@ -126,6 +132,9 @@ export class AuthService {
       resolveActionPermissions(user.id, user.role),
     ]);
 
+    const rawFranStatus = (user.franchise?.status || "").trim().toUpperCase();
+    const franchiseStatus = user.franchise ? ((rawFranStatus === "DEACTIVE" || rawFranStatus === "INACTIVE" || rawFranStatus === "DEACTIVATED") ? "DEACTIVE" : (rawFranStatus === "ACTIVE" ? "ACTIVE" : "PENDING")) : "ACTIVE";
+
     return {
       id: user.id,
       username: user.username,
@@ -133,6 +142,7 @@ export class AuthService {
       permissions: resolvedPermissions,
       actions: resolvedActions,
       franchiseId: user.franchiseId,
+      franchiseStatus,
       hqControlled: user.hqControlled,
       needsOnboarding: user.needsOnboarding,
       branch: resolveBranch(user),

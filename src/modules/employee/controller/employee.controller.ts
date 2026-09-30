@@ -53,6 +53,11 @@ export class EmployeeController {
     try {
       const userRole = req.user?.role || "UNKNOWN";
       const userFranchiseId = req.user?.franchiseId || undefined;
+      const normalizedRole = (req.body?.role || "").toUpperCase().replace(/[\s_]+/g, "_");
+      if (["FRANCHISE_ADMIN", "HQ_USER", "BRANCH_MANAGER"].includes(normalizedRole)) {
+        res.status(400).json({ error: `Role '${req.body?.role}' cannot be assigned to new employees.` });
+        return;
+      }
       const result = await this.service.createEmployee(req.body, userRole, userFranchiseId, false);
       await logAudit({
         module: "EMPLOYEE",

@@ -7,6 +7,7 @@ export const createInvoiceSchema = z.object({
     phone: z.string().optional(),
     vehicle: z.string().optional(),
     service: z.string().optional(),
+    serviceCategory: z.string().nullable().optional(),
     amount: z.union([z.string(), z.number()]).optional(),
     gst: z.union([z.string(), z.number()]).optional(),
     discount: z.union([z.string(), z.number()]).optional(),
