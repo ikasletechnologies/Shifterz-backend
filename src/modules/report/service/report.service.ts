@@ -1,4 +1,5 @@
 import { ReportRepository } from '../repository/report.repository.js';
+import { db } from '../../../lib/db.js';
 import { COMPLETED_JOB_STATUSES } from '../../../shared/constants/jobStatus.constants.js';
 import { buildGstr2bReport, excludeRowsForDeletedPurchaseOrders } from './gstr2bAggregation.helper.js';
 
@@ -2247,6 +2248,123 @@ export class ReportService {
   // else in the codebase — the 35% figure was invented with no traceable
   // source and had no business behind it. `cost` (a real, persisted field)
   // is the only genuine value this report can show.
+  async getPurchaseOrderSummaryReport(from?: string, to?: string) {
+    const where: any = { isDeleted: false };
+    if (from || to) {
+      where.createdAt = {};
+      if (from) where.createdAt.gte = new Date(from);
+      if (to) where.createdAt.lte = new Date(to);
+    }
+    const pos = await db.purchaseOrder.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      include: { vendor: true }
+    });
+    return pos.map(p => {
+      let itemsList: any[] = [];
+      try {
+        itemsList = typeof p.items === 'string' ? JSON.parse(p.items) : (p.items || []);
+      } catch {
+        itemsList = [];
+      }
+      const totalUnits = itemsList.reduce((acc: number, it: any) => acc + (Number(it.qty) || 1), 0);
+      return {
+        poNumber: p.orderNumber,
+        date: p.createdAt ? new Date(p.createdAt).toISOString().split('T')[0] : '',
+        supplier: p.vendor?.name || p.vendorName || 'Unknown Vendor',
+        itemCount: itemsList.length,
+        totalUnits,
+        subtotal: p.subtotal || 0,
+        taxAmount: p.taxAmount || 0,
+        totalAmount: p.totalAmount,
+        paidAmount: p.paidAmount || 0,
+        status: p.stage,
+        createdBy: p.createdBy || 'superadmin'
+      };
+    });
+  }
+
+  async getGoodsReceivedReport(from?: string, to?: string) {
+    const where: any = {
+      isDeleted: false,
+      OR: [
+        { stage: { in: ['GOODS_RECEIVED', 'RECEIVED', 'PAID'] } },
+        { receivedAt: { not: null } }
+      ]
+    };
+    if (from || to) {
+      where.receivedAt = {};
+      if (from) where.receivedAt.gte = new Date(from);
+      if (to) where.receivedAt.lte = new Date(to);
+    }
+    const pos = await db.purchaseOrder.findMany({
+      where,
+      orderBy: { updatedAt: 'desc' },
+      include: { vendor: true }
+    });
+    return pos.map(p => {
+      let itemsList: any[] = [];
+      try {
+        itemsList = typeof p.items === 'string' ? JSON.parse(p.items) : (p.items || []);
+      } catch {
+        itemsList = [];
+      }
+      const itemNames = itemsList.map((it: any) => `${it.name || 'Item'} (${it.qty || 1})`).join(', ');
+      return {
+        poNumber: p.orderNumber,
+        receivedDate: p.receivedAt ? new Date(p.receivedAt).toISOString().split('T')[0] : (p.updatedAt ? new Date(p.updatedAt).toISOString().split('T')[0] : ''),
+        supplier: p.vendor?.name || p.vendorName || 'Unknown Vendor',
+        itemsReceived: itemNames || '—',
+        totalAmount: p.totalAmount,
+        stage: p.stage,
+        confirmedBy: p.createdBy || 'superadmin'
+      };
+    });
+  }
+
+  async getPurchaseSpendingReport(from?: string, to?: string) {
+    const where: any = { isDeleted: false };
+    if (from || to) {
+      where.createdAt = {};
+      if (from) where.createdAt.gte = new Date(from);
+      if (to) where.createdAt.lte = new Date(to);
+    }
+    const pos = await db.purchaseOrder.findMany({
+      where,
+      include: { vendor: true }
+    });
+    const vendorMap = new Map<string, {
+      supplier: string;
+      totalOrders: number;
+      totalSpending: number;
+      paidAmount: number;
+      pendingAmount: number;
+      goodsReceivedOrders: number;
+    }>();
+
+    pos.forEach(p => {
+      const vName = p.vendor?.name || p.vendorName || 'Unknown Vendor';
+      const entry = vendorMap.get(vName) || {
+        supplier: vName,
+        totalOrders: 0,
+        totalSpending: 0,
+        paidAmount: 0,
+        pendingAmount: 0,
+        goodsReceivedOrders: 0
+      };
+      entry.totalOrders += 1;
+      entry.totalSpending += Number(p.totalAmount || 0);
+      entry.paidAmount += Number(p.paidAmount || 0);
+      entry.pendingAmount += Math.max(0, Number(p.totalAmount || 0) - Number(p.paidAmount || 0));
+      if (p.stage === 'GOODS_RECEIVED' || p.stage === 'RECEIVED' || p.stage === 'PAID' || p.receivedAt) {
+        entry.goodsReceivedOrders += 1;
+      }
+      vendorMap.set(vName, entry);
+    });
+
+    return Array.from(vendorMap.values()).sort((a, b) => b.totalSpending - a.totalSpending);
+  }
+
   async getProductRegisterReport(franchiseId?: string) {
     const items = await this.repository.getInventory(franchiseId);
     return items.map(i => ({
@@ -2536,6 +2654,9 @@ export class ReportService {
       case 'movement':       rows = await this.getStockMovementReport(franchiseId, from, to); break;
       case 'stock-request':  rows = await this.getStockRequestReport(franchiseId, from, to); break;
       case 'dispatch':       rows = await this.getDispatchReport(franchiseId, from, to); break;
+      case 'purchase-summary': rows = await this.getPurchaseOrderSummaryReport(from, to); break;
+      case 'goods-received':   rows = await this.getGoodsReceivedReport(from, to); break;
+      case 'purchase-spending': rows = await this.getPurchaseSpendingReport(from, to); break;
       default: throw new Error(`Unknown Inventory report type: ${type}`);
     }
 

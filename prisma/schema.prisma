@@ -1487,41 +1487,54 @@ model QCInspection {
 // ═══════════════════════════════════════════════════════════════
 
 model Vendor {
-  id        String          @id @default(cuid())
-  code      String          @unique
-  name      String
-  gstNumber String?
-  contact   String?
-  phone     String?
-  email     String?
-  address   String?
-  state     String? // GST-08 — needed alongside gstNumber to determine intra/inter-state on a purchase, same role Franchise/Customer.state already play for sales
-  status    String          @default("Active")
-  isDeleted Boolean         @default(false)
-  deletedAt DateTime?
-  createdAt DateTime        @default(now())
-  purchases PurchaseOrder[]
+  id            String          @id @default(cuid())
+  code          String          @unique
+  name          String
+  companyName   String?
+  gstNumber     String?
+  panNumber     String?
+  contact       String?
+  phone         String?
+  email         String?
+  address       String?
+  state         String? // GST-08 — needed alongside gstNumber to determine intra/inter-state on a purchase, same role Franchise/Customer.state already play for sales
+  bankName      String?
+  accountNumber String?
+  ifscCode      String?
+  notes         String?
+  status        String          @default("Active")
+  isDeleted     Boolean         @default(false)
+  deletedAt     DateTime?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @default(now()) @updatedAt
+  purchases     PurchaseOrder[]
+  purchaseInvoices PurchaseInvoice[]
 }
 
 model PurchaseOrder {
-  id            String              @id @default(cuid())
-  orderNumber   String              @unique // e.g. PO-2026-0001
-  vendorId      String
-  vendor        Vendor              @relation(fields: [vendorId], references: [id])
-  vendorName    String
-  stage         String              @default("REQUESTED") // REQUESTED -> ORDERED -> RECEIVED -> INVOICED -> PAID
-  items         String // JSON string: [{ name, sku, qty, unitPrice, total }]
-  totalAmount   Float
-  paidAmount    Float               @default(0)
-  invoiceNumber String? // Purchase Invoice Number
-  receivedAt    DateTime? // Goods Receipt Timestamp
-  paidAt        DateTime? // Supplier Payment Timestamp
-  notes         String?
-  createdBy     String
-  createdAt     DateTime            @default(now())
-  updatedAt     DateTime            @default(now()) @updatedAt
-  isDeleted     Boolean             @default(false)
-  deletedAt     DateTime?
+  id                   String              @id @default(cuid())
+  orderNumber          String              @unique // e.g. PO-2026-0001
+  vendorId             String
+  vendor               Vendor              @relation(fields: [vendorId], references: [id])
+  vendorName           String
+  stage                String              @default("REQUESTED") // REQUESTED -> ORDERED -> RECEIVED -> INVOICED -> PAID
+  items                String // JSON string: [{ name, sku, qty, unitPrice, total }]
+  totalAmount          Float
+  paidAmount           Float               @default(0)
+  invoiceNumber        String? // Purchase Invoice Number
+  receivedAt           DateTime? // Goods Receipt Timestamp
+  paidAt               DateTime? // Supplier Payment Timestamp
+  notes                String?
+  deliveryInstructions String?
+  subtotal             Float?
+  taxAmount            Float?
+  discount             Float?              @default(0)
+  createdBy            String
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @default(now()) @updatedAt
+  isDeleted            Boolean             @default(false)
+  deletedAt            DateTime?
+  invoice              PurchaseInvoice?
   // GST-08 — input-GST snapshot for the attached purchase invoice, same
   // immutability principle as the sales-side Invoice snapshot (GST-01).
   // Nullable throughout: existing purchase orders keep working with none of
@@ -1551,6 +1564,31 @@ model PurchaseOrder {
   placeOfSupply String?
   supplyType    String? // "B2B" | "B2C"
   lines         PurchaseOrderLine[]
+}
+
+model PurchaseInvoice {
+  id              String        @id @default(cuid())
+  invoiceNumber   String        @unique
+  invoiceDate     DateTime      @default(now())
+  dueDate         DateTime?
+  purchaseOrderId String        @unique
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id])
+  vendorId        String
+  vendor          Vendor        @relation(fields: [vendorId], references: [id])
+  items           String        // JSON string of invoice items
+  subtotal        Float         @default(0)
+  tax             Float         @default(0)
+  discount        Float         @default(0)
+  total           Float         @default(0)
+  paymentTerms    String?
+  deliveryNotes   String?
+  notes           String?
+  status          String        @default("Unpaid") // Unpaid, Paid, Partially Paid
+  isDeleted       Boolean       @default(false)
+  deletedAt       DateTime?
+  createdBy       String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @default(now()) @updatedAt
 }
 
 // Purchase GST/ITC foundation — additive alongside the existing `items` Json

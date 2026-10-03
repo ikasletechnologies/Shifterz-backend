@@ -5,6 +5,7 @@ import { logger } from '../../../shared/logger/logger.js';
 import { db } from '../../../lib/db.js';
 import { logAudit } from '../../../shared/services/audit.service.js';
 import { JobCardPrintService } from '../service/job-card-print.service.js';
+import { resolveDataScope, scopeWhere } from '../../../shared/scope/dataScope.js';
 
 
 export class JobCardController {
@@ -26,19 +27,19 @@ export class JobCardController {
           filter = { status: { in: ["Ready For Billing", "QC Passed", "Delivered", "Out"] } };
         }
 
-        // Branch/franchise admins (and every other non-HQ role) must only see
-        // their own branch's job cards, never HQ's or another branch's.
-        // HQ can view all or filter by a specific franchise.
-        const isHQ = userRole === "SUPER_ADMIN" || userRole === "HQ_USER";
-        if (isHQ) {
+        // Branch/franchise admins (and other branch roles) must only see
+        // their own branch's job cards. HQ staff without franchise assignment
+        // see HQ-level job cards. HQ admin can view all or filter by franchise.
+        const scope = resolveDataScope(req.user);
+        if (scope.unrestricted) {
           if (req.query.franchiseId && req.query.franchiseId !== "all" && req.query.franchiseId !== "All") {
             filter.franchiseId = String(req.query.franchiseId);
           }
-        } else if (userRole === "TECHNICIAN") {
-          // Technicians only see jobs assigned to them within their own franchise (or HQ if franchiseId is null)
-          filter.franchiseId = req.user.franchiseId || null;
         } else {
-          filter.franchiseId = req.user.franchiseId || "__NO_FRANCHISE__";
+          const tenantFilter = scopeWhere(scope);
+          if (tenantFilter.franchiseId !== undefined) {
+            filter.franchiseId = tenantFilter.franchiseId;
+          }
         }
       }
       const list = await this.service.getJobs(filter);

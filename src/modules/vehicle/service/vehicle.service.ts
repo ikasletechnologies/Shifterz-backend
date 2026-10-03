@@ -5,33 +5,26 @@ export class VehicleService {
   constructor(private readonly repository: VehicleRepository = new VehicleRepository()) {}
 
   async lookupVehicle(vehicleNo: string) {
-    const customer = await this.repository.findCustomerByVehicle(vehicleNo);
-    if (customer) {
-      return { 
-        found: true,
-        name: customer.name, 
-        phone: customer.phone, 
-        email: customer.email, 
-        model: customer.model 
-      };
-    }
+    const [job, customer, carIn, lead] = await Promise.all([
+      this.repository.findJobByVehicle(vehicleNo),
+      this.repository.findCustomerByVehicle(vehicleNo),
+      this.repository.findCarInByVehicle(vehicleNo),
+      this.repository.findLeadByVehicle(vehicleNo),
+    ]);
 
-    const carIn = await this.repository.findCarInByVehicle(vehicleNo);
-    if (carIn) {
+    if (job || customer || carIn || lead) {
       return { 
         found: true,
-        name: carIn.customer, 
-        phone: carIn.phone, 
-        model: carIn.model 
-      };
-    }
-
-    const lead = await this.repository.findLeadByVehicle(vehicleNo);
-    if (lead) {
-      return { 
-        found: true,
-        name: lead.name, 
-        phone: lead.phone 
+        name: customer?.name || carIn?.customer || job?.customer || lead?.name || null,
+        phone: customer?.phone || carIn?.phone || lead?.phone || null,
+        email: customer?.email || null,
+        model: customer?.model || carIn?.model || null,
+        jobId: job?.id || null,
+        service: job?.service || null,
+        services: job?.services || null,
+        serviceAdvisor: job?.serviceAdvisor || null,
+        technician: job?.technician || null,
+        materials: job?.materialConsumptions || [],
       };
     }
 

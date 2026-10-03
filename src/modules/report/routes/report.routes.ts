@@ -140,4 +140,7 @@ reportRouter.get('/inventory/ledger',       requireAction('reports:inventory:vie
 reportRouter.get('/inventory/movement',       requireAction('reports:inventory:view'), controller.getStockMovementReport);
 reportRouter.get('/inventory/stock-requests', requireAction('reports:inventory:view'), controller.getStockRequestReport);
 reportRouter.get('/inventory/dispatches',     requireAction('reports:inventory:view'), controller.getDispatchReport);
+reportRouter.get('/inventory/purchase-summary',  requireAction('reports:inventory:view'), controller.getPurchaseOrderSummaryReport);
+reportRouter.get('/inventory/goods-received',    requireAction('reports:inventory:view'), controller.getGoodsReceivedReport);
+reportRouter.get('/inventory/purchase-spending', requireAction('reports:inventory:view'), controller.getPurchaseSpendingReport);
 reportRouter.get('/inventory/export',       requireAction('reports:inventory:export'), controller.exportInventoryCsv);

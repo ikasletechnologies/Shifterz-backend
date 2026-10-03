@@ -19,7 +19,7 @@ export const hqRouter = Router();
 
 // Secure all routes in this router to SUPER_ADMIN or HQ_USER
 hqRouter.use(requireAuth);
-hqRouter.use(requireRole("SUPER_ADMIN", "HQ_USER"));
+hqRouter.use(requireRole("SUPER_ADMIN", "HQ_USER", "BILLING", "BILLING_EXECUTIVE", "INVENTORY_EXECUTIVE", "INVENTORY"));
 
 // ═══════════════════════════════════════════════════════════════
 // FRANCHISE MANAGEMENT (HQ Only)
@@ -1524,16 +1524,34 @@ hqRouter.get("/reports/overview", async (req: Request, res: Response): Promise<v
 // VENDOR MASTER & PURCHASE MANAGEMENT (§Vendor & Purchase Management)
 // ═══════════════════════════════════════════════════════════════
 
-// GET /api/hq/vendors - List all active vendors
-// Purchase GST/ITC foundation — previously had no role gate at all; any
-// authenticated user, any role, could read HQ's entire vendor register.
-// Purchases/vendors are architecturally HQ-global (no franchiseId to scope
-// by), so the correct fix is the same HQ-only gate every purchase write
-// route already uses, not a new franchise-scope mechanism.
-hqRouter.get("/vendors", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: Request, res: Response): Promise<void> => {
+// Validation helpers
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const PHONE_REGEX = /^[0-9+\s-]{7,15}$/;
+const GST_REGEX = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/i;
+const PAN_REGEX = /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/i;
+
+async function generateUniqueVendorCode(): Promise<string> {
+  const existing = await db.vendor.findMany({
+    select: { code: true }
+  });
+  const codes = new Set(existing.map((v) => v.code));
+  let count = existing.length + 1;
+  let code = `VND-${String(count).padStart(3, "0")}`;
+  while (codes.has(code)) {
+    count++;
+    code = `VND-${String(count).padStart(3, "0")}`;
+  }
+  return code;
+}
+
+// GET /api/hq/vendors/active - List only active vendors (used for Purchase Order supplier selection)
+hqRouter.get("/vendors/active", async (req: Request, res: Response): Promise<void> => {
   try {
     const vendors = await db.vendor.findMany({
-      where: { isDeleted: false },
+      where: {
+        isDeleted: false,
+        status: { equals: "Active", mode: "insensitive" }
+      },
       orderBy: { name: "asc" }
     });
     res.json(vendors);
@@ -1542,33 +1560,160 @@ hqRouter.get("/vendors", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: Requ
   }
 });
 
-// POST /api/hq/vendors - Create a new vendor (HQ only)
-hqRouter.post("/vendors", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: AuthRequest, res: Response): Promise<void> => {
+// GET /api/hq/vendors/stats - Vendor counts (Total, Active, Inactive)
+hqRouter.get("/vendors/stats", requireRole("SUPER_ADMIN"), async (req: Request, res: Response): Promise<void> => {
   try {
-    // Purchase GST/ITC foundation — `state` already existed on the schema
-    // (GST-08) but was never accepted here, so it was permanently null for
-    // every vendor created through this endpoint.
-    const { code, name, gstNumber, contact, phone, email, address, state, status } = req.body;
-    if (!code || !name) {
-      res.status(400).json({ error: "Vendor code and name are required." });
+    const [total, active, inactive] = await Promise.all([
+      db.vendor.count({ where: { isDeleted: false } }),
+      db.vendor.count({ where: { isDeleted: false, status: { equals: "Active", mode: "insensitive" } } }),
+      db.vendor.count({ where: { isDeleted: false, status: { equals: "Inactive", mode: "insensitive" } } }),
+    ]);
+    res.json({ total, active, inactive });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/hq/vendors/:id - Get vendor details by ID
+hqRouter.get("/vendors/:id", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const vendor = await db.vendor.findFirst({
+      where: { id, isDeleted: false }
+    });
+    if (!vendor) {
+      res.status(404).json({ error: "Vendor not found." });
       return;
     }
-    const existing = await db.vendor.findUnique({ where: { code } });
-    if (existing && !existing.isDeleted) {
-      res.status(400).json({ error: "Vendor with this code already exists." });
+    res.json(vendor);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/hq/vendors - List vendors with status filter and search
+hqRouter.get("/vendors", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const statusQuery = (req.query.status as string | undefined)?.toUpperCase();
+    const search = (req.query.search as string | undefined)?.trim();
+    const activeOnly = req.query.activeOnly === "true";
+
+    const where: any = { isDeleted: false };
+
+    if (activeOnly || statusQuery === "ACTIVE") {
+      where.status = { equals: "Active", mode: "insensitive" };
+    } else if (statusQuery === "INACTIVE") {
+      where.status = { equals: "Inactive", mode: "insensitive" };
+    }
+
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: "insensitive" } },
+        { code: { contains: search, mode: "insensitive" } },
+        { companyName: { contains: search, mode: "insensitive" } },
+        { contact: { contains: search, mode: "insensitive" } },
+        { phone: { contains: search, mode: "insensitive" } },
+        { email: { contains: search, mode: "insensitive" } },
+        { gstNumber: { contains: search, mode: "insensitive" } },
+        { panNumber: { contains: search, mode: "insensitive" } },
+        { address: { contains: search, mode: "insensitive" } },
+      ];
+    }
+
+    const vendors = await db.vendor.findMany({
+      where,
+      orderBy: { createdAt: "desc" }
+    });
+    res.json(vendors);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/hq/vendors - Create a new vendor (Super Admin only)
+hqRouter.post("/vendors", requireRole("SUPER_ADMIN"), async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const {
+      name,
+      companyName,
+      contact,
+      phone,
+      email,
+      address,
+      state,
+      gstNumber,
+      panNumber,
+      bankName,
+      accountNumber,
+      ifscCode,
+      notes,
+      status
+    } = req.body;
+
+    let code = req.body.code ? String(req.body.code).trim() : "";
+
+    if (!name || !String(name).trim()) {
+      res.status(400).json({ error: "Vendor name is required." });
       return;
     }
+
+    if (code) {
+      const existing = await db.vendor.findFirst({
+        where: { code: { equals: code, mode: "insensitive" }, isDeleted: false }
+      });
+      if (existing) {
+        res.status(400).json({ error: `Vendor with code "${code}" already exists.` });
+        return;
+      }
+    } else {
+      code = await generateUniqueVendorCode();
+    }
+
+    if (email && email.trim() && !EMAIL_REGEX.test(email.trim())) {
+      res.status(400).json({ error: "Invalid email address format." });
+      return;
+    }
+
+    if (phone && phone.trim() && !PHONE_REGEX.test(phone.trim())) {
+      res.status(400).json({ error: "Invalid phone number format." });
+      return;
+    }
+
+    if (gstNumber && gstNumber.trim()) {
+      const cleanGst = gstNumber.trim().toUpperCase();
+      if (!GST_REGEX.test(cleanGst)) {
+        res.status(400).json({ error: "Invalid GST number format (15 characters alphanumeric required, e.g. 27ABCDE1234F1Z5)." });
+        return;
+      }
+    }
+
+    if (panNumber && panNumber.trim()) {
+      const cleanPan = panNumber.trim().toUpperCase();
+      if (!PAN_REGEX.test(cleanPan)) {
+        res.status(400).json({ error: "Invalid PAN number format (10 characters alphanumeric required, e.g. ABCDE1234F)." });
+        return;
+      }
+    }
+
+    const normalizedStatus = (status && String(status).toUpperCase() === "INACTIVE") ? "Inactive" : "Active";
+
     const vendor = await db.vendor.create({
       data: {
         code,
-        name,
-        gstNumber: gstNumber || "",
-        contact: contact || "",
-        phone: phone || "",
-        email: email || "",
-        address: address || "",
-        state: state || null,
-        status: status || "Active",
+        name: String(name).trim(),
+        companyName: companyName?.trim() || null,
+        contact: contact?.trim() || "",
+        phone: phone?.trim() || "",
+        email: email?.trim() || "",
+        address: address?.trim() || "",
+        state: state?.trim() || null,
+        gstNumber: gstNumber?.trim().toUpperCase() || "",
+        panNumber: panNumber?.trim().toUpperCase() || null,
+        bankName: bankName?.trim() || null,
+        accountNumber: accountNumber?.trim() || null,
+        ifscCode: ifscCode?.trim().toUpperCase() || null,
+        notes: notes?.trim() || null,
+        status: normalizedStatus,
       }
     });
 
@@ -1588,16 +1733,155 @@ hqRouter.post("/vendors", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: Aut
   }
 });
 
-// PUT /api/hq/vendors/:id - Update an existing vendor (HQ only)
-hqRouter.put("/vendors/:id", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: AuthRequest, res: Response): Promise<void> => {
+// PATCH /api/hq/vendors/:id/status - Toggle/Update vendor active status (Super Admin only)
+hqRouter.patch("/vendors/:id/status", requireRole("SUPER_ADMIN"), async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const id = req.params.id as string;
-    const existing = await db.vendor.findUnique({ where: { id } });
+    const existing = await db.vendor.findFirst({ where: { id, isDeleted: false } });
     if (!existing) {
       res.status(404).json({ error: "Vendor not found." });
       return;
     }
-    const { modifiedBy, createdBy, id: bodyId, createdAt, updatedAt, purchases, ...updateData } = req.body;
+
+    const { status } = req.body;
+    if (!status || !["ACTIVE", "INACTIVE"].includes(String(status).toUpperCase())) {
+      res.status(400).json({ error: 'Status must be either "ACTIVE" or "INACTIVE".' });
+      return;
+    }
+
+    const normalizedStatus = String(status).toUpperCase() === "ACTIVE" ? "Active" : "Inactive";
+    const updated = await db.vendor.update({
+      where: { id },
+      data: { status: normalizedStatus }
+    });
+
+    await logAudit({
+      module: "Vendor",
+      recordId: id,
+      action: "UPDATE_STATUS",
+      userId: req.user?.id || "unknown",
+      branchId: null,
+      oldValue: { status: existing.status },
+      newValue: { status: updated.status },
+    });
+
+    res.json(updated);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// PUT & PATCH /api/hq/vendors/:id - Update an existing vendor (Super Admin only)
+const updateVendorHandler = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const existing = await db.vendor.findFirst({ where: { id, isDeleted: false } });
+    if (!existing) {
+      res.status(404).json({ error: "Vendor not found." });
+      return;
+    }
+
+    const {
+      name,
+      companyName,
+      contact,
+      phone,
+      email,
+      address,
+      state,
+      gstNumber,
+      panNumber,
+      bankName,
+      accountNumber,
+      ifscCode,
+      notes,
+      status,
+      code
+    } = req.body;
+
+    const updateData: any = {};
+
+    if (code !== undefined) {
+      const trimmedCode = String(code).trim();
+      if (!trimmedCode) {
+        res.status(400).json({ error: "Vendor code cannot be empty." });
+        return;
+      }
+      if (trimmedCode.toUpperCase() !== existing.code.toUpperCase()) {
+        const dup = await db.vendor.findFirst({
+          where: { code: { equals: trimmedCode, mode: "insensitive" }, id: { not: id }, isDeleted: false }
+        });
+        if (dup) {
+          res.status(400).json({ error: `Vendor with code "${trimmedCode}" already exists.` });
+          return;
+        }
+      }
+      updateData.code = trimmedCode;
+    }
+
+    if (name !== undefined) {
+      if (!String(name).trim()) {
+        res.status(400).json({ error: "Vendor name cannot be empty." });
+        return;
+      }
+      updateData.name = String(name).trim();
+    }
+
+    if (companyName !== undefined) updateData.companyName = companyName?.trim() || null;
+    if (contact !== undefined) updateData.contact = contact?.trim() || "";
+    if (address !== undefined) updateData.address = address?.trim() || "";
+    if (state !== undefined) updateData.state = state?.trim() || null;
+    if (bankName !== undefined) updateData.bankName = bankName?.trim() || null;
+    if (accountNumber !== undefined) updateData.accountNumber = accountNumber?.trim() || null;
+    if (ifscCode !== undefined) updateData.ifscCode = ifscCode?.trim().toUpperCase() || null;
+    if (notes !== undefined) updateData.notes = notes?.trim() || null;
+
+    if (email !== undefined) {
+      if (email && email.trim() && !EMAIL_REGEX.test(email.trim())) {
+        res.status(400).json({ error: "Invalid email address format." });
+        return;
+      }
+      updateData.email = email?.trim() || "";
+    }
+
+    if (phone !== undefined) {
+      if (phone && phone.trim() && !PHONE_REGEX.test(phone.trim())) {
+        res.status(400).json({ error: "Invalid phone number format." });
+        return;
+      }
+      updateData.phone = phone?.trim() || "";
+    }
+
+    if (gstNumber !== undefined) {
+      if (gstNumber && gstNumber.trim()) {
+        const cleanGst = gstNumber.trim().toUpperCase();
+        if (!GST_REGEX.test(cleanGst)) {
+          res.status(400).json({ error: "Invalid GST number format (15 characters alphanumeric required, e.g. 27ABCDE1234F1Z5)." });
+          return;
+        }
+        updateData.gstNumber = cleanGst;
+      } else {
+        updateData.gstNumber = "";
+      }
+    }
+
+    if (panNumber !== undefined) {
+      if (panNumber && panNumber.trim()) {
+        const cleanPan = panNumber.trim().toUpperCase();
+        if (!PAN_REGEX.test(cleanPan)) {
+          res.status(400).json({ error: "Invalid PAN number format (10 characters alphanumeric required, e.g. ABCDE1234F)." });
+          return;
+        }
+        updateData.panNumber = cleanPan;
+      } else {
+        updateData.panNumber = null;
+      }
+    }
+
+    if (status !== undefined) {
+      updateData.status = String(status).toUpperCase() === "INACTIVE" ? "Inactive" : "Active";
+    }
+
     const updated = await db.vendor.update({
       where: { id },
       data: updateData
@@ -1617,20 +1901,23 @@ hqRouter.put("/vendors/:id", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: 
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
-});
+};
+
+hqRouter.put("/vendors/:id", requireRole("SUPER_ADMIN"), updateVendorHandler);
+hqRouter.patch("/vendors/:id", requireRole("SUPER_ADMIN"), updateVendorHandler);
 
 // DELETE /api/hq/vendors/:id - Soft-delete a vendor (PRD rule: Purchase records shall not be permanently deleted)
-hqRouter.delete("/vendors/:id", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: AuthRequest, res: Response): Promise<void> => {
+hqRouter.delete("/vendors/:id", requireRole("SUPER_ADMIN"), async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const id = req.params.id as string;
-    const existing = await db.vendor.findUnique({ where: { id } });
+    const existing = await db.vendor.findFirst({ where: { id, isDeleted: false } });
     if (!existing) {
       res.status(404).json({ error: "Vendor not found." });
       return;
     }
     const deleted = await db.vendor.update({
       where: { id },
-      data: { isDeleted: true, status: "Inactive", deletedAt: new Date().toISOString() }
+      data: { isDeleted: true, status: "Inactive", deletedAt: new Date() }
     });
 
     await logAudit({
@@ -1651,10 +1938,8 @@ hqRouter.delete("/vendors/:id", requireRole("SUPER_ADMIN", "HQ_USER"), async (re
 
 // ── Purchase Orders ──────────────────────────────────────────────────────────
 
-// GET /api/hq/purchases - List purchase orders (with vendor info)
-// Purchase GST/ITC foundation — same auth gap as GET /vendors: previously
-// reachable by any authenticated user regardless of role.
-hqRouter.get("/purchases", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: Request, res: Response): Promise<void> => {
+// GET /api/hq/purchases - List purchase orders (with vendor and invoice info)
+hqRouter.get("/purchases", requireRole("SUPER_ADMIN", "HQ_USER", "BILLING", "BILLING_EXECUTIVE", "INVENTORY_EXECUTIVE", "INVENTORY"), async (req: Request, res: Response): Promise<void> => {
   try {
     const status = req.query.status as string | undefined;
     const where: any = { isDeleted: false };
@@ -1664,12 +1949,15 @@ hqRouter.get("/purchases", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: Re
     const orders = await db.purchaseOrder.findMany({
       where,
       orderBy: { createdAt: "desc" },
-      include: { vendor: true }
+      include: { vendor: true, invoice: true }
     });
     const formatted = orders.map((o: any) => ({
       ...o,
       vendorName: o.vendor ? o.vendor.name : "Unknown Vendor",
-      vendorCode: o.vendor ? o.vendor.code : ""
+      vendorCode: o.vendor ? o.vendor.code : "",
+      hasInvoice: !!o.invoice || !!o.invoiceNumber || o.stage === "INVOICED" || o.stage === "PAID",
+      invoiceId: o.invoice?.id || null,
+      invoiceNumber: o.invoice?.invoiceNumber || o.invoiceNumber || null,
     }));
     res.json(formatted);
   } catch (error: any) {
@@ -1677,32 +1965,147 @@ hqRouter.get("/purchases", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: Re
   }
 });
 
-// POST /api/hq/purchases - Create a new Purchase Order (PRD rule: Only HQ shall create Purchase Orders)
-hqRouter.post("/purchases", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: AuthRequest, res: Response): Promise<void> => {
+// Helper: Generate next sequential PO number: PO-{YY}-{MM}-{SEQUENCE}
+async function generateNextPoNumber(): Promise<string> {
+  const now = new Date();
+  const yy = String(now.getFullYear()).slice(-2);
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const prefix = `PO-${yy}-${mm}-`;
+
+  const existingPos = await db.purchaseOrder.findMany({
+    where: {
+      orderNumber: { startsWith: prefix }
+    },
+    select: { orderNumber: true }
+  });
+
+  let nextSeq = 1;
+  if (existingPos.length > 0) {
+    const seqs = existingPos.map((p) => {
+      const parts = p.orderNumber.split("-");
+      const lastPart = parts[parts.length - 1] || "0";
+      const num = parseInt(lastPart, 10);
+      return isNaN(num) ? 0 : num;
+    });
+    nextSeq = Math.max(...seqs) + 1;
+  }
+
+  const seqStr = String(nextSeq).padStart(3, "0");
+  return `${prefix}${seqStr}`;
+}
+
+// GET /api/hq/purchases/next-number - Get next sequential PO number
+hqRouter.get("/purchases/next-number", requireRole("SUPER_ADMIN", "HQ_USER", "BILLING", "BILLING_EXECUTIVE", "INVENTORY_EXECUTIVE", "INVENTORY"), async (req: Request, res: Response): Promise<void> => {
   try {
-    const { orderNumber, vendorId, items, totalAmount, notes, createdBy } = req.body;
-    if (!orderNumber || !vendorId) {
-      res.status(400).json({ error: "orderNumber and vendorId are required." });
+    const orderNumber = await generateNextPoNumber();
+    res.json({ orderNumber });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/hq/purchases/:id - Get single purchase order with complete vendor, items, and invoice data
+hqRouter.get("/purchases/:id", requireRole("SUPER_ADMIN", "HQ_USER", "BILLING", "BILLING_EXECUTIVE", "INVENTORY_EXECUTIVE", "INVENTORY"), async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const order = await db.purchaseOrder.findFirst({
+      where: { id, isDeleted: false },
+      include: { vendor: true, invoice: true, lines: true }
+    });
+    if (!order) {
+      res.status(404).json({ error: "Purchase Order not found." });
       return;
     }
+    res.json({
+      ...order,
+      vendorName: order.vendor ? order.vendor.name : "Unknown Vendor",
+      vendorCode: order.vendor ? order.vendor.code : "",
+      hasInvoice: !!order.invoice || !!order.invoiceNumber || order.stage === "INVOICED" || order.stage === "PAID",
+      invoiceId: order.invoice?.id || null,
+      invoiceNumber: order.invoice?.invoiceNumber || order.invoiceNumber || null,
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/hq/purchases - Create a new Purchase Order (PRD rule: Only HQ shall create Purchase Orders)
+hqRouter.post("/purchases", requireRole("SUPER_ADMIN", "HQ_USER", "INVENTORY_EXECUTIVE", "INVENTORY"), async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const {
+      orderNumber,
+      vendorId,
+      items,
+      subtotal,
+      taxAmount,
+      discount,
+      totalAmount,
+      notes,
+      deliveryInstructions,
+      createdBy
+    } = req.body;
+
+    if (!vendorId) {
+      res.status(400).json({ error: "vendorId is required." });
+      return;
+    }
+
+    let finalOrderNumber = (orderNumber || "").trim();
+    if (!finalOrderNumber) {
+      finalOrderNumber = await generateNextPoNumber();
+    } else {
+      const exists = await db.purchaseOrder.findUnique({ where: { orderNumber: finalOrderNumber } });
+      if (exists) {
+        finalOrderNumber = await generateNextPoNumber();
+      }
+    }
     const vendor = await db.vendor.findUnique({ where: { id: vendorId } });
-    if (!vendor) {
+    if (!vendor || vendor.isDeleted) {
       res.status(404).json({ error: "Vendor not found." });
       return;
     }
+    if (vendor.status?.toUpperCase() === "INACTIVE") {
+      res.status(400).json({ error: "Cannot create purchase order for an inactive vendor." });
+      return;
+    }
     const itemsString = typeof items === "string" ? items : JSON.stringify(items || []);
+    
+    // Parse items to compute amounts if subtotal not explicitly passed
+    let parsedItems: any[] = [];
+    try {
+      parsedItems = typeof items === "string" ? JSON.parse(items) : (items || []);
+    } catch {
+      parsedItems = [];
+    }
+
+    let calcSubtotal = subtotal !== undefined ? Number(subtotal) : 0;
+    let calcTax = taxAmount !== undefined ? Number(taxAmount) : 0;
+    let calcDiscount = discount !== undefined ? Number(discount) : 0;
+    let calcTotal = Number(totalAmount) || 0;
+
+    if (calcSubtotal === 0 && parsedItems.length > 0) {
+      calcSubtotal = parsedItems.reduce((acc: number, it: any) => acc + (Number(it.qty || 1) * Number(it.unitPrice || 0)), 0);
+      calcTotal = calcTotal || calcSubtotal;
+      calcTax = Math.max(0, calcTotal - calcSubtotal + calcDiscount);
+    }
+
     const order = await db.purchaseOrder.create({
       data: {
-        orderNumber,
+        orderNumber: finalOrderNumber,
         vendorId,
         vendorName: vendor.name,
         items: itemsString,
-        totalAmount: Number(totalAmount) || 0,
+        totalAmount: calcTotal,
+        subtotal: calcSubtotal,
+        taxAmount: calcTax,
+        discount: calcDiscount,
         paidAmount: 0,
-        stage: "ORDERED",
+        stage: "PO_CREATED",
         notes: notes || "",
-        createdBy: createdBy || "HQ User",
-      }
+        deliveryInstructions: deliveryInstructions || "",
+        createdBy: createdBy || req.user?.username || req.user?.name || "Super Admin",
+      },
+      include: { vendor: true }
     });
 
     await logAudit({
@@ -1721,49 +2124,62 @@ hqRouter.post("/purchases", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: A
   }
 });
 
-// POST /api/hq/purchases/:id/receive - Goods Receipt & auto-update HQ inventory (PRD rule: Purchase shall automatically update HQ inventory)
-hqRouter.post("/purchases/:id/receive", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: AuthRequest, res: Response): Promise<void> => {
+// POST /api/hq/purchases/:id/receive - Goods Receipt & auto-update HQ inventory
+hqRouter.post("/purchases/:id/receive", requireRole("SUPER_ADMIN", "HQ_USER", "INVENTORY_EXECUTIVE", "INVENTORY"), async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const id = req.params.id as string;
-    const order = await db.purchaseOrder.findUnique({ where: { id } });
+    const order = await db.purchaseOrder.findUnique({
+      where: { id },
+      include: { vendor: true, invoice: true }
+    });
     if (!order || order.isDeleted) {
       res.status(404).json({ error: "Purchase Order not found." });
       return;
     }
-    if (order.stage === "RECEIVED" || order.stage === "INVOICED" || order.stage === "PAID") {
+    if (order.stage === "GOODS_RECEIVED" || order.stage === "RECEIVED" || order.stage === "PAID" || !!order.receivedAt) {
       res.status(400).json({ error: "Goods receipt has already been processed for this purchase order." });
       return;
     }
 
-    let parsedItems: Array<{ name: string; sku?: string; qty: number; unitPrice?: number }> = [];
+    let parsedItems: Array<{ name: string; sku?: string; qty: number; unitPrice?: number; gstRate?: number; taxAmount?: number; total?: number }> = [];
     try {
-      parsedItems = JSON.parse(order.items);
+      parsedItems = typeof order.items === "string" ? JSON.parse(order.items) : (order.items || []);
     } catch {
       parsedItems = [];
     }
 
-    const performedBy = req.user?.id || "unknown";
+    const performedBy = req.user?.id || req.user?.username || "unknown";
 
-    // INV-02 — this whole receipt (every item's stock/movement write, plus
-    // the PO's own stage transition) now runs as one transaction. It used
-    // to be a sequence of unwrapped calls: a failure partway through could
-    // leave some items updated with no movement record, or stock applied
-    // with the PO never reaching RECEIVED. Actor is now the authenticated
-    // caller (was a hardcoded "HQ Procurement" string), and new HQ items
-    // use the same canonical generateUid("ITM") every other creation path
-    // uses (was an ad hoc INV-<timestamp>-<random> id).
     const updated = await db.$transaction(async (tx) => {
       for (const item of parsedItems) {
         const qty = Number(item.qty) || 0;
         if (qty <= 0) continue;
 
-        const existingItem = await tx.inventory.findFirst({
-          where: {
-            name: item.name,
-            isDeleted: false,
-            franchiseId: null // HQ inventory
-          }
-        });
+        const itemName = (item.name || "").trim();
+        const itemSku = (item.sku || "").trim();
+
+        // Search for existing HQ inventory item by SKU (id) or Name
+        let existingItem = null;
+        if (itemSku) {
+          existingItem = await tx.inventory.findFirst({
+            where: {
+              OR: [
+                { id: itemSku },
+                { name: { equals: itemName, mode: "insensitive" } }
+              ],
+              isDeleted: false,
+              franchiseId: null // HQ inventory
+            }
+          });
+        } else {
+          existingItem = await tx.inventory.findFirst({
+            where: {
+              name: { equals: itemName, mode: "insensitive" },
+              isDeleted: false,
+              franchiseId: null
+            }
+          });
+        }
 
         let inventoryId = "";
         let newStock = qty;
@@ -1778,18 +2194,22 @@ hqRouter.post("/purchases/:id/receive", requireRole("SUPER_ADMIN", "HQ_USER"), a
             }
           });
         } else {
-          inventoryId = generateUid("ITM");
+          inventoryId = itemSku ? itemSku : generateUid("ITM");
+          const idTaken = await tx.inventory.findUnique({ where: { id: inventoryId } });
+          if (idTaken) {
+            inventoryId = generateUid("ITM");
+          }
           newStock = qty;
           await tx.inventory.create({
             data: {
               id: inventoryId,
-              name: item.name,
+              name: itemName || "Procured Item",
               category: "Purchase Goods",
               stock: qty,
               unit: "Pcs",
               reorder: 5,
               cost: item.unitPrice ? Number(item.unitPrice) : 0,
-              supplier: "HQ Supplier",
+              supplier: order.vendorName || "HQ Supplier",
               location: "HQ Warehouse",
               franchiseId: null
             }
@@ -1812,9 +2232,10 @@ hqRouter.post("/purchases/:id/receive", requireRole("SUPER_ADMIN", "HQ_USER"), a
       return tx.purchaseOrder.update({
         where: { id },
         data: {
-          stage: "RECEIVED",
+          stage: "GOODS_RECEIVED",
           receivedAt: new Date().toISOString()
-        }
+        },
+        include: { vendor: true, invoice: true }
       });
     });
 
@@ -1828,7 +2249,14 @@ hqRouter.post("/purchases/:id/receive", requireRole("SUPER_ADMIN", "HQ_USER"), a
       newValue: updated,
     });
 
-    res.json(updated);
+    res.json({
+      ...updated,
+      vendorName: updated.vendor ? updated.vendor.name : "Supplier",
+      vendorCode: updated.vendor ? updated.vendor.code : "",
+      hasInvoice: !!updated.invoice || !!updated.invoiceNumber,
+      invoiceId: updated.invoice?.id || null,
+      invoiceNumber: updated.invoice?.invoiceNumber || updated.invoiceNumber || null,
+    });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
@@ -1856,30 +2284,90 @@ const attachPurchaseInvoiceHandler = async (req: AuthRequest, res: Response): Pr
   }
 };
 
-hqRouter.put("/purchases/:id/invoice", requireRole("SUPER_ADMIN", "HQ_USER"), attachPurchaseInvoiceHandler);
-hqRouter.post("/purchases/:id/invoice", requireRole("SUPER_ADMIN", "HQ_USER"), attachPurchaseInvoiceHandler);
+hqRouter.put("/purchases/:id/invoice", requireRole("SUPER_ADMIN", "HQ_USER", "BILLING", "BILLING_EXECUTIVE", "INVENTORY_EXECUTIVE", "INVENTORY"), attachPurchaseInvoiceHandler);
+hqRouter.post("/purchases/:id/invoice", requireRole("SUPER_ADMIN", "HQ_USER", "BILLING", "BILLING_EXECUTIVE", "INVENTORY_EXECUTIVE", "INVENTORY"), attachPurchaseInvoiceHandler);
 
-// POST /api/hq/purchases/:id/pay - Record Supplier Payment
-hqRouter.post("/purchases/:id/pay", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: AuthRequest, res: Response): Promise<void> => {
+// POST /api/hq/purchases/:id/pay - Confirm payment and auto-generate purchase invoice
+hqRouter.post("/purchases/:id/pay", requireRole("SUPER_ADMIN", "HQ_USER", "BILLING", "BILLING_EXECUTIVE", "INVENTORY_EXECUTIVE", "INVENTORY"), async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const id = req.params.id as string;
-    const existing = await db.purchaseOrder.findUnique({ where: { id } });
+    const existing = await db.purchaseOrder.findUnique({
+      where: { id },
+      include: { vendor: true, invoice: true }
+    });
     if (!existing || existing.isDeleted) {
       res.status(404).json({ error: "Purchase Order not found." });
       return;
     }
-    const paidAmount = Number(req.body.paidAmount) || 0;
-    if (!isValidPaymentAmount(paidAmount, existing.totalAmount)) {
-      res.status(400).json({ error: `paidAmount must be between 0 and the purchase total (${existing.totalAmount}).` });
+
+    // Goods must be received before confirming payment
+    const isGoodsReceived = existing.stage === "GOODS_RECEIVED" || existing.stage === "RECEIVED" || !!existing.receivedAt;
+    if (!isGoodsReceived) {
+      res.status(400).json({ error: "Goods receipt must be confirmed before recording payment." });
       return;
     }
-    const updated = await db.purchaseOrder.update({
-      where: { id },
-      data: {
-        paidAmount,
-        stage: "PAID",
-        paidAt: new Date().toISOString()
+
+    const totalAmount = existing.totalAmount;
+    const paidAmount = req.body.paidAmount !== undefined && Number(req.body.paidAmount) > 0
+      ? Number(req.body.paidAmount)
+      : totalAmount;
+
+    const result = await db.$transaction(async (tx) => {
+      // 1. Generate Purchase Invoice automatically using existing PO data
+      const invoiceNumber = existing.invoiceNumber || `INV-${existing.orderNumber}`;
+      let invoice = await tx.purchaseInvoice.findUnique({
+        where: { purchaseOrderId: id }
+      });
+
+      const now = new Date();
+
+      if (!invoice) {
+        invoice = await tx.purchaseInvoice.create({
+          data: {
+            id: generateUid("PINV"),
+            invoiceNumber,
+            invoiceDate: now,
+            dueDate: now,
+            purchaseOrderId: existing.id,
+            vendorId: existing.vendorId,
+            items: existing.items,
+            subtotal: existing.subtotal ?? existing.totalAmount,
+            tax: existing.taxAmount ?? 0,
+            discount: existing.discount ?? 0,
+            total: existing.totalAmount,
+            paymentTerms: "Immediate",
+            deliveryNotes: existing.deliveryInstructions || "",
+            notes: existing.notes || "",
+            status: "Paid",
+            createdBy: req.user?.username || req.user?.name || "Super Admin",
+          }
+        });
+      } else {
+        invoice = await tx.purchaseInvoice.update({
+          where: { id: invoice.id },
+          data: {
+            status: "Paid",
+            total: existing.totalAmount,
+            subtotal: existing.subtotal ?? existing.totalAmount,
+            tax: existing.taxAmount ?? 0
+          }
+        });
       }
+
+      // 2. Mark PO as PAID and link invoice
+      const updatedPo = await tx.purchaseOrder.update({
+        where: { id },
+        data: {
+          paidAmount,
+          stage: "PAID",
+          paidAt: now,
+          invoiceNumber,
+          invoiceDate: now
+        },
+        include: { vendor: true, invoice: true }
+      });
+
+      return { po: updatedPo, invoice };
     });
 
     await logAudit({
@@ -1889,10 +2377,196 @@ hqRouter.post("/purchases/:id/pay", requireRole("SUPER_ADMIN", "HQ_USER"), async
       userId: req.user?.id || "unknown",
       branchId: null,
       oldValue: existing,
-      newValue: updated,
+      newValue: result.po,
     });
 
-    res.json(updated);
+    res.json({
+      ...result.po,
+      vendorName: result.po.vendor ? result.po.vendor.name : "Supplier",
+      vendorCode: result.po.vendor ? result.po.vendor.code : "",
+      hasInvoice: true,
+      invoiceId: result.invoice.id,
+      invoiceNumber: result.invoice.invoiceNumber,
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/hq/purchases/:id/confirm-payment-and-receive - Atomic payment, HQ inventory stock update, and invoice generation
+hqRouter.post("/purchases/:id/confirm-payment-and-receive", requireRole("SUPER_ADMIN", "HQ_USER", "BILLING", "BILLING_EXECUTIVE", "INVENTORY_EXECUTIVE", "INVENTORY"), async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const existing = await db.purchaseOrder.findUnique({
+      where: { id },
+      include: { vendor: true, invoice: true }
+    });
+    if (!existing || existing.isDeleted) {
+      res.status(404).json({ error: "Purchase Order not found." });
+      return;
+    }
+
+    const performedBy = req.user?.id || "unknown";
+
+    const result = await db.$transaction(async (tx) => {
+      // 1. Payment confirmation
+      const totalAmount = existing.totalAmount;
+      await tx.purchaseOrder.update({
+        where: { id },
+        data: {
+          paidAmount: totalAmount,
+          paidAt: existing.paidAt || new Date().toISOString(),
+          stage: "PAID"
+        }
+      });
+
+      // 2. Inventory update (only once per PO)
+      let parsedItems: Array<{ name: string; sku?: string; qty: number; unitPrice?: number; gstRate?: number; taxAmount?: number; total?: number }> = [];
+      try {
+        parsedItems = JSON.parse(existing.items);
+      } catch {
+        parsedItems = [];
+      }
+
+      if (!existing.receivedAt) {
+        for (const item of parsedItems) {
+          const qty = Number(item.qty) || 0;
+          if (qty <= 0) continue;
+
+          const existingItem = await tx.inventory.findFirst({
+            where: {
+              name: item.name,
+              isDeleted: false,
+              franchiseId: null // HQ inventory
+            }
+          });
+
+          let inventoryId = "";
+          let newStock = qty;
+          if (existingItem) {
+            inventoryId = existingItem.id;
+            newStock = existingItem.stock + qty;
+            await tx.inventory.update({
+              where: { id: existingItem.id },
+              data: {
+                stock: newStock,
+                cost: item.unitPrice ? Number(item.unitPrice) : existingItem.cost
+              }
+            });
+          } else {
+            inventoryId = generateUid("ITM");
+            newStock = qty;
+            await tx.inventory.create({
+              data: {
+                id: inventoryId,
+                name: item.name,
+                category: "Purchase Goods",
+                stock: qty,
+                unit: "Pcs",
+                reorder: 5,
+                cost: item.unitPrice ? Number(item.unitPrice) : 0,
+                supplier: existing.vendor?.name || "HQ Supplier",
+                location: "HQ Warehouse",
+                franchiseId: null
+              }
+            });
+          }
+
+          await tx.inventoryMovement.create({
+            data: {
+              itemId: inventoryId,
+              type: "PURCHASE_RECEIPT",
+              quantity: qty,
+              balance: newStock,
+              reference: existing.orderNumber,
+              performedBy,
+              franchiseId: null,
+            }
+          });
+        }
+
+        await tx.purchaseOrder.update({
+          where: { id },
+          data: {
+            receivedAt: new Date().toISOString()
+          }
+        });
+      }
+
+      // 3. Auto-generate Purchase Invoice if not exists
+      const invoiceNumber = existing.invoiceNumber || `INV-${existing.orderNumber}`;
+      let invoice = await tx.purchaseInvoice.findUnique({
+        where: { purchaseOrderId: id }
+      });
+
+      if (!invoice) {
+        invoice = await tx.purchaseInvoice.create({
+          data: {
+            id: generateUid("PINV"),
+            invoiceNumber,
+            invoiceDate: new Date(),
+            dueDate: new Date(),
+            purchaseOrderId: existing.id,
+            vendorId: existing.vendorId,
+            items: existing.items,
+            subtotal: existing.subtotal || existing.totalAmount,
+            tax: existing.taxAmount || 0,
+            discount: existing.discount || 0,
+            total: existing.totalAmount,
+            paymentTerms: "Immediate",
+            deliveryNotes: existing.deliveryInstructions || "",
+            notes: existing.notes || "",
+            status: "Paid",
+            createdBy: req.user?.username || req.user?.name || "Super Admin",
+          }
+        });
+
+        await tx.purchaseOrder.update({
+          where: { id },
+          data: {
+            invoiceNumber,
+            invoiceDate: new Date(),
+            stage: "PAID"
+          }
+        });
+      } else {
+        invoice = await tx.purchaseInvoice.update({
+          where: { id: invoice.id },
+          data: {
+            status: "Paid"
+          }
+        });
+      }
+
+      const updatedPo = await tx.purchaseOrder.findUnique({
+        where: { id },
+        include: { vendor: true, invoice: true }
+      });
+
+      return {
+        po: {
+          ...updatedPo,
+          vendorName: updatedPo?.vendor?.name || "Supplier",
+          vendorCode: updatedPo?.vendor?.code || "",
+          hasInvoice: true,
+          invoiceId: invoice.id,
+          invoiceNumber: invoice.invoiceNumber,
+        },
+        invoice
+      };
+    });
+
+    await logAudit({
+      module: "Purchase",
+      recordId: id,
+      action: "CONFIRM_PAYMENT_AND_RECEIVE",
+      userId: req.user?.id || "unknown",
+      branchId: null,
+      oldValue: existing,
+      newValue: result.po,
+    });
+
+    res.json(result);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
@@ -1905,6 +2579,11 @@ hqRouter.delete("/purchases/:id", requireRole("SUPER_ADMIN", "HQ_USER"), async (
     const existing = await db.purchaseOrder.findUnique({ where: { id } });
     if (!existing) {
       res.status(404).json({ error: "Purchase Order not found." });
+      return;
+    }
+
+    if ((req.user?.role === "INVENTORY_EXECUTIVE" || req.user?.role === "INVENTORY") && existing.stage !== "PO_CREATED") {
+      res.status(403).json({ error: "Purchase Orders can only be edited while in PO_CREATED state." });
       return;
     }
     const deleted = await db.purchaseOrder.update({
@@ -1932,10 +2611,10 @@ hqRouter.delete("/purchases/:id", requireRole("SUPER_ADMIN", "HQ_USER"), async (
 });
 
 // PUT /api/hq/purchases/:id - Edit / Update purchase order
-hqRouter.put("/purchases/:id", requireRole("SUPER_ADMIN", "HQ_USER"), async (req: Request, res: Response): Promise<void> => {
+hqRouter.put("/purchases/:id", requireRole("SUPER_ADMIN", "HQ_USER", "INVENTORY_EXECUTIVE", "INVENTORY"), async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const id = req.params.id as string;
-    const { orderNumber, vendorId, items, totalAmount, notes } = req.body;
+    const { orderNumber, vendorId, items, totalAmount, notes, subtotal, taxAmount, discount, deliveryInstructions } = req.body;
 
     const existing = await db.purchaseOrder.findUnique({ where: { id } });
     if (!existing) {
@@ -1946,21 +2625,335 @@ hqRouter.put("/purchases/:id", requireRole("SUPER_ADMIN", "HQ_USER"), async (req
     const updateData: any = {};
     if (orderNumber) updateData.orderNumber = orderNumber;
     if (notes !== undefined) updateData.notes = notes;
+    if (deliveryInstructions !== undefined) updateData.deliveryInstructions = deliveryInstructions;
+    if (subtotal !== undefined) updateData.subtotal = Number(subtotal) || 0;
+    if (taxAmount !== undefined) updateData.taxAmount = Number(taxAmount) || 0;
+    if (discount !== undefined) updateData.discount = Number(discount) || 0;
     if (totalAmount !== undefined) updateData.totalAmount = Number(totalAmount) || 0;
     if (items) updateData.items = typeof items === "string" ? items : JSON.stringify(items);
 
     if (vendorId) {
       const vendor = await db.vendor.findUnique({ where: { id: vendorId } });
-      if (vendor) {
-        updateData.vendorId = vendorId;
-        updateData.vendorName = vendor.name;
+      if (!vendor || vendor.isDeleted) {
+        res.status(404).json({ error: "Vendor not found." });
+        return;
       }
+      if (vendor.status?.toUpperCase() === "INACTIVE" && existing.vendorId !== vendorId) {
+        res.status(400).json({ error: "Cannot assign an inactive vendor to purchase order." });
+        return;
+      }
+      updateData.vendorId = vendorId;
+      updateData.vendorName = vendor.name;
     }
 
     const updated = await db.purchaseOrder.update({
       where: { id },
       data: updateData
     });
+    res.json(updated);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// PURCHASE INVOICES (Billing & Purchase Integration)
+// ═══════════════════════════════════════════════════════════════
+
+// GET /api/hq/purchase-invoices - List all purchase invoices
+hqRouter.get("/purchase-invoices", requireRole("SUPER_ADMIN", "HQ_USER", "BILLING", "BILLING_EXECUTIVE", "INVENTORY_EXECUTIVE", "INVENTORY"), async (req: Request, res: Response): Promise<void> => {
+  try {
+    const search = (req.query.search as string | undefined)?.trim();
+    const status = (req.query.status as string | undefined)?.trim();
+
+    const where: any = { isDeleted: false };
+    if (status && status !== "ALL") {
+      where.status = { equals: status, mode: "insensitive" };
+    }
+    if (search) {
+      where.OR = [
+        { invoiceNumber: { contains: search, mode: "insensitive" } },
+        { vendor: { name: { contains: search, mode: "insensitive" } } },
+        { vendor: { code: { contains: search, mode: "insensitive" } } },
+        { purchaseOrder: { orderNumber: { contains: search, mode: "insensitive" } } },
+      ];
+    }
+
+    const invoices = await db.purchaseInvoice.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      include: { vendor: true, purchaseOrder: true }
+    });
+
+    res.json(invoices);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/hq/purchase-invoices/:id - Get purchase invoice by ID or purchaseOrderId or invoiceNumber
+hqRouter.get("/purchase-invoices/:id", requireRole("SUPER_ADMIN", "HQ_USER", "BILLING", "BILLING_EXECUTIVE", "INVENTORY_EXECUTIVE", "INVENTORY"), async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const invoice = await db.purchaseInvoice.findFirst({
+      where: {
+        OR: [{ id }, { purchaseOrderId: id }, { invoiceNumber: id }],
+        isDeleted: false
+      },
+      include: { vendor: true, purchaseOrder: true }
+    });
+
+    if (!invoice) {
+      res.status(404).json({ error: "Purchase Invoice not found." });
+      return;
+    }
+
+    res.json(invoice);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/hq/purchase-invoices - Create Purchase Invoice from Purchase Order
+hqRouter.post("/purchase-invoices", requireRole("SUPER_ADMIN", "HQ_USER", "BILLING", "BILLING_EXECUTIVE", "INVENTORY_EXECUTIVE", "INVENTORY"), async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const {
+      purchaseOrderId,
+      invoiceNumber: customInvoiceNum,
+      invoiceDate,
+      dueDate,
+      paymentTerms,
+      deliveryNotes,
+      notes,
+    } = req.body;
+
+    if (!purchaseOrderId) {
+      res.status(400).json({ error: "purchaseOrderId is required." });
+      return;
+    }
+
+    // 1. Fetch authoritative PO data
+    const po = await db.purchaseOrder.findFirst({
+      where: { id: purchaseOrderId, isDeleted: false },
+      include: { vendor: true, invoice: true }
+    });
+
+    if (!po) {
+      res.status(404).json({ error: "Purchase Order not found." });
+      return;
+    }
+
+    // 2. Prevent duplicate invoices
+    if (po.invoice) {
+      res.status(409).json({
+        error: `Purchase Invoice (${po.invoice.invoiceNumber}) already exists for Purchase Order ${po.orderNumber}.`,
+        invoiceId: po.invoice.id,
+        invoiceNumber: po.invoice.invoiceNumber,
+        invoice: po.invoice
+      });
+      return;
+    }
+
+    // 3. Confirm vendor exists and not deleted
+    if (!po.vendor || po.vendor.isDeleted) {
+      res.status(400).json({ error: "Associated vendor not found or has been deleted." });
+      return;
+    }
+
+    // 4. Generate or validate invoice number
+    let finalInvoiceNumber = customInvoiceNum ? String(customInvoiceNum).trim() : "";
+    if (finalInvoiceNumber) {
+      const existingInv = await db.purchaseInvoice.findFirst({
+        where: { invoiceNumber: { equals: finalInvoiceNumber, mode: "insensitive" }, isDeleted: false }
+      });
+      if (existingInv) {
+        res.status(400).json({ error: `Invoice number "${finalInvoiceNumber}" is already in use.` });
+        return;
+      }
+    } else {
+      const year = new Date().getFullYear();
+      const count = await db.purchaseInvoice.count();
+      finalInvoiceNumber = `PINV-${year}-${String(count + 1001).padStart(4, "0")}`;
+    }
+
+    // 5. Compute authoritative amounts from PO items
+    let parsedItems: any[] = [];
+    try {
+      parsedItems = typeof po.items === "string" ? JSON.parse(po.items) : po.items;
+      if (!Array.isArray(parsedItems)) parsedItems = [];
+    } catch {
+      parsedItems = [];
+    }
+
+    let subtotal = po.subtotal ?? 0;
+    let discount = po.discount ?? 0;
+    let tax = po.taxAmount ?? 0;
+    let total = po.totalAmount;
+
+    if (subtotal === 0 && parsedItems.length > 0) {
+      subtotal = parsedItems.reduce((acc: number, it: any) => acc + (Number(it.qty || 1) * Number(it.unitPrice || 0)), 0);
+      tax = Math.max(0, total - subtotal + discount);
+    }
+
+    const initialStatus = po.paidAmount >= total && total > 0 ? "Paid" : po.paidAmount > 0 ? "Partially Paid" : "Unpaid";
+
+    // 6. Create in transaction
+    const result = await db.$transaction(async (tx) => {
+      const createdInvoice = await tx.purchaseInvoice.create({
+        data: {
+          invoiceNumber: finalInvoiceNumber,
+          invoiceDate: invoiceDate ? new Date(invoiceDate) : new Date(),
+          dueDate: dueDate ? new Date(dueDate) : null,
+          purchaseOrderId: po.id,
+          vendorId: po.vendorId,
+          items: po.items,
+          subtotal,
+          tax,
+          discount,
+          total,
+          paymentTerms: paymentTerms || null,
+          deliveryNotes: deliveryNotes || po.deliveryInstructions || null,
+          notes: notes || po.notes || null,
+          status: initialStatus,
+          createdBy: req.user?.username || req.user?.id || "Super Admin",
+        },
+        include: { vendor: true, purchaseOrder: true }
+      });
+
+      // Update PO status to INVOICED
+      await tx.purchaseOrder.update({
+        where: { id: po.id },
+        data: {
+          invoiceNumber: finalInvoiceNumber,
+          invoiceDate: createdInvoice.invoiceDate,
+          stage: "INVOICED",
+        }
+      });
+
+      return createdInvoice;
+    });
+
+    await logAudit({
+      module: "PurchaseInvoice",
+      recordId: result.id,
+      action: "CREATE",
+      userId: req.user?.id || "unknown",
+      branchId: null,
+      oldValue: null,
+      newValue: result,
+    });
+
+    res.status(201).json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// PUT /api/hq/purchase-invoices/:id - Edit allowed invoice-specific fields
+hqRouter.put("/purchase-invoices/:id", requireRole("SUPER_ADMIN", "HQ_USER", "BILLING", "BILLING_EXECUTIVE"), async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const existing = await db.purchaseInvoice.findFirst({
+      where: { id, isDeleted: false },
+      include: { purchaseOrder: true }
+    });
+
+    if (!existing) {
+      res.status(404).json({ error: "Purchase Invoice not found." });
+      return;
+    }
+
+    const {
+      dueDate,
+      paymentTerms,
+      deliveryNotes,
+      notes,
+      status
+    } = req.body;
+
+    const updateData: any = {};
+    if (dueDate !== undefined) updateData.dueDate = dueDate ? new Date(dueDate) : null;
+    if (paymentTerms !== undefined) updateData.paymentTerms = paymentTerms;
+    if (deliveryNotes !== undefined) updateData.deliveryNotes = deliveryNotes;
+    if (notes !== undefined) updateData.notes = notes;
+    if (status !== undefined) updateData.status = status;
+
+    const updated = await db.purchaseInvoice.update({
+      where: { id },
+      data: updateData,
+      include: { vendor: true, purchaseOrder: true }
+    });
+
+    await logAudit({
+      module: "PurchaseInvoice",
+      recordId: id,
+      action: "UPDATE",
+      userId: req.user?.id || "unknown",
+      branchId: null,
+      oldValue: existing,
+      newValue: updated,
+    });
+
+    res.json(updated);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/hq/purchase-invoices/:id/pay - Record payment on purchase invoice
+hqRouter.post("/purchase-invoices/:id/pay", requireRole("SUPER_ADMIN", "HQ_USER", "BILLING", "BILLING_EXECUTIVE"), async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const invoice = await db.purchaseInvoice.findFirst({
+      where: { id, isDeleted: false },
+      include: { purchaseOrder: true }
+    });
+
+    if (!invoice) {
+      res.status(404).json({ error: "Purchase Invoice not found." });
+      return;
+    }
+
+    const paidAmount = Number(req.body.paidAmount) || 0;
+    if (paidAmount <= 0) {
+      res.status(400).json({ error: "paidAmount must be greater than 0." });
+      return;
+    }
+
+    const currentPaid = invoice.purchaseOrder.paidAmount || 0;
+    const newPaidAmount = currentPaid + paidAmount;
+    const isFullyPaid = newPaidAmount >= invoice.total;
+    const invoiceStatus = isFullyPaid ? "Paid" : "Partially Paid";
+
+    const updated = await db.$transaction(async (tx) => {
+      const inv = await tx.purchaseInvoice.update({
+        where: { id },
+        data: { status: invoiceStatus },
+        include: { vendor: true, purchaseOrder: true }
+      });
+
+      await tx.purchaseOrder.update({
+        where: { id: invoice.purchaseOrderId },
+        data: {
+          paidAmount: newPaidAmount,
+          stage: isFullyPaid ? "PAID" : "INVOICED",
+          paidAt: isFullyPaid ? new Date() : undefined,
+        }
+      });
+
+      return inv;
+    });
+
+    await logAudit({
+      module: "PurchaseInvoice",
+      recordId: id,
+      action: "PAY",
+      userId: req.user?.id || "unknown",
+      branchId: null,
+      oldValue: invoice,
+      newValue: updated,
+    });
+
     res.json(updated);
   } catch (error: any) {
     res.status(500).json({ error: error.message });

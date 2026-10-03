@@ -29,8 +29,8 @@ export class ReportController {
   // of reimplementing the SUPER_ADMIN/HQ_USER-unrestricted check locally, so
   // this can never drift from what every other module already enforces.
   private resolveScope(req: AuthRequest): { franchiseId?: string } {
-    const scope = resolveDataScope({ role: req.user?.role, franchiseId: req.user?.franchiseId ?? null });
-    if (scope.unrestricted) {
+    const scope = resolveDataScope(req.user);
+    if (scope.unrestricted || scope.isHQStaff) {
       const qf = req.query.franchiseId ? String(req.query.franchiseId) : undefined;
       return { franchiseId: (qf === 'all' || qf === 'All') ? undefined : qf };
     }
@@ -725,6 +725,30 @@ export class ReportController {
   };
 
   // ─── Inventory Reports (§16.10) ──────────────────────────────────────────────
+  getPurchaseOrderSummaryReport = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const { from, to } = req.query as Record<string, string>;
+      const data = await this.service.getPurchaseOrderSummaryReport(from, to);
+      res.json(data);
+    } catch (error) { next(error); }
+  };
+
+  getGoodsReceivedReport = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const { from, to } = req.query as Record<string, string>;
+      const data = await this.service.getGoodsReceivedReport(from, to);
+      res.json(data);
+    } catch (error) { next(error); }
+  };
+
+  getPurchaseSpendingReport = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const { from, to } = req.query as Record<string, string>;
+      const data = await this.service.getPurchaseSpendingReport(from, to);
+      res.json(data);
+    } catch (error) { next(error); }
+  };
+
   getProductRegisterReport = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const { franchiseId } = this.resolveScope(req);

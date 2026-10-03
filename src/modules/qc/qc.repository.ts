@@ -4,8 +4,21 @@ import type { DataScope } from '../../shared/scope/dataScope.js';
 import { scopeWhere } from '../../shared/scope/dataScope.js';
 import { QcTemplateVersionRepository } from './qc-template-version.repository.js';
 
-// A job joins the queue as soon as the technician marks it Completed.
-const QC_QUEUE_STATUSES = ['Completed', 'Work Completed', 'Waiting for Quality Check', 'Inspecting', 'Rework Required'];
+const QC_QUEUE_STATUSES = [
+  'Completed',
+  'Work Completed',
+  'Waiting for Quality Check',
+  'Waiting QC',
+  'QC Pending',
+  'Review for QC',
+  'Inspecting',
+  'In QC',
+  'Rework Required',
+  'Rework',
+  'QC Failed',
+  'Ready For Billing',
+  'QC Passed',
+];
 
 // Phase 4B-2D-A — one item of the checklist DEFINITION frozen onto
 // QCInspection.checklistDefinition at Start: id/label/category/order/
@@ -111,6 +124,26 @@ export class QcRepository {
     const where: any = { isDeleted: false, status: { in: QC_QUEUE_STATUSES } };
     if (franchiseId !== null) where.franchiseId = franchiseId;
     return db.job.findMany({ where, orderBy: { updatedAt: 'asc' } });
+  }
+
+  // ─── QC Team (Inspectors) ────────────────────────────────────────────────────────
+  async getTeam(franchiseId: string | null) {
+    const where: any = {
+      isDeleted: false,
+      role: { in: ['QUALITY_INSPECTOR', 'QC_INSPECTOR', 'QUALITY_ASSURANCE', 'QC'] },
+    };
+    if (franchiseId !== null) {
+      where.franchiseId = franchiseId;
+    }
+    const list = await db.employee.findMany({
+      where,
+      include: { franchise: { select: { id: true, name: true, city: true } } },
+      orderBy: { name: 'asc' },
+    });
+    return list.map((emp) => {
+      const { password, ...rest } = emp;
+      return rest;
+    });
   }
 
   // ─── QC Inspections (attempts) ────────────────────────────────────────────

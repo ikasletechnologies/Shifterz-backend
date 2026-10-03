@@ -5,16 +5,21 @@ import { generateUid } from '../../../shared/utils/idGenerator.js';
 import { db } from '../../../lib/db.js';
 import bcrypt from 'bcrypt';
 import { UnauthorizedError } from '../../../shared/errors/UnauthorizedError.js';
+import { ForbiddenError } from '../../../shared/errors/ForbiddenError.js';
 import { ApiError } from '../../../shared/errors/ApiError.js';
 import { NotFoundError } from '../../../shared/errors/NotFoundError.js';
 import { computeStaffPerformance } from '../../../shared/services/staffPerformance.service.js';
 import { logAudit } from '../../../shared/services/audit.service.js';
 
+export const isQualityInspectorRole = (role?: string): boolean => {
+  const norm = (role || '').toUpperCase().replace(/[\s_]+/g, '_');
+  return ['QUALITY_INSPECTOR', 'QUALITY_INSPECTION', 'QC_INSPECTOR', 'QC', 'QUALITY_ASSURANCE'].includes(norm);
+};
+
 const FRANCHISE_ASSIGNABLE_ROLES = [
   "RECEPTION_EXECUTIVE",
   "SERVICE_ADVISOR",
   "TECHNICIAN",
-  "QUALITY_INSPECTOR",
   "BILLING_EXECUTIVE",
   "INVENTORY_EXECUTIVE",
 ];
@@ -33,12 +38,16 @@ export interface StaffManagementQuery {
 export class EmployeeService {
   constructor(private readonly repository: EmployeeRepository = new EmployeeRepository()) { }
 
-  async getAllEmployees(userRole: string, userFranchiseId?: string) {
+  async getAllEmployees(userRole: string, userFranchiseId?: string, franchiseOnly: boolean = false) {
     const role = (userRole || "").toUpperCase().replace(/[\s_]+/g, "_");
     const isHQ = role === "SUPER_ADMIN" || role === "HQ_USER";
     let tenantFilter: any = { isDeleted: false };
     if (!isHQ) {
       tenantFilter.franchiseId = userFranchiseId || "__NO_FRANCHISE__";
+    } else if (franchiseOnly) {
+      tenantFilter.franchiseId = { not: null };
+      tenantFilter.hqControlled = false;
+      tenantFilter.role = { notIn: ["SUPER_ADMIN", "HQ_USER"] };
     }
 
     const list = await this.repository.findAllEmployees(tenantFilter);
@@ -150,6 +159,13 @@ export class EmployeeService {
     if (data.role && String(data.role).trim().toUpperCase() === "FRANCHISE_ADMIN" && !allowFranchiseAdmin) {
       throw new ApiError(400, "The FRANCHISE_ADMIN role cannot be assigned to an employee.");
     }
+
+    const requestedRole = (data.role || (isTechnicianRoute ? "TECHNICIAN" : "EMPLOYEE")).toUpperCase().replace(/[\s_]+/g, "_");
+
+    // Only Super Admin can add or create Quality Inspectors
+    if (isQualityInspectorRole(requestedRole) && userRole !== "SUPER_ADMIN") {
+      throw new ForbiddenError("Only a Super Administrator can add or manage Quality Inspectors.");
+    }
     let franchiseId: string | null = data.franchiseId || null;
 
     if (!isTechnicianRoute) {
@@ -157,12 +173,12 @@ export class EmployeeService {
       const isFranchiseAdmin = userRole === "FRANCHISE_ADMIN";
 
       if (!isHq && !isFranchiseAdmin) {
-        throw new UnauthorizedError("Only HQ or a Franchise Admin can create employees");
+        throw new ForbiddenError("Only Super Admin or authorized management can create employees");
       }
 
       if (isFranchiseAdmin) {
         if (!userFranchiseId) {
-          throw new UnauthorizedError("Franchise admin account is not linked to a franchise");
+          throw new ForbiddenError("Franchise admin account is not linked to a franchise");
         }
         franchiseId = userFranchiseId;
         const requestedRole = data.role || "TECHNICIAN";
@@ -301,6 +317,19 @@ export class EmployeeService {
     const existing = await db.employee.findUnique({ where: { id } });
     if (!existing) {
       throw new NotFoundError("Employee not found");
+    }
+
+    const existingRoleNorm = (existing.role || "").toUpperCase().replace(/[\s_]+/g, "_");
+    const newRoleNorm = data.role ? String(data.role).toUpperCase().replace(/[\s_]+/g, "_") : "";
+    const isTargetQC = isQualityInspectorRole(existingRoleNorm) || (data.role && isQualityInspectorRole(newRoleNorm));
+
+    // Only Super Admin can edit, reassign, or change a Quality Inspector
+    if (isTargetQC && userRole !== "SUPER_ADMIN") {
+      throw new ForbiddenError("Only a Super Administrator can add or manage Quality Inspectors.");
+    }
+
+    if (userRole !== "SUPER_ADMIN" && userRole !== "HQ_USER" && userRole !== "FRANCHISE_ADMIN") {
+      throw new ForbiddenError("You do not have permission to modify employee accounts.");
     }
 
     // Phase 0.1 — confirmed vulnerability fix. Previously nothing checked
@@ -472,6 +501,11 @@ export class EmployeeService {
     }
     if (existing.role === "SUPER_ADMIN") {
       throw new ApiError(400, "Super Administrator account cannot be deleted.");
+    }
+
+    // Only Super Admin can delete or deactivate Quality Inspectors
+    if (isQualityInspectorRole(existing.role) && userRole !== "SUPER_ADMIN") {
+      throw new ForbiddenError("Only a Super Administrator can delete or deactivate Quality Inspectors.");
     }
 
     const isHq = userRole === "SUPER_ADMIN" || userRole === "HQ_USER";

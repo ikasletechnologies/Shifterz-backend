@@ -305,7 +305,7 @@ export class JobCardRepository {
   }
 
   async getWithDetails(id: string, scopeWhere: FranchiseScopeWhere = {}) {
-    return db.job.findFirst({
+    const job = await db.job.findFirst({
       where: { id, isDeleted: false, ...scopeWhere },
       include: {
         additionalWorks: { where: { isDeleted: false }, orderBy: { createdAt: 'desc' } },
@@ -314,6 +314,77 @@ export class JobCardRepository {
         materialConsumptions: { where: { isDeleted: false }, orderBy: { createdAt: 'desc' } },
       },
     });
+    if (!job) return job;
+
+    // Attach the linked vehicle check-in (CarIn) record for inspection data:
+    // photos (front/rear/left/right/damages) and damage findings
+    // (scratches, dents, brokenParts, glassDamage, wheelDamage, etc.).
+    let carIn: any = null;
+    if ((job as any).carInId) {
+      carIn = await db.carIn.findFirst({
+        where: { id: (job as any).carInId, isDeleted: false },
+        select: {
+          id: true,
+          vehicle: true,
+          inTime: true,
+          odometer: true,
+          fuelLevel: true,
+          scratches: true,
+          dents: true,
+          brokenParts: true,
+          glassDamage: true,
+          wheelDamage: true,
+          interiorCondition: true,
+          remarks: true,
+          notes: true,
+          photoFront: true,
+          photoRear: true,
+          photoLeft: true,
+          photoRight: true,
+          photoDashboard: true,
+          photoOdometer: true,
+          photoDamages: true,
+          receivedByName: true,
+          status: true,
+        },
+      });
+    }
+    if (!carIn) {
+      // Fallback: look up by vehicle number in case carInId was not set
+      carIn = await db.carIn.findFirst({
+        where: {
+          vehicle: { equals: (job as any).vehicle, mode: 'insensitive' },
+          isDeleted: false,
+        },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          vehicle: true,
+          inTime: true,
+          odometer: true,
+          fuelLevel: true,
+          scratches: true,
+          dents: true,
+          brokenParts: true,
+          glassDamage: true,
+          wheelDamage: true,
+          interiorCondition: true,
+          remarks: true,
+          notes: true,
+          photoFront: true,
+          photoRear: true,
+          photoLeft: true,
+          photoRight: true,
+          photoDashboard: true,
+          photoOdometer: true,
+          photoDamages: true,
+          receivedByName: true,
+          status: true,
+        },
+      });
+    }
+
+    return { ...job, inspectionCarIn: carIn };
   }
 
   // ─── Work Stage (10.5) ────────────────────────────────────────────────────

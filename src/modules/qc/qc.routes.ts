@@ -19,10 +19,11 @@ const controller = new QcController();
 const versionController = new QcTemplateVersionController();
 
 qcRouter.use(authenticate);
-qcRouter.use(requirePermission('jobs'));
+qcRouter.use(requirePermission('qc', 'jobs'));
 
 // ─── QC Queue ───────────────────────────────────────────────────────────────────
 qcRouter.get('/queue', controller.getQueue);
+qcRouter.get('/team',  controller.getTeam);
 
 // ─── Checklist Template (12.4, HQ-configurable) ──────────────────────────────────
 // Read/use stays ungated — D-18 explicitly allows QUALITY_INSPECTOR (and

@@ -51,6 +51,28 @@ async function main() {
     data: { id: "HQ-001", name: "Super Admin", username: "superadmin", password: defaultPassword, role: "SUPER_ADMIN" },
   });
 
+  // Seed default role permissions
+  const DEFAULT_ROLES: Record<string, string[]> = {
+    SUPER_ADMIN: ["dashboard", "carin", "jobs", "vehicle-inspection", "qc", "outpass", "leads", "customers", "billing", "payments", "inventory", "reports", "employees", "attendance", "settings", "roles"],
+    HQ_USER: ["dashboard", "carin", "jobs", "vehicle-inspection", "qc", "outpass", "leads", "customers", "billing", "payments", "inventory", "reports", "employees", "attendance", "settings"],
+    FRANCHISE_ADMIN: ["dashboard", "carin", "jobs", "vehicle-inspection", "qc", "outpass", "leads", "customers", "billing", "payments", "inventory", "reports", "employees", "attendance"],
+    BRANCH_MANAGER: ["dashboard", "carin", "jobs", "vehicle-inspection", "qc", "outpass", "leads", "customers", "billing", "payments", "inventory", "reports", "attendance"],
+    RECEPTION_EXECUTIVE: ["dashboard", "carin", "outpass", "customers", "leads", "attendance"],
+    SERVICE_ADVISOR: ["dashboard", "carin", "jobs"],
+    TECHNICIAN: ["dashboard", "jobs", "attendance"],
+    QUALITY_INSPECTOR: ["dashboard", "vehicle-inspection", "qc"],
+    BILLING_EXECUTIVE: ["dashboard", "billing", "payments", "reports"],
+    INVENTORY_EXECUTIVE: ["dashboard", "inventory", "reports"],
+  };
+
+  for (const [role, permissions] of Object.entries(DEFAULT_ROLES)) {
+    await prisma.rolePermission.upsert({
+      where: { role },
+      update: { permissions },
+      create: { role, permissions },
+    });
+  }
+
   console.log("Database seeded successfully!");
 }
 

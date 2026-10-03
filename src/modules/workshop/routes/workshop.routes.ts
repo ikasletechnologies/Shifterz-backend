@@ -15,7 +15,7 @@ workshopRouter.post(
 );
 
 workshopRouter.use(authenticate);
-workshopRouter.use(requirePermission('jobs'));
+workshopRouter.use(requirePermission('jobs', 'workshop'));
 
 workshopRouter.get('/dashboard', controller.getDashboard);
 // REP-01C (D-REP7) — gated with the same, already-locked D-21 action as

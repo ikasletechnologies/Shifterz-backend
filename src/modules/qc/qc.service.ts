@@ -27,7 +27,7 @@ const normalizeRole = (role?: string) => (role || '').toUpperCase().replace(/[\s
 // comment on QC_ROLES for the same rationale).
 // "Completed"/"Work Completed" are included so a job enters QC as soon as the
 // technician finishes — there is no separate "Send to QC" step.
-const QC_STARTABLE_JOB_STATUSES = ['Waiting for Quality Check', 'Rework Required', 'Completed', 'Work Completed'];
+const QC_STARTABLE_JOB_STATUSES = ['Waiting for Quality Check', 'Waiting QC', 'QC Pending', 'Rework Required', 'Completed', 'Work Completed'];
 
 type ActingUser = { id?: string; name?: string; role?: string; franchiseId?: string | null; hqControlled?: boolean };
 
@@ -95,6 +95,11 @@ export class QcService {
 
   async getQueue(franchiseId: string | null) {
     return this.repository.getQueue(franchiseId);
+  }
+
+  // ─── QC Team ─────────────────────────────────────────────────────────────
+  async getTeam(franchiseId: string | null) {
+    return this.repository.getTeam(franchiseId);
   }
 
   // ─── QC Assignment (12.3) ──────────────────────────────────────────────────

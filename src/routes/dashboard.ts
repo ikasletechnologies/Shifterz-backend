@@ -31,7 +31,8 @@ const DASHBOARD_SECTIONS_BY_ROLE: Record<string, string[]> = {
   HQ_USER: ["crm", "workshop", "financial", "hr", "inventory"],
   FRANCHISE_ADMIN: ["crm", "workshop", "financial", "hr", "inventory"],
   BRANCH_MANAGER: ["crm", "workshop", "financial", "hr", "inventory"],
-  RECEPTION_EXECUTIVE: ["crm", "workshop"],
+  RECEPTION_EXECUTIVE: ["crm", "workshop", "hr"],
+  RECEPTIONIST: ["crm", "workshop", "hr"],
   SERVICE_ADVISOR: ["crm", "workshop"],
   TECHNICIAN: ["workshop"],
   QUALITY_INSPECTOR: ["workshop"],
@@ -40,8 +41,9 @@ const DASHBOARD_SECTIONS_BY_ROLE: Record<string, string[]> = {
 };
 
 export function allowedDashboardSections(role?: string): string[] {
-  const baseRole = (role || "").split("|")[0] || "";
-  return DASHBOARD_SECTIONS_BY_ROLE[baseRole] ?? [];
+  const baseRole = ((role || "").split("|")[0] ?? "").trim().toUpperCase().replace(/[\s_]+/g, "_");
+  const normalized = baseRole === "RECEPTIONIST" ? "RECEPTION_EXECUTIVE" : baseRole;
+  return DASHBOARD_SECTIONS_BY_ROLE[normalized] ?? [];
 }
 
 // REP-01C (D-REP4) — endpoint C. Classified SPECIALIZED, not a
@@ -76,6 +78,10 @@ dashboardRouter.get("/", async (req: Request, res: Response) => {
       if (qf && qf !== "all" && qf !== "All") {
         tenantFilter.franchiseId = qf;
       }
+    } else if (user?.hqControlled === true && !user?.franchiseId) {
+      // HQ-controlled employees without a franchise assignment operate at HQ level.
+      // They should see HQ-level data (records with franchiseId === null) rather than nothing.
+      tenantFilter = { franchiseId: null };
     } else {
       tenantFilter = scopeWhere(scope);
     }

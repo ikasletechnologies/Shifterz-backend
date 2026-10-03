@@ -94,6 +94,48 @@ export class JobCardService {
     return emp;
   }
 
+  private async validateVehicleInspection(job: { id?: string; vehicle?: string; carInId?: string | null }): Promise<string | null> {
+    let carIn = null;
+    if (job.carInId) {
+      carIn = await db.carIn.findFirst({ where: { id: job.carInId, isDeleted: false } });
+    }
+    if (!carIn && job.id) {
+      carIn = await db.carIn.findFirst({ where: { jobCardId: job.id, isDeleted: false } });
+    }
+    if (!carIn && job.vehicle) {
+      const normVeh = job.vehicle.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+      if (normVeh) {
+        carIn = await db.carIn.findFirst({
+          where: {
+            vehicle: { equals: normVeh, mode: 'insensitive' },
+            isDeleted: false,
+            status: { notIn: ['Delivered', 'Out'] }
+          },
+          orderBy: { createdAt: 'desc' }
+        });
+      }
+    }
+
+    if (carIn) {
+      const hasInspectionDetails = Boolean(
+        carIn.scratches || carIn.dents || carIn.interiorCondition || carIn.brokenParts || carIn.glassDamage || carIn.wheelDamage || carIn.remarks || carIn.fuelLevel
+      );
+      const hasPhoto = Boolean(
+        carIn.photoFront || carIn.photoRear || carIn.photoLeft || carIn.photoRight || carIn.photoDashboard || carIn.photoOdometer || (carIn.photoDamages && carIn.photoDamages.length > 0)
+      );
+
+      if (!hasInspectionDetails || !hasPhoto) {
+        throw new ValidationError(
+          'Vehicle inspection must be completed before assigning a technician.'
+        );
+      }
+
+      return carIn.id;
+    }
+
+    return null;
+  }
+
   // Estimate rule (Option B — Estimate is optional):
   // The db.estimate model is created manually by service advisors; it is NOT auto-generated
   // from the CarIn/check-in flow. Many jobs will legitimately have NO estimate (e.g., standard
@@ -153,7 +195,16 @@ export class JobCardService {
 
   async createJob(data: CreateJobCardDTO, user?: ScopeActor & { id?: string; name?: string }) {
     const scope = resolveDataScope(user);
-    const franchiseId = scope.unrestricted ? null : scope.franchiseId;
+    let carIn = null;
+    if (data.carInId) {
+      carIn = await db.carIn.findFirst({
+        where: { id: data.carInId, isDeleted: false }
+      });
+    }
+    const targetFranchiseId = (data as any).franchiseId ?? carIn?.franchiseId ?? null;
+    const franchiseId = scope.unrestricted
+      ? targetFranchiseId
+      : (scope.franchiseId || (scope.isHQStaff ? null : "__NO_FRANCHISE__"));
 
     // DB-level 1-to-1 check for carInId
     if (data.carInId) {
@@ -179,7 +230,12 @@ export class JobCardService {
     let techId = data.technicianId || null;
     let techName = data.technician || null;
 
-    if (techId || techName) {
+    const isAssigningTech = Boolean(
+      techId || (techName && techName.trim() !== '' && techName.trim().toLowerCase() !== 'unassigned' && techName.trim().toLowerCase() !== 'none')
+    );
+
+    if (isAssigningTech) {
+      await this.validateVehicleInspection({ vehicle: data.vehicle, carInId: data.carInId });
       const emp = await this.validateTechnician({ id: techId || undefined, name: techName || undefined }, franchiseId);
       if (emp) {
         techId = emp.id;
@@ -281,6 +337,15 @@ export class JobCardService {
 
     const scope = resolveDataScope(user);
     const franchiseId = scope.unrestricted ? null : scope.franchiseId;
+
+    const isAssigningTechnician = Boolean(
+      (data.technicianId !== undefined && data.technicianId !== null && data.technicianId !== '') ||
+      (data.technician !== undefined && data.technician !== null && data.technician.trim() !== '' && data.technician.trim().toLowerCase() !== 'unassigned' && data.technician.trim().toLowerCase() !== 'none')
+    );
+
+    if (isAssigningTechnician) {
+      await this.validateVehicleInspection(job);
+    }
 
     if (isAssigneeChange && (data.technicianId || data.technician)) {
       const emp = await this.validateTechnician({ id: data.technicianId, name: data.technician }, franchiseId);
@@ -732,14 +797,21 @@ export class JobCardService {
     const job = await this.getScopedJob(jobId, user);
 
     const scope = resolveDataScope(user);
-    const item = await db.inventory.findFirst({ where: { id: data.itemId, ...scopeWhere(scope) } });
-    if (!item) throw new NotFoundError("Inventory item not found");
+    const item = await db.inventory.findFirst({
+      where: {
+        OR: [
+          { id: data.itemId },
+          { name: { equals: data.itemId, mode: 'insensitive' } },
+        ],
+        ...scopeWhere(scope),
+      },
+    });
 
     const record = await this.repository.createMaterialConsumption(jobId, {
-      itemId: item.id,
-      itemName: item.name,
+      itemId: item ? item.id : data.itemId,
+      itemName: item ? item.name : data.itemId,
       quantity: data.quantity,
-      unit: data.unit || item.unit,
+      unit: data.unit || (item ? item.unit : null),
       recordedById: user?.id || null,
       recordedBy: user?.name || null,
       franchiseId: user?.franchiseId || job.franchiseId,
@@ -749,7 +821,7 @@ export class JobCardService {
       franchiseId: job.franchiseId,
       jobId,
       vehicle: job.vehicle,
-      itemName: item.name,
+      itemName: item ? item.name : data.itemId,
       quantity: data.quantity,
     }).catch(console.error);
 

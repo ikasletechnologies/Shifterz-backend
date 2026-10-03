@@ -656,7 +656,7 @@ export class CustomerService {
         where: { referringCustomerId: id, isDeleted: false }
       }),
       db.job.findFirst({
-        where: { phone: customer.phone, isDeleted: false },
+        where: { customer: customer.name, isDeleted: false },
         orderBy: { createdAt: 'desc' }
       }),
       db.invoice.findFirst({

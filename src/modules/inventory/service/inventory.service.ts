@@ -26,6 +26,9 @@ export class InventoryService {
     if (scope.unrestricted) {
       return this.repository.findAll({ isDeleted: false });
     }
+    if (scope.isHQStaff) {
+      return this.repository.findAll({ isDeleted: false, franchiseId: null });
+    }
     if (!scope.franchiseId) {
       return [];
     }

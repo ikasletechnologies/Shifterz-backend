@@ -8,11 +8,10 @@ export const outpassRouter = Router();
 const controller = new OutpassController();
 
 outpassRouter.use(authenticate);
-outpassRouter.use(requirePermission('outpass'));
 
-outpassRouter.get('/', controller.getAllOutpasses);
-outpassRouter.post('/', validate(createOutpassSchema), controller.createOutpass);
-outpassRouter.put('/:id', validate(updateOutpassSchema), controller.updateOutpass);
+outpassRouter.get('/', requirePermission('outpass', 'billing'), controller.getAllOutpasses);
+outpassRouter.post('/', requirePermission('outpass', 'billing'), validate(createOutpassSchema), controller.createOutpass);
+outpassRouter.put('/:id', requirePermission('outpass'), validate(updateOutpassSchema), controller.updateOutpass);
 // RBAC-04 — D-09. Reject shares the same authorization as approve (one
 // decision on a pending outpass), same pattern already used for D-15/D-16's
 // approve+reject pairs. requireAction() is additive here: the

@@ -21,6 +21,7 @@ export const createJobCardSchema = z.object({
     photos: z.array(z.string()).optional(),
     customerSignature: z.string().nullable().optional(),
     companyAcknowledgement: z.string().nullable().optional(),
+    franchiseId: z.string().nullable().optional(),
   })
 });
 
@@ -43,6 +44,7 @@ export const updateJobCardSchema = z.object({
     notes: z.string().optional(),
     remarks: z.string().nullable().optional(),
     carInId: z.string().nullable().optional(),
+    franchiseId: z.string().nullable().optional(),
     photos: z.array(z.string()).optional(),
     qcNotes: z.string().nullable().optional(),
     // passedAt/failedAt intentionally NOT accepted here (Step 3 Item #4) —

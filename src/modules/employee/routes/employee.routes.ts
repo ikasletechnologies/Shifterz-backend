@@ -21,9 +21,10 @@ technicianRouter.use(authenticate);
 // same management tier already used elsewhere in this codebase (e.g.
 // job-card.service.ts's MANAGEMENT_ROLES) for who may see roster-wide data.
 const MANAGEMENT_ROLES = ['SUPER_ADMIN', 'HQ_USER', 'FRANCHISE_ADMIN', 'BRANCH_MANAGER'];
+const ROSTER_VIEW_ROLES = [...MANAGEMENT_ROLES, 'SERVICE_ADVISOR', 'QUALITY_INSPECTOR'];
 
 // Employees
-employeeRouter.get('/', requireRole(...MANAGEMENT_ROLES), controller.getAllEmployees);
+employeeRouter.get('/', requireRole(...ROSTER_VIEW_ROLES), controller.getAllEmployees);
 employeeRouter.get('/pending-approvals', controller.getPendingApprovals);
 employeeRouter.post('/:id/approve-registration', controller.approveRegistration);
 employeeRouter.post('/:id/reject-registration', controller.rejectRegistration);

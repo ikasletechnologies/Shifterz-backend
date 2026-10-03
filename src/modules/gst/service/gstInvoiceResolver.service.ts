@@ -122,7 +122,25 @@ export class GstInvoiceResolverService {
       if (!name || typeof name !== 'string') {
         throw new ValidationError(`Job ${jobId} has a service line item missing a name; cannot resolve its GST rate.`);
       }
-      const service = await db.service.findFirst({ where: { name, isDeleted: false } });
+      let service = (item as any)?.serviceId
+        ? await db.service.findFirst({ where: { id: (item as any).serviceId, isDeleted: false } })
+        : null;
+      if (!service) {
+        service = await db.service.findFirst({ where: { name, isDeleted: false } });
+      }
+      if (!service) {
+        service = await db.service.findFirst({
+          where: {
+            name: { equals: name.trim(), mode: 'insensitive' },
+            isDeleted: false,
+          },
+        });
+      }
+      if (!service) {
+        const allServices = await db.service.findMany({ where: { isDeleted: false } });
+        const norm = name.trim().replace(/\s+/g, ' ').toLowerCase();
+        service = allServices.find(s => s.name.trim().replace(/\s+/g, ' ').toLowerCase() === norm) || null;
+      }
       if (!service) {
         throw new ValidationError(
           `Service "${name}" on job ${jobId} was not found in the service catalog — cannot resolve its GST rate. Add it to the Service catalog or correct the job's service list before billing.`

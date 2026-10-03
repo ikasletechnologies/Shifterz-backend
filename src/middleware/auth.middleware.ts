@@ -1,9 +1,9 @@
-﻿import type { Request, Response, NextFunction } from "express";
+import type { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import type { JwtPayload } from "jsonwebtoken";
 import { env } from "../config/env.js";
 import { db } from "../lib/db.js";
-import { resolveActionPermissions, ALL_ACTIONS, resolveUserPermissions } from "../lib/auth.js";
+import { resolveActionPermissions, ALL_ACTIONS, resolveUserPermissions, canonicalizePermission } from "../lib/auth.js";
 import { resolveDataScope, scopeWhere } from "../shared/scope/dataScope.js";
 
 const JWT_SECRET = env.JWT_SECRET;
@@ -123,7 +123,7 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
       username: decoded.username,
       franchiseId: decoded.franchiseId || null,
       franchiseStatus,
-      hqControlled: decoded.hqControlled === true,
+      hqControlled: decoded.hqControlled === true || employee.hqControlled === true,
       permissions: decoded.permissions || [],
     };
     req.sessionId = session.id;
@@ -147,8 +147,8 @@ export const requireRole = (...roles: string[]) => {
   };
 };
 
-export const requirePermission = (permission: string) => {
-  return (req: AuthRequest, res: Response, next: NextFunction) => {
+export const requirePermission = (...permissions: string[]) => {
+  return async (req: AuthRequest, res: Response, next: NextFunction) => {
     if (!req.user) {
       return res.status(401).json({ error: "Unauthorized" });
     }
@@ -157,8 +157,26 @@ export const requirePermission = (permission: string) => {
       return next();
     }
     
-    if (!req.user.permissions || !req.user.permissions.includes(permission)) {
-      return res.status(403).json({ error: `Forbidden: Missing permission ${permission}` });
+    // Live resolve permissions from DB so Super Admin changes take immediate effect
+    try {
+      const livePerms = await resolveUserPermissions(req.user.id, req.user.role);
+      req.user.permissions = livePerms;
+    } catch {
+      // Fall back to token permissions if query fails
+    }
+
+    const userPerms = (req.user.permissions || []).map(canonicalizePermission);
+    const hasPermission = permissions.some((p) => {
+      const canon = canonicalizePermission(p);
+      return (
+        userPerms.includes(canon) ||
+        (canon === "jobs" && userPerms.includes("workshop")) ||
+        (canon === "workshop" && userPerms.includes("jobs")) ||
+        (req.user?.permissions || []).includes(p)
+      );
+    });
+    if (!hasPermission) {
+      return res.status(403).json({ error: `Forbidden: Missing required permission (${permissions.join(' or ')})` });
     }
     
     next();

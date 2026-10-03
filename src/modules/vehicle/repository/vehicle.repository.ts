@@ -18,4 +18,20 @@ export class VehicleRepository {
       orderBy: { date: "desc" } 
     });
   }
+
+  async findJobByVehicle(vehicleNo: string) {
+    return db.job.findFirst({
+      where: {
+        vehicle: { equals: vehicleNo, mode: 'insensitive' },
+        isDeleted: false,
+      },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        materialConsumptions: {
+          where: { isDeleted: false },
+          orderBy: { createdAt: 'desc' },
+        },
+      },
+    });
+  }
 }

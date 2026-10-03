@@ -11,12 +11,19 @@ const controller = new InventoryController();
 const adjustmentController = new InventoryAdjustmentController();
 
 inventoryRouter.use(authenticate);
-// Allow users with inventory OR billing permissions to list items (properly scoped by franchise)
+// Allow users with inventory, billing, jobs, or workshop permissions to list items (properly scoped by franchise)
 inventoryRouter.get('/', (req: AuthRequest, res, next) => {
-  if (req.user?.role === 'SUPER_ADMIN' || req.user?.permissions?.includes('inventory') || req.user?.permissions?.includes('billing')) {
+  const permissions = req.user?.permissions || [];
+  if (
+    req.user?.role === 'SUPER_ADMIN' ||
+    permissions.includes('inventory') ||
+    permissions.includes('billing') ||
+    permissions.includes('jobs') ||
+    permissions.includes('workshop')
+  ) {
     return next();
   }
-  return res.status(403).json({ error: 'Forbidden: Missing required permission (inventory or billing)' });
+  return res.status(403).json({ error: 'Forbidden: Missing required permission (inventory, billing, jobs, or workshop)' });
 }, controller.getAllItems);
 
 inventoryRouter.use(requirePermission('inventory'));

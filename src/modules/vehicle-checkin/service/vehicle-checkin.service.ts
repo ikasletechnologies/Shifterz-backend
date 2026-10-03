@@ -67,7 +67,7 @@ export class VehicleCheckinService {
   // retains unrestricted access, matching the tenant() middleware's scope
   // resolution elsewhere. Mirrors checkTechnicianAccess's id-or-jobCardId
   // lookup so a legitimate delete-by-job-card-id request isn't rejected.
-  async assertFranchiseAccess(checkinId: string, user?: { role?: string; franchiseId?: string | null }) {
+  async assertFranchiseAccess(checkinId: string, user?: { role?: string; franchiseId?: string | null; hqControlled?: boolean }) {
     if (!user) return;
     const userRole = (user.role || "").toUpperCase().replace(/[\s_]+/g, "_");
     if (userRole === "SUPER_ADMIN" || userRole === "HQ_USER") return;
@@ -78,14 +78,19 @@ export class VehicleCheckinService {
     }
     if (!car) throw new NotFoundError("Car entry not found");
 
+    // HQ-controlled staff (e.g. Headquarters Quality Inspector) can access HQ-managed vehicles
+    if (user.hqControlled && (car.franchiseId === null || car.franchiseId === user.franchiseId)) {
+      return;
+    }
+
     if (!user.franchiseId || car.franchiseId !== user.franchiseId) {
       throw new ForbiddenError("You do not have permission to access this vehicle");
     }
   }
 
-  async getAllCheckins(user?: { id?: string; name?: string; role?: string; franchiseId?: string | null }, filterFranchiseId?: string) {
+  async getAllCheckins(user?: { id?: string; name?: string; role?: string; franchiseId?: string | null; hqControlled?: boolean }, filterFranchiseId?: string) {
     const userRole = user ? (user.role || "").toUpperCase().replace(/[\s_]+/g, "_") : "";
-    const isHQ = userRole === "SUPER_ADMIN" || userRole === "HQ_USER";
+    const isHQ = userRole === "SUPER_ADMIN" || userRole === "HQ_USER" || (user as any)?.hqControlled === true;
     let scopeFranchiseId: string | undefined;
 
     if (isHQ) {

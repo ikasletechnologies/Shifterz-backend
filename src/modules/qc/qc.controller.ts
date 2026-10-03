@@ -9,7 +9,7 @@ export class QcController {
 
   private resolveScope(req: AuthRequest): string | null {
     const userRole = (req.user?.role || 'UNKNOWN').toUpperCase().replace(/[\s_]+/g, '_');
-    if (userRole === 'SUPER_ADMIN' || userRole === 'HQ_USER') {
+    if (userRole === 'SUPER_ADMIN' || userRole === 'HQ_USER' || req.user?.hqControlled === true) {
       const qf = req.query.franchiseId ? String(req.query.franchiseId) : null;
       // Treat "all" / "All" as HQ-wide (no filter)
       return qf && qf !== 'all' && qf !== 'All' ? qf : null;
@@ -25,6 +25,15 @@ export class QcController {
     try {
       const franchiseId = this.resolveScope(req);
       const data = await this.service.getQueue(franchiseId);
+      res.json(data);
+    } catch (error) { next(error); }
+  };
+
+  // ─── QC Team ─────────────────────────────────────────────────────────────
+  getTeam = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const franchiseId = this.resolveScope(req);
+      const data = await this.service.getTeam(franchiseId);
       res.json(data);
     } catch (error) { next(error); }
   };

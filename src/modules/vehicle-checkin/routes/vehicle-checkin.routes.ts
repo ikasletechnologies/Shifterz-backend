@@ -8,7 +8,7 @@ export const vehicleCheckinRouter = Router();
 const controller = new VehicleCheckinController();
 
 vehicleCheckinRouter.use(authenticate);
-vehicleCheckinRouter.use(requirePermission('carin'));
+vehicleCheckinRouter.use(requirePermission('carin', 'vehicle-inspection'));
 
 // EPB 2.6 — deleting a check-in cascades to its Job Card and OutPass
 // records; restricted to the same management tier already used elsewhere
@@ -17,8 +17,8 @@ vehicleCheckinRouter.use(requirePermission('carin'));
 const MANAGEMENT_ROLES = ['SUPER_ADMIN', 'HQ_USER', 'FRANCHISE_ADMIN', 'BRANCH_MANAGER'];
 
 vehicleCheckinRouter.get('/', controller.getAll);
-vehicleCheckinRouter.post('/', validate(createCheckinSchema), controller.create);
+vehicleCheckinRouter.post('/', requirePermission('carin'), validate(createCheckinSchema), controller.create);
 vehicleCheckinRouter.put('/:id', validate(updateCheckinSchema), controller.update);
 vehicleCheckinRouter.get('/:id/delivery-readiness', controller.getDeliveryReadiness);
-vehicleCheckinRouter.put('/:id/checkout', validate(checkoutSchema), controller.checkout);
+vehicleCheckinRouter.put('/:id/checkout', requirePermission('carin'), validate(checkoutSchema), controller.checkout);
 vehicleCheckinRouter.delete('/:id', requireRole(...MANAGEMENT_ROLES), controller.delete);

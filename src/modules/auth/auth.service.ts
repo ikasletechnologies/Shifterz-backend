@@ -1,8 +1,8 @@
-﻿import bcrypt from "bcrypt";
+import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import { authRepository } from "./auth.repository.js";
-import { resolveUserPermissions, resolveActionPermissions } from "../../lib/auth.js";
+import { resolveUserPermissions, resolveActionPermissions, FALLBACK_ROLE_MATRIX, ALL_MODULES } from "../../lib/auth.js";
 import { env } from "../../config/env.js";
 import { db } from "../../lib/db.js";
 
@@ -200,7 +200,33 @@ export class AuthService {
   }
 
   async getRolePermissions() {
-    return authRepository.findAllRolePermissions();
+    const existing = await authRepository.findAllRolePermissions();
+    const existingMap = new Map(existing.map((rp) => [rp.role, rp]));
+
+    // All known roles that should be manageable via Roles & Permissions
+    const allRoles = Object.keys(FALLBACK_ROLE_MATRIX);
+    const results = allRoles.map((role) => {
+      if (existingMap.has(role)) {
+        const item = existingMap.get(role)!;
+        if (role === "SUPER_ADMIN" && (!item.permissions || item.permissions.length === 0)) {
+          return { ...item, permissions: ALL_MODULES };
+        }
+        return item;
+      }
+      return {
+        role,
+        permissions: FALLBACK_ROLE_MATRIX[role] || [],
+        actions: [],
+      };
+    });
+
+    for (const rp of existing) {
+      if (!allRoles.includes(rp.role)) {
+        results.push(rp);
+      }
+    }
+
+    return results;
   }
 
   async updateRolePermissions(role: string, permissions: string[]) {

@@ -11,7 +11,8 @@ export class EmployeeController {
     try {
       const userRole = req.user?.role || "UNKNOWN";
       const userFranchiseId = req.user?.franchiseId || undefined;
-      const list = await this.service.getAllEmployees(userRole, userFranchiseId);
+      const franchiseOnly = req.query.franchiseOnly === "true" || req.query.scope === "franchise";
+      const list = await this.service.getAllEmployees(userRole, userFranchiseId, franchiseOnly);
       res.json(list);
     } catch (error) {
       next(error);
